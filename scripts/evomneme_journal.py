@@ -95,19 +95,15 @@ def graph_links(table, alias, columns):
     """Known physical rows link to stable IDs; unknown custom mappings stay explicit."""
     specs = []
     if {'scope_id', 'id'} <= columns:
-        if table in {'nodes', 'records'}:
+        if table == 'nodes':
             specs.append(('nodes', ['scope_id', 'id'], None, 'entity'))
-        elif table in {'edges', 'relations'}:
+        elif table == 'edges':
             specs.append(('edges', ['scope_id', 'id'], None, 'entity'))
-        elif table == 'code_symbols':
-            specs.append(('nodes', ['scope_id', 'id'], 'code', 'entity'))
-        elif table == 'code_edges':
-            specs.append(('edges', ['scope_id', 'id'], 'code-edge', 'entity'))
     if 'scope_id' in columns:
         if table in {'symbol_details', 'file_details'} and 'node_id' in columns:
             specs.append(('nodes', ['scope_id', 'node_id'], None, 'detail'))
         if table == 'evidence':
-            for column, kind in (('node_id', 'nodes'), ('edge_id', 'edges'), ('record_id', 'nodes'), ('relation_id', 'edges')):
+            for column, kind in (('node_id', 'nodes'), ('edge_id', 'edges')):
                 if column in columns:
                     specs.append((kind, ['scope_id', column], None, 'evidence'))
     output = []

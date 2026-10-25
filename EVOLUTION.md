@@ -2,6 +2,12 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-10-26 — Viewer requires v3
+
+At the user's request, removed legacy graph projections, detail adapters, graph-ID aliases and legacy activity/journal link mappings. The viewer now validates the controlled v3 contract at startup and on database reads, including custom projections, before optional journal installation can write anything. Unsupported stores require a compatible published migration. The generic SQL executor and explicit v2 migration remain available; neither provides legacy viewing.
+
+Viewer and journal fixtures now use the canonical v3 schema. All 65 tracked Python tests passed, including explicit v2/custom/unversioned rejection, mapping and recording bypass prevention, byte-for-byte preservation on rejection, v3 graph layers/detail/traversal, activity, HTTP boundaries and persistent history. Consumers of `projection_sql` must now supply a valid v3 store; ad hoc or legacy projected databases are no longer accepted. No host database was changed.
+
 ## Controlled graph architecture v3
 
 The user requested a controlled starting model rather than a new agent-designed schema in every host. Schema v3 places all graph entities in `nodes` and all adjacency in `edges`, with open type/layer values and supported `symbol_details`, `file_details` and provenance attachments. The shared neighborhood SQL separates traversal and result filters, preserves scope/direction, and returns minimum hop depth across entity types. The thin executor remains generic SQL transport.

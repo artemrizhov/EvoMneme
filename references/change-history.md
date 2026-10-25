@@ -18,7 +18,7 @@ SQLite AFTER triggers run inside the writer's transaction. Rollback/savepoint ro
 
 Values preserve SQLite storage type; blobs are hexadecimal, nulls explicit. Text/blob fields have bounded previews (roughly 32 KiB of preview content per row, at most 16 KiB per field, with additional JSON/type metadata); lengths and truncation are marked. This is an investigation record, not a complete backup of long values. All source tables may contain private content, and the journal retains deleted content. Export and protect the database accordingly. History has no automatic disk pruning; it increases database size and write work. Back up and prune deliberately if needed. Deleting log rows also cleans their element links even when foreign-key enforcement is off.
 
-Known graph links cover v3 `nodes`, `edges`, `symbol_details`, `file_details`, `evidence`, and legacy `records`, `relations`, `code_symbols`, `code_edges`/evidence. They use the viewer's composite graph IDs. Custom tables still retain row history but arbitrary SQL mappings do not automatically supply graph links. Deleting evidence/detail rows does not label the attached node itself as deleted.
+Known graph links cover v3 `nodes`, `edges`, `symbol_details`, `file_details`, and `evidence`. They use the viewer's composite graph IDs. Custom tables still retain row history but arbitrary SQL mappings do not automatically supply graph links. Deleting evidence/detail rows does not label the attached node itself as deleted. The viewer rejects non-v3 databases before `--record-changes` can install any history tables or triggers.
 
 ## Interface and paging
 

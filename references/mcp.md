@@ -45,7 +45,7 @@ Invalid UTF-8, unencodable lone surrogates, and JSON nested beyond the decoder's
 
 ```json
 {
-  "sql": "SELECT id,title,summary FROM records WHERE scope_id=:scope AND validity='current' LIMIT 8",
+  "sql": "SELECT id,title,summary FROM nodes WHERE scope_id=:scope AND validity='current' LIMIT 8",
   "params": {"scope": "verified-scope-id"},
   "max_rows": 8,
   "max_output_bytes": 12000,

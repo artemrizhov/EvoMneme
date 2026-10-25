@@ -1,4 +1,4 @@
-"""Transactional change history on isolated v3/v2 fixtures, never a live host."""
+"""Transactional change history on isolated v3 fixtures, never a live host."""
 
 import concurrent.futures
 from contextlib import closing
@@ -272,21 +272,15 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(db.execute('SELECT user_data FROM '+LOG).fetchone()[0],'keep this')
         self.assertFalse(db.execute("SELECT 1 FROM sqlite_schema WHERE name=?",[META]).fetchone())
 
-    def test_cli_opt_in_and_legacy_graph_ids(self):
-        legacy=self.path.with_name('legacy.sqlite3')
-        db=sqlite3.connect(legacy)
-        db.executescript((ROOT/'tests/fixtures/schema-v2.sql').read_text())
-        db.execute("INSERT INTO scopes VALUES('main','main','fixture','r','s','now')")
-        db.commit();db.close()
-        process=subprocess.run([sys.executable,str(ROOT/'scripts/evomneme_journal.py'),'install','--database',str(legacy)],capture_output=True)
+    def test_cli_opt_in_and_graph_ids(self):
+        process=subprocess.run([sys.executable,str(ROOT/'scripts/evomneme_journal.py'),'install','--database',str(self.path)],capture_output=True)
         self.assertEqual(process.returncode,0,process.stderr)
         self.assertTrue(json.loads(process.stdout)['enabled'])
-        db=sqlite3.connect(legacy)
-        db.execute("INSERT INTO records(scope_id,id,kind,title,summary,confidence,validity,updated_at) VALUES('main','old','finding','Legacy','fixture','confirmed','current','now')")
+        db=self.writer()
+        self.insert_node(db)
         db.commit()
         events=read(db,{})['events']
-        self.assertEqual(events[0]['references'][0]['graph_id'],'["main","old"]')
-        db.close()
+        self.assertEqual(events[0]['references'][0]['graph_id'],'["main","n1"]')
 
 
 if __name__=='__main__':

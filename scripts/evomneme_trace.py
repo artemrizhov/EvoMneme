@@ -36,7 +36,7 @@ class ActivityLog:
                         if isinstance(value, str):
                             references.append({'graph_type': graph_type, 'graph_id': value})
             tables = set(access['read']) | set(access['write'])
-            graph_tables = tables & {'nodes', 'edges', 'records', 'relations', 'code_symbols', 'code_edges'}
+            graph_tables = tables & {'nodes', 'edges'}
             if len(graph_tables) != 1 or tables != graph_tables:
                 continue
             columns = result['columns']

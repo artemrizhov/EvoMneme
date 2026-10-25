@@ -1,6 +1,6 @@
 # Host knowledge through SQL
 
-For read-only visual investigation, graph slices, provenance detail and explicit session/agent activity highlighting, see the optional [local memory explorer](viewer.md). It supports the controlled schema and legacy/custom inspection without migrating the host schema.
+For read-only visual investigation, graph slices, provenance detail and explicit session/agent activity highlighting, see the optional [local memory explorer](viewer.md). It requires the controlled v3 schema, supports custom projections within that schema, and never migrates the host schema automatically.
 
 The agent maintains knowledge within the [controlled schema contract](schema.md); the tool only executes SQL. It accepts reads, writes, DDL, and agent-authored migrations against an explicitly bound SQLite file. It has no knowledge-specific commands, automatic schema, source scanner, Git integration, loader installer, or automatic reconciliation. Use it only for an authorized host; never create a live host store for EvoMneme itself, its forks, or worktrees.
 

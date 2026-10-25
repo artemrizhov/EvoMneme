@@ -328,11 +328,10 @@ function selectActivity(event) {
 function references(event) {
   const ids=(event.references || []).map(r=>{
     if (r.graph_type) return (r.graph_type==='nodes'?'n:':'e:')+r.graph_id;
-    if (r.table==='code_symbols') return 'n:'+JSON.stringify(['code',r.scope_id,r.id]);
-    if (r.table==='code_edges') return 'e:'+JSON.stringify(['code-edge',r.scope_id,r.id]);
-    return (r.table==='records'||r.table==='nodes'?'n:':'e:')+JSON.stringify([r.scope_id,r.id]);
+    if (r.table==='nodes'||r.table==='edges') return (r.table==='nodes'?'n:':'e:')+JSON.stringify([r.scope_id,r.id]);
+    return null;
   });
-  return ids.concat(event.changed || []);
+  return ids.filter(Boolean).concat(event.changed || []);
 }
 function applyHighlight() {
   const events = state.selectedActivity ? [state.selectedActivity] : state.recorded.filter(matches);

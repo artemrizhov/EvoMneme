@@ -15,7 +15,7 @@ import threading
 from urllib.parse import urlsplit
 
 from evomneme import cell, json_bytes
-from evomneme_graph import projection_sql
+from evomneme_graph import projection_sql, validate_schema
 from evomneme_journal import install as install_journal, read as read_changes, status as journal_status
 
 ASSETS = Path(__file__).parent / 'viewer'
@@ -70,6 +70,8 @@ class Explorer:
         self.snapshot_key = None
         self.manage_changes = record_changes
         self.journal_schema_version = None
+        with self.connect():
+            pass  # Validate before --record-changes can modify the selected store.
         if record_changes:
             self.journal_schema_version = install_journal(self.path)['schema_version']
 
@@ -123,6 +125,7 @@ class Explorer:
             db.set_progress_handler(lambda: time.monotonic() > deadline, 1000)
             db.execute('BEGIN')
             db.set_authorizer(read_authorizer)
+            validate_schema(db)
             yield db
         finally:
             db.close()
@@ -371,7 +374,7 @@ class Explorer:
             if rows and not self.mapping:
                 row = rows[0]
                 table = row.get('source_table')
-                if table in {'nodes', 'edges', 'records', 'relations', 'code_symbols', 'code_edges'}:
+                if table in {'nodes', 'edges'}:
                     raw, _ = self.rows(db, 'SELECT * FROM ' + quote(table) + ' WHERE scope_id=? AND id=?', [row['scope_id'], row['id']], 1)
                     if raw:
                         row.update(raw[0])
@@ -386,16 +389,9 @@ class Explorer:
                             AND kind='declared_in' AND validity='current'))''',
                         [row['scope_id'], row['id'], row['scope_id'], row['id']], 200)
                     row['coverage_has_more'] = more
-                if table in {'code_symbols', 'code_edges'} and db.execute("SELECT 1 FROM sqlite_schema WHERE name='code_files' AND type='table'").fetchone():
-                    columns = {r[1] for r in db.execute('PRAGMA table_info(code_files)')}
-                    if {'scope_id', 'path'} <= columns:
-                        coverage, _ = self.rows(db, 'SELECT * FROM code_files WHERE scope_id=? AND path=?', [row['scope_id'], row.get('source_path')], 1)
-            if rows and not self.mapping and rows[0].get('source_table') in {'nodes', 'edges', 'records', 'relations'} and db.execute("SELECT 1 FROM sqlite_schema WHERE name='evidence' AND type='table'").fetchone():
+            if rows and not self.mapping and rows[0].get('source_table') in {'nodes', 'edges'}:
                 row = rows[0]
-                if row['source_table'] in {'nodes', 'edges'}:
-                    field = 'node_id' if values['type'] == 'nodes' else 'edge_id'
-                else:
-                    field = 'record_id' if values['type'] == 'nodes' else 'relation_id'
+                field = 'node_id' if values['type'] == 'nodes' else 'edge_id'
                 evidence, more = self.rows(db, 'SELECT * FROM evidence WHERE scope_id=? AND ' + field + '=?', [row['scope_id'], row['id']], 200)
                 return {'rows': rows, 'evidence': evidence, 'evidence_has_more': more, 'coverage': coverage}
             return {'rows': rows, 'evidence': evidence, 'coverage': coverage}

@@ -25,38 +25,39 @@ from evomneme_viewer import Explorer, make_server
 
 def fixture(path):
     db = sqlite3.connect(path)
-    db.executescript((ROOT / 'tests/fixtures/schema-v2.sql').read_text())
+    db.executescript((ROOT / 'schema.sql').read_text())
     for scope in ('main', 'branch'):
         db.execute('INSERT INTO scopes VALUES(?,?,?,?,?,?)', (scope, scope, 'synthetic', 'abc', 'fixture', '2026-10-25'))
         for i, (kind, confidence, validity) in enumerate([('module','confirmed','current'), ('function','inferred','current'), ('decision','uncertain','stale'), ('constraint','confirmed','superseded')]):
-            db.execute('INSERT INTO records(scope_id,id,kind,title,summary,confidence,validity,source_path,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+            db.execute('INSERT INTO nodes(scope_id,id,kind,title,summary,confidence,validity,source_path,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
                        (scope, str(i), kind, scope + ' node ' + str(i), 'Synthetic <script>alert(1)</script>', confidence, validity, 'src/example.py', '2026-10-25'))
         for i in range(2):
-            db.execute('INSERT INTO relations(scope_id,id,source_id,target_id,kind,summary,confidence,validity,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+            db.execute('INSERT INTO edges(scope_id,id,source_id,target_id,kind,summary,confidence,validity,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
                        (scope, 'e'+str(i), str(i), str(i+1), 'depends_on', 'Synthetic relationship', 'inferred', 'current', '2026-10-25'))
-        db.execute('INSERT INTO evidence(scope_id,id,record_id,description,validity,updated_at) VALUES(?,?,?,?,?,?)', (scope, 'proof', '0', 'Observed synthetic fixture', 'current', '2026-10-25'))
+        db.execute('INSERT INTO evidence(scope_id,id,node_id,description,validity,updated_at) VALUES(?,?,?,?,?,?)', (scope, 'proof', '0', 'Observed synthetic fixture', 'current', '2026-10-25'))
     db.commit()
     db.close()
 
 
 def code_fixture(path):
     db = sqlite3.connect(path)
-    db.executescript('''
-        CREATE TABLE code_symbols(scope_id TEXT,id TEXT,file_path TEXT,owner_id TEXT,
-          qualified_name TEXT,kind TEXT,signature TEXT,line_start INTEGER,line_end INTEGER,
-          sha256 TEXT,confidence TEXT,PRIMARY KEY(scope_id,id));
-        CREATE TABLE code_edges(scope_id TEXT,id TEXT,source_id TEXT,target_id TEXT,kind TEXT,
-          resolution TEXT,file_path TEXT,line_start INTEGER,sha256 TEXT,detail TEXT,PRIMARY KEY(scope_id,id));
-        CREATE TABLE code_files(scope_id TEXT,path TEXT,declaration_status TEXT,relationship_status TEXT,PRIMARY KEY(scope_id,path));
-        INSERT INTO code_symbols VALUES('main','c0','src/demo.py',NULL,'Agent','class','class Agent:',1,9,'fixture','inferred');
-        INSERT INTO code_symbols VALUES('main','c1','src/demo.py','c0','Agent.call','method','def call(',3,8,'fixture','inferred');
-        INSERT INTO code_symbols VALUES('branch','c0','src/demo.py',NULL,'branch_function','function','def branch_function():',1,2,'fixture','inferred');
-        INSERT INTO code_edges VALUES('main','contains','c0','c1','contains','resolved','src/demo.py',3,'fixture','Stored ownership');
-        INSERT INTO code_edges VALUES('main','summary','c1','record:0','semantic-summary','resolved','src/demo.py',3,'fixture','Stored summary link');
-        INSERT INTO code_edges VALUES('main','source','knowledge-record:1','c0','knowledge-source','resolved','src/demo.py',1,'fixture','Stored source link');
-        INSERT INTO code_edges VALUES('main','external','c1','outside.module','imports','unresolved','src/demo.py',4,'fixture','Unresolved import');
-        INSERT INTO code_files VALUES('main','src/demo.py','partial','pending');
-    ''')
+    db.execute('PRAGMA foreign_keys=ON')
+    db.executemany("""INSERT INTO nodes(scope_id,id,title,kind,layer,summary,confidence,validity,source_path,updated_at)
+        VALUES(?,?,?,?,?,'Synthetic','inferred','current','src/demo.py','now')""", [
+        ('main','c0','Agent','class','code'), ('main','c1','Agent.call','method','code'),
+        ('main','cf','demo.py','file','code'), ('branch','c0','branch_function','function','code'),
+        ('main','outside.module','Unresolved import','unresolved_reference','unresolved')])
+    db.executemany('INSERT INTO symbol_details VALUES(?,?,?,?,?)', [
+        ('main','c0','Agent','class Agent:','python'), ('main','c1','Agent.call','def call(','python'),
+        ('branch','c0','branch_function','def branch_function():','python')])
+    db.execute("INSERT INTO file_details VALUES('main','cf','partial','pending',NULL,NULL,NULL)")
+    db.executemany("""INSERT INTO edges(scope_id,id,source_id,target_id,kind,layer,resolution,summary,confidence,validity,updated_at)
+        VALUES('main',?,?,?,?,?,?,'Synthetic','inferred','current','now')""", [
+        ('contains','c0','c1','contains','code','resolved'),
+        ('summary','c1','0','semantic-summary','cross','resolved'),
+        ('source','1','c0','knowledge-source','cross','resolved'),
+        ('external','c1','outside.module','imports','code','unresolved'),
+        ('file','c1','cf','declared_in','code','resolved')])
     db.commit()
     db.close()
 
@@ -106,8 +107,8 @@ class ViewerTests(unittest.TestCase):
 
     def test_read_only_queries_detail_evidence_and_no_schema_migration(self):
         before = self.path.read_bytes()
-        self.assertEqual(len(self.explorer.query({'sql':'SELECT * FROM records'})['rows']), 8)
-        for sql in ('DELETE FROM records RETURNING *', 'PRAGMA query_only=OFF', "SELECT load_extension('x')", 'SELECT * FROM pragma_query_only(0)'):
+        self.assertEqual(len(self.explorer.query({'sql':'SELECT * FROM nodes'})['rows']), 8)
+        for sql in ('DELETE FROM nodes RETURNING *', 'PRAGMA query_only=OFF', "SELECT load_extension('x')", 'SELECT * FROM pragma_query_only(0)'):
             with self.assertRaises((ValueError, sqlite3.Error)):
                 self.explorer.query({'sql':sql})
         detail = self.explorer.detail({'type':'nodes', 'id':'["main","0"]'})
@@ -119,9 +120,9 @@ class ViewerTests(unittest.TestCase):
         code_fixture(self.path)
         before = self.path.read_bytes()
         graph = self.explorer.snapshot({'whole_graph':True})
-        self.assertEqual(graph['totals'],{'nodes':12,'edges':8})
-        self.assertEqual(len(graph['nodes']),12)
-        self.assertEqual(len(graph['edges']),8)
+        self.assertEqual(graph['totals'],{'nodes':13,'edges':9})
+        self.assertEqual(len(graph['nodes']),13)
+        self.assertEqual(len(graph['edges']),9)
         self.assertEqual(graph['reference_total'],1)
         self.assertEqual({n['layer'] for n in graph['nodes']},{'code','knowledge','unresolved'})
         self.assertEqual(sum(e['layer']=='cross' for e in graph['edges']),2)
@@ -129,21 +130,20 @@ class ViewerTests(unittest.TestCase):
         self.assertTrue(all(e['source'] in nodes and e['target'] in nodes for e in graph['edges']))
         summary = next(e for e in graph['edges'] if e['id']=='summary')
         self.assertEqual(summary['target'],'["main","0"]')
-        self.assertEqual(summary['source'],'["code","main","c1"]')
+        self.assertEqual(summary['source'],'["main","c1"]')
         code_only = self.explorer.snapshot({'whole_graph':True,'excluded_layers':['knowledge','unresolved']})
-        self.assertEqual(len(code_only['nodes']),3)
-        self.assertEqual(len(code_only['edges']),1)
+        self.assertEqual(len(code_only['nodes']),4)
+        self.assertEqual(len(code_only['edges']),2)
         knowledge_only = self.explorer.snapshot({'whole_graph':True,'excluded_layers':['code','unresolved','cross']})
         self.assertEqual(len(knowledge_only['nodes']),8)
         self.assertEqual(len(knowledge_only['edges']),4)
         no_cross = self.explorer.snapshot({'whole_graph':True,'excluded_layers':['cross']})
-        self.assertEqual(len(no_cross['nodes']),12)
-        self.assertEqual(len(no_cross['edges']),6)
+        self.assertEqual(len(no_cross['nodes']),13)
+        self.assertEqual(len(no_cross['edges']),7)
         empty = self.explorer.snapshot({'whole_graph':True,'excluded_layers':['code','knowledge','unresolved','cross']})
         self.assertEqual(empty['nodes'],[])
         self.assertEqual(empty['edges'],[])
-        detail = self.explorer.detail({'type':'nodes','id':'["code","main","c1"]'})
-        self.assertEqual(detail['rows'][0]['owner_id'],'c0')
+        detail = self.explorer.detail({'type':'nodes','id':'["main","c1"]'})
         self.assertEqual(detail['rows'][0]['signature'],'def call(')
         self.assertEqual(detail['coverage'][0]['declaration_status'],'partial')
         self.assertEqual(detail['evidence'],[])
@@ -151,39 +151,40 @@ class ViewerTests(unittest.TestCase):
         executor = Executor(self.path)
         self.addCleanup(executor.close)
         configure_trace(executor,self.directory/'activity','code-session')
-        result = executor.execute_sql(sql='SELECT scope_id,id FROM code_symbols WHERE scope_id=? AND id=?',params=['main','c1'])
+        result = executor.execute_sql(sql='SELECT scope_id,id FROM nodes WHERE scope_id=? AND id=?',params=['main','c1'])
         self.assertTrue(result['ok'])
         events = Explorer(self.path,trace_directory=self.directory/'activity').events({})['events']
-        self.assertEqual(events[0]['references'],[{'table':'code_symbols','scope_id':'main','id':'c1'}])
+        self.assertEqual(events[0]['references'],[{'table':'nodes','scope_id':'main','id':'c1'}])
 
-    def test_ambiguous_endpoint_is_not_assigned_to_an_arbitrary_namespace(self):
-        code_fixture(self.path)
-        db = sqlite3.connect(self.path)
-        db.execute("INSERT INTO code_symbols(scope_id,id,qualified_name,kind) VALUES('main','0','SameIdClass','class')")
-        db.execute("INSERT INTO code_edges(scope_id,id,source_id,target_id,kind) VALUES('main','ambiguous','0','c1','calls')")
-        db.commit()
+    def test_legacy_store_is_rejected_without_writes_or_mapping_bypass(self):
+        path = self.directory / 'legacy.sqlite3'
+        db = sqlite3.connect(path)
+        db.executescript((ROOT / 'tests/fixtures/schema-v2.sql').read_text())
         db.close()
-        graph = self.explorer.snapshot({'whole_graph':True})
-        ids = {n['graph_id'] for n in graph['nodes']}
-        self.assertIn('["main","0"]',ids)
-        self.assertIn('["code","main","0"]',ids)
-        edge = next(e for e in graph['edges'] if e['id']=='ambiguous')
-        reference = next(n for n in graph['nodes'] if n['graph_id']==edge['source'])
-        self.assertEqual(reference['kind'],'ambiguous_reference')
-        stored = next(e for e in graph['edges'] if e['source_table']=='relations' and e['scope_id']=='main' and e['id']=='e0')
-        self.assertEqual(stored['source'],'["main","0"]')
+        before = path.read_bytes()
+        mapping = {'nodes': 'SELECT id AS graph_id,title AS label FROM records',
+                   'edges': 'SELECT id AS graph_id,source_id AS source,target_id AS target FROM relations'}
+        for options in ({}, {'mapping': mapping}, {'record_changes': True}, {'mapping': mapping, 'record_changes': True}):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'requires v3'):
+                Explorer(path, **options)
+            self.assertEqual(path.read_bytes(), before)
+        cli = subprocess.run([sys.executable, str(ROOT / 'scripts/evomneme_viewer.py'),
+                              '--database', str(path), '--record-changes'], capture_output=True, timeout=10)
+        self.assertNotEqual(cli.returncode, 0)
+        self.assertIn(b'requires v3', cli.stderr)
+        self.assertEqual(path.read_bytes(), before)
 
     def test_neighborhood_does_not_traverse_disabled_node_layers(self):
         code_fixture(self.path)
         db = sqlite3.connect(self.path)
-        db.executemany('INSERT INTO code_symbols(scope_id,id,qualified_name,kind) VALUES(?,?,?,?)',
+        db.executemany("INSERT INTO nodes(scope_id,id,title,kind,layer,summary,confidence,validity,updated_at) VALUES(?,?,?,?,'code','Synthetic','inferred','current','now')",
                        [('main','isolated-a','A','function'),('main','isolated-b','B','function')])
-        db.executemany('INSERT INTO code_edges(scope_id,id,source_id,target_id,kind) VALUES(?,?,?,?,?)',
-                       [('main','bridge-a','isolated-a','record:0','explains'),
-                        ('main','bridge-b','record:0','isolated-b','explains')])
+        db.executemany("INSERT INTO edges(scope_id,id,source_id,target_id,kind,layer,summary,confidence,validity,updated_at) VALUES(?,?,?,?,?,'code','Synthetic','inferred','current','now')",
+                       [('main','bridge-a','isolated-a','0','explains'),
+                        ('main','bridge-b','0','isolated-b','explains')])
         db.commit()
         db.close()
-        values = {'whole_graph':True,'root':'["code","main","isolated-a"]','depth':2}
+        values = {'whole_graph':True,'root':'["main","isolated-a"]','depth':2}
         complete = self.explorer.snapshot(values)
         self.assertTrue(any(n['id']=='isolated-b' for n in complete['nodes']))
         hidden = self.explorer.snapshot({**values,'excluded_layers':['knowledge','unresolved']})
@@ -191,13 +192,19 @@ class ViewerTests(unittest.TestCase):
 
     def test_code_only_database_and_layer_aggregation(self):
         path = self.directory / 'code-only.sqlite3'
+        fixture(path)
         code_fixture(path)
+        with contextlib.closing(sqlite3.connect(path)) as db:
+            db.execute('DELETE FROM evidence')
+            db.execute("DELETE FROM edges WHERE layer IN ('knowledge','cross')")
+            db.execute("DELETE FROM nodes WHERE layer='knowledge'")
+            db.commit()
         explorer = Explorer(path)
         self.addCleanup(explorer.close)
         graph = explorer.snapshot({'whole_graph':True})
         self.assertTrue(graph['graph_available'])
-        self.assertEqual(sum(n['layer']=='code' for n in graph['nodes']),3)
-        self.assertEqual(len(graph['edges']),4)
+        self.assertEqual(sum(n['layer']=='code' for n in graph['nodes']),4)
+        self.assertEqual(len(graph['edges']),3)
         overview = self.explorer.snapshot({'whole_graph':True,'aggregate':'layer'})
         self.assertEqual(overview['nodes'][0]['group_value'],'knowledge')
         self.assertEqual(overview['grouped_members'],8)
@@ -205,9 +212,9 @@ class ViewerTests(unittest.TestCase):
     def test_full_graph_exceeds_old_slice_bounds_and_http_compression(self):
         code_fixture(self.path)
         db = sqlite3.connect(self.path)
-        db.executemany('INSERT INTO code_symbols(scope_id,id,qualified_name,kind) VALUES(?,?,?,?)',
+        db.executemany("INSERT INTO nodes(scope_id,id,title,kind,layer,summary,confidence,validity,updated_at) VALUES(?,?,?,?,'code','Synthetic','inferred','current','now')",
                        [('main','large'+str(i),'SyntheticFunction'+str(i),'function') for i in range(2501)])
-        db.executemany('INSERT INTO code_edges(scope_id,id,source_id,target_id,kind) VALUES(?,?,?,?,?)',
+        db.executemany("INSERT INTO edges(scope_id,id,source_id,target_id,kind,layer,summary,confidence,validity,updated_at) VALUES(?,?,?,?,?,'code','Synthetic','inferred','current','now')",
                        [('main','large-edge'+str(i),'large'+str(i),'large'+str(i+1),'calls') for i in range(2500)])
         db.commit()
         db.close()
@@ -243,16 +250,16 @@ class ViewerTests(unittest.TestCase):
         self.assertTrue(cached['unchanged'])
         filtered = self.explorer.snapshot({'whole_graph':True,'revision':first['revision'],'excluded_layers':['code']})
         self.assertNotIn('unchanged',filtered)
-        writer.execute("UPDATE code_symbols SET qualified_name='ChangedName' WHERE scope_id='main' AND id='c0'")
+        writer.execute("UPDATE nodes SET title='ChangedName' WHERE scope_id='main' AND id='c0'")
         writer.commit()
         changed = self.explorer.snapshot({'whole_graph':True,'revision':first['revision']})
         self.assertNotEqual(changed['revision'],first['revision'])
         self.assertTrue(any(n['label']=='ChangedName' for n in changed['nodes']))
-        old = next(n for n in changed['nodes'] if n['graph_id']=='["code","main","c1"]')['fingerprint']
-        writer.execute("UPDATE code_symbols SET signature='def call(self, value):' WHERE scope_id='main' AND id='c1'")
+        old = next(n for n in changed['nodes'] if n['graph_id']=='["main","c1"]')['fingerprint']
+        writer.execute("UPDATE symbol_details SET signature='def call(self, value):' WHERE scope_id='main' AND node_id='c1'")
         writer.commit()
         updated = self.explorer.snapshot({'whole_graph':True,'revision':changed['revision']})
-        node = next(n for n in updated['nodes'] if n['graph_id']=='["code","main","c1"]')
+        node = next(n for n in updated['nodes'] if n['graph_id']=='["main","c1"]')
         self.assertNotEqual(node['fingerprint'],old)
         self.assertNotIn('signature',node)
 
@@ -284,7 +291,7 @@ class ViewerTests(unittest.TestCase):
         filtered = self.explorer.snapshot({'aggregate':'kind','edge_confidence':'confirmed'})
         self.assertEqual(filtered['edges'],[])
 
-    def test_custom_schema_mapping_and_generic_inspection(self):
+    def test_custom_projection_on_v3_and_rejection_of_arbitrary_store(self):
         db = sqlite3.connect(self.path)
         db.executescript('CREATE TABLE things(k TEXT,label TEXT); CREATE TABLE links(k TEXT,a TEXT,b TEXT); INSERT INTO things VALUES(\'a\',\'A\'),(\'b\',\'B\'); INSERT INTO links VALUES(\'e\',\'a\',\'b\'),(\'broken\',\'b\',\'missing\');')
         db.close()
@@ -303,27 +310,26 @@ class ViewerTests(unittest.TestCase):
         db = sqlite3.connect(empty)
         db.execute('CREATE TABLE custom(value)')
         db.close()
-        data = Explorer(empty).snapshot({})
-        self.assertFalse(data['graph_available'])
-        self.assertEqual(data['tables'][0]['name'], 'custom')
+        with self.assertRaisesRegex(ValueError, 'requires v3'):
+            Explorer(empty)
 
     def test_trace_context_bounded_returned_ids_rollback_and_incremental_cursors(self):
         executor = Executor(self.path)
         self.addCleanup(executor.close)
         traces = self.directory / 'activity'
         configure_trace(executor, traces, 'default')
-        result = executor.execute_sql(sql='SELECT scope_id,id FROM records WHERE scope_id=?',params=['main'],max_rows=1,
+        result = executor.execute_sql(sql='SELECT scope_id,id FROM nodes WHERE scope_id=?',params=['main'],max_rows=1,
                                       activity_context={'chat_id':'parent','session_id':'work','agent_id':'worker'})
         self.assertTrue(result['ok'])
-        executor.execute_sql(sql=[{'sql':'BEGIN'},{'sql':"UPDATE records SET title='rolled back'"}])
-        executor.execute_sql(sql='SELECT count(*) AS n FROM records')
-        executor.execute_sql(sql='SELECT id AS trace_node_id FROM records LIMIT 1')
+        executor.execute_sql(sql=[{'sql':'BEGIN'},{'sql':"UPDATE nodes SET title='rolled back'"}])
+        executor.execute_sql(sql='SELECT count(*) AS n FROM nodes')
+        executor.execute_sql(sql='SELECT id AS trace_node_id FROM nodes LIMIT 1')
         view = Explorer(self.path, trace_directory=traces)
         first = view.events({})
         self.assertEqual(len(first['events']), 4)
         event = next(e for e in first['events'] if e['chat']=='parent')
         self.assertEqual((event['session'],event['agent']),('work','worker'))
-        self.assertEqual(event['references'], [{'table':'records','scope_id':'main','id':'0'}])
+        self.assertEqual(event['references'], [{'table':'nodes','scope_id':'main','id':'0'}])
         self.assertTrue(event['has_more'])
         self.assertTrue(first['events'][1]['rolled_back'])
         self.assertEqual(first['events'][2]['references'], [])
@@ -340,10 +346,10 @@ class ViewerTests(unittest.TestCase):
         executor = Executor(self.path)
         self.addCleanup(executor.close)
         for value in ({'other':'x'}, {'chat_id':''}, {'session_id':42}, {'chat_title':42}, {'agent_name':''}, ['x']):
-            result = executor.execute_sql(sql='DELETE FROM records',activity_context=value)
+            result = executor.execute_sql(sql='DELETE FROM nodes',activity_context=value)
             self.assertFalse(result['ok'])
         self.assertFalse((self.directory / 'activity').exists())
-        self.assertEqual(len(executor.execute_sql(sql='SELECT * FROM records')['results'][0]['rows']),8)
+        self.assertEqual(len(executor.execute_sql(sql='SELECT * FROM nodes')['results'][0]['rows']),8)
 
     def test_trace_io_failure_preserves_committed_sql(self):
         executor = Executor(self.path)
@@ -351,11 +357,11 @@ class ViewerTests(unittest.TestCase):
         configure_trace(executor, self.directory / 'activity', 'session')
         executor.activity_log.path = self.directory / 'missing-directory' / 'log.jsonl'
         with contextlib.redirect_stderr(io.StringIO()) as diagnostic:
-            result = executor.execute_sql(sql="UPDATE records SET title='committed' WHERE scope_id='main' AND id='0'")
+            result = executor.execute_sql(sql="UPDATE nodes SET title='committed' WHERE scope_id='main' AND id='0'")
         self.assertTrue(result['ok'])
         self.assertTrue(executor.activity_log.disabled)
         self.assertIn('tracing disabled', diagnostic.getvalue())
-        self.assertEqual(self.explorer.query({'sql':"SELECT title FROM records WHERE scope_id='main' AND id='0'"})['rows'][0]['title'],'committed')
+        self.assertEqual(self.explorer.query({'sql':"SELECT title FROM nodes WHERE scope_id='main' AND id='0'"})['rows'][0]['title'],'committed')
 
     def test_relationship_row_and_value_bounds_are_explicit(self):
         db = sqlite3.connect(self.path)
@@ -374,7 +380,7 @@ class ViewerTests(unittest.TestCase):
         self.assertTrue(explorer.query({'sql':'SELECT * FROM large'})['rows'][0]['value']['truncated'])
 
     def test_cli_and_mcp_context_trace_contract(self):
-        args = {'sql':'SELECT scope_id,id FROM records LIMIT 1','activity_context':{
+        args = {'sql':'SELECT scope_id,id FROM nodes LIMIT 1','activity_context':{
             'chat_id':'parent','session_id':'s','agent_id':'a',
             'chat_title':'Memory explorer work','session_title':'Investigating graph activity','agent_name':'Main agent'}}
         trace = self.directory / 'activity'
@@ -429,13 +435,13 @@ class ViewerTests(unittest.TestCase):
 
 if __name__ == '__main__':
     if '--serve-demo' in sys.argv:
-        area=ROOT/'.evomneme-tests'/'viewer-demo'
+        area=ROOT/'.evomneme-tests'/'viewer-demo-v3'
         area.mkdir(parents=True,exist_ok=True)
         path=area/'host.sqlite3'
         if not path.exists():
             fixture(path)
-        with sqlite3.connect(path) as check:
-            has_code = check.execute("SELECT 1 FROM sqlite_schema WHERE name='code_symbols'").fetchone()
+        with contextlib.closing(sqlite3.connect(path)) as check:
+            has_code = check.execute("SELECT 1 FROM nodes WHERE scope_id='main' AND id='c0'").fetchone()
         if not has_code:
             code_fixture(path)
         explorer=Explorer(path,trace_directory=area/'activity')
