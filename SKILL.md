@@ -21,6 +21,8 @@ Prefer an already configured, authorized, host-bound MCP `execute_sql`. Next use
 
 Normal use requires no reading of runtime source: [storage usage](references/storage.md) covers import, creation/closing, CLI, and schema setup; [the shared SQL contract](references/mcp.md#shared-sql-contract) defines arguments, results, limits, and errors for all transports. Read implementation only when developing or diagnosing the tool, rather than rediscovering its interface.
 
+When activity tracing is configured, include known `activity_context` identities (`chat_id`, `session_id`, `agent_id`) and readable labels (`chat_title`, `session_title`, `agent_name`) in SQL calls; reuse stable IDs during the same work and supply the main chat's identity/title to its subagents. Use actual known chat titles and identities, omit unknown values, and do not claim that MCP discovers chat ancestry. Read [viewer and activity tracing](references/viewer.md#live-activity-and-identities) when configuring or diagnosing observation. Tracing remains opt-in; do not enable it or change host configuration just to add labels.
+
 ## During active development
 
 - At a useful point in exploration, coding, review, or debugging, identify the host, worktree, branch, revision, and local changes. Select one explicit host-local SQLite path, shared across linked worktrees and separate across projects/clones; exclude its entire local working area from Git. Follow [storage and SQL practice](references/storage.md). The thin executor runs SQL and returns compact results; it does not choose paths, design or migrate schemas, inspect code, validate knowledge, or reconcile sources for you.

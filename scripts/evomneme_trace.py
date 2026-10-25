@@ -21,6 +21,7 @@ class ActivityLog:
         self.session = session
         self.database = str(Path(database).resolve(strict=True))
         self.disabled = False
+        self.client = None
 
     def record(self, response, accesses, elapsed_ms, context=None):
         """References identify returned rows only, never every row examined by SQLite."""
@@ -46,8 +47,12 @@ class ActivityLog:
                                    'scope_id': row[columns.index('scope_id')],
                                    'id': row[columns.index('id')]})
         context = context or {}
-        event = {'time': time.time(), 'session': context.get('session_id', self.session),
+        event = {'source': 'sql', 'time': time.time(), 'session': context.get('session_id', self.session),
                  'chat': context.get('chat_id', self.session), 'agent': context.get('agent_id', self.path.stem),
+                 'client': self.client,
+                 'chat_title': context.get('chat_title'), 'session_title': context.get('session_title'),
+                 'agent_name': context.get('agent_name'),
+                 'identity': {'chat': 'chat_id' in context, 'agent': 'agent_id' in context},
                  'database': self.database,
                  'ok': response['ok'], 'elapsed_ms': round(elapsed_ms, 2),
                  'completed': response['completed_statements'],

@@ -11,7 +11,7 @@ PROTOCOL_VERSION = '2025-11-25'
 SUPPORTED_PROTOCOLS = {PROTOCOL_VERSION, '2025-06-18'}
 TOOL = {
     'name': 'execute_sql',
-    'description': 'Execute one native SQLite statement or an explicit array of {sql,params} commands on the bound database. Callers own SQL transactions; unclosed ones roll back at request end. Earlier autocommitted effects remain. Check has_more for bounded rows.',
+    'description': 'Execute one native SQLite statement or an explicit array of {sql,params} commands on the bound database. Callers own SQL transactions; unclosed ones roll back at request end. Earlier autocommitted effects remain. Check has_more for bounded rows. For configured activity tracing, pass known chat_id/chat_title, session_id/session_title, agent_id/agent_name in activity_context; keep the main chat identity across subagents, and omit unknown identities or titles.',
     'inputSchema': INPUT_SCHEMA,
 }
 
@@ -51,6 +51,13 @@ class Server:
             if not isinstance(params.get('protocolVersion'), str) or not isinstance(params.get('capabilities'), dict) or not isinstance(params.get('clientInfo'), dict):
                 return protocol_error(request_id, -32602, 'initialize requires protocolVersion, capabilities and clientInfo')
             version = params['protocolVersion'] if params['protocolVersion'] in SUPPORTED_PROTOCOLS else PROTOCOL_VERSION
+            if self.executor.activity_log:
+                # MCP supplies a client name/version, but no main-chat ID or title.
+                info = params['clientInfo']
+                self.executor.activity_log.client = {
+                    key: value[:200] for key in ('name', 'version')
+                    if isinstance((value := info.get(key)), str)
+                } or None
             self.negotiated = True
             result = {'protocolVersion': version, 'capabilities': {'tools': {}},
                       'serverInfo': {'name': 'evomneme-sqlite', 'version': '1.0.0'}}

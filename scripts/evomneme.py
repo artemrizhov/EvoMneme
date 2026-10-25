@@ -25,6 +25,7 @@ LIMITS = {
 PARAMS_SCHEMA = {'anyOf': [{'type': 'array'}, {'type': 'object'}]}
 INPUT_SCHEMA = {
     'type': 'object', 'required': ['sql'], 'additionalProperties': False,
+    'description': 'When local tracing is configured, include known activity_context IDs and human-readable titles on calls. Reuse the main chat identity across its subagents. Supply only identities/titles actually known to the caller; omit unknown fields.',
     'properties': {
         'sql': {'anyOf': [
             {'type': 'string'},
@@ -36,7 +37,7 @@ INPUT_SCHEMA = {
         'activity_context': {'type': 'object', 'additionalProperties': False,
                              'description': 'Optional explicit main chat, work session and agent identities for configured local tracing. Never inferred from MCP. Does not change SQL results.',
                              'properties': {key: {'type': 'string', 'minLength': 1, 'maxLength': 200}
-                                            for key in ('chat_id', 'session_id', 'agent_id')}},
+                                            for key in ('chat_id', 'session_id', 'agent_id', 'chat_title', 'session_title', 'agent_name')}},
         **{key: {'type': 'integer', 'default': bounds[0], 'minimum': bounds[1], 'maximum': bounds[2]}
            for key, bounds in LIMITS.items()},
     },
@@ -208,7 +209,7 @@ class Executor:
         started = time.monotonic()
         accesses = []
         if activity_context is not None and (not isinstance(activity_context, dict) or
-                set(activity_context) - {'chat_id', 'session_id', 'agent_id'} or
+                set(activity_context) - {'chat_id', 'session_id', 'agent_id', 'chat_title', 'session_title', 'agent_name'} or
                 any(not isinstance(v, str) or not 1 <= len(v) <= 200 for v in activity_context.values())):
             return error_result(empty_result(), 'request', RequestError('Invalid activity_context'), None, LIMITS['max_output_bytes'][0])
         response = self._execute_sql(sql, params, max_rows, max_output_bytes, timeout_ms, accesses, unknown)
@@ -399,6 +400,7 @@ def main(argv=None):
         if args.trace_directory or args.session_id:
             from evomneme_trace import configure_trace
             configure_trace(executor, args.trace_directory, args.session_id)
+            executor.activity_log.client = {'name': 'EvoMneme CLI'}
         result = executor.execute_sql(**arguments)
     except (OSError, ValueError, TypeError, sqlite3.Error) as exc:
         result = error_result(empty_result(), 'request', exc, None, LIMITS['max_output_bytes'][0])

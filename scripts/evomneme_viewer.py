@@ -327,6 +327,7 @@ def make_server(explorer, port=0):
             path = urlsplit(self.path).path
             assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                       '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+                      '/graph-layout.js': ('graph-layout.js', 'text/javascript; charset=utf-8'),
                       '/style.css': ('style.css', 'text/css; charset=utf-8'),
                       '/cytoscape.min.js': ('vendor/cytoscape.min.js', 'text/javascript; charset=utf-8')}
             if path == '/favicon.ico':

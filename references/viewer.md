@@ -21,6 +21,8 @@ Open the complete printed URL, including `#token=...`. Stop with Ctrl+C. The ser
 - **Structural focus** selects nodes without evidence or nodes isolated in the whole database. Expand **Relationship filters** to independently select relationship kind, validity and confidence. Neighborhood traversal follows the selected relationship filters. Custom projections can supply `evidence_count` to support evidence views.
 - Select a node/relationship for attributes and evidence. Double-click a node or choose **Explore neighborhood** to retrieve an undirected neighborhood at depths 1–4. Node filters still apply. **Clear filters & focus** returns to the overview. Set a path start, select another node and find an undirected shortest path within the loaded slice.
 - Choose force, hierarchy, concentric, circle or grid layouts. Export the current snapshot/activity as JSON or the graph as PNG. Exports can contain private host knowledge.
+- **Follow graph growth** is on initially: added/removed nodes or relationships rerun the layout and fit the graph without enlarging small graphs past 100%. Layout spacing accounts for node labels, and a rigid rotation chooses the better fit for the current viewport. **Rearrange** rebuilds the layout without reloading the page. Panning, wheel zoom, dragging or focusing an activity turns following off; reenable it to resume automatic arrangement. With following off, newly added nodes are placed without moving existing nodes or changing pan/zoom. Window resizing adapts the overview while following is enabled; a graph built while its tab is hidden is laid out when shown.
+- Node labels disappear at overview scales where they would be unreadably small and reappear when zooming in. Full node labels remain available as hover tooltips and in the inspector. Relationship labels are off initially, appear on hovered/selected relationships, and can be enabled together using **Relationship labels**. Node size uses a bounded logarithmic scale to keep hubs from dominating the view.
 - **Tables & schema** shows counts, DDL, foreign keys and paginated rows. **SQL inspection** runs a read-only SELECT against any schema. Use these for evidence, history, metadata, malformed relationships and data outside the graph slice.
 
 The starter `records`/`relations` schema is recognized automatically, with starter `evidence` detail. Other or partially compatible schemas may require a mapping. Without a graph mapping, tables and SQL remain available.
@@ -58,13 +60,16 @@ Each `execute_sql` call may identify the main chat, work session and agent:
   "params": {"scope": "current-scope"},
   "activity_context": {
     "chat_id": "main-codex-chat-id",
+    "chat_title": "Investigate memory graph",
     "session_id": "investigation-session-id",
-    "agent_id": "agent-or-subagent-id"
+    "session_title": "Inspect dependency coverage",
+    "agent_id": "agent-or-subagent-id",
+    "agent_name": "Main agent"
   }
 }
 ```
 
-All fields are optional nonempty strings of at most 200 characters. Main agents and subagents supply the same `chat_id` to group work by parent chat. Without per-call values, chat/session use the startup fallback ID, and agent uses the process's unique log ID. **SQLite/MCP cannot discover Codex chat ancestry automatically.** Developing this viewer does not change any real host's MCP configuration.
+All fields are optional nonempty strings of at most 200 characters. IDs provide stable grouping; `chat_title`, `session_title`, `agent_name` provide readable labels, with IDs still visible to distinguish identical names. Main agents and subagents supply the same `chat_id` and `chat_title` to group work by parent chat. The MCP tool description asks callers to include known identities and titles; callers must omit unknown values, never invent a UI title or identity. MCP initialization supplies a client name/version, which is recorded when present. It does not supply chat ancestry or titles. Without per-call values, chat/session use the startup fallback ID and agent uses the process log ID. The viewer labels this as missing chat metadata / a process identity instead of implying a known chat. **SQLite/MCP cannot discover Codex chat ancestry automatically.** Developing this viewer does not change any real host's MCP configuration. Restart existing MCP processes to load the updated tool schema and reconnect their clients; reload the viewer to load updated UI code. Historical events cannot acquire missing caller metadata retroactively.
 
 Tracing preserves SQL result objects. Events record time, identities, table access, duration, result bounds and transaction outcome. They omit SQL, parameters and row contents except node/edge identifiers:
 
@@ -77,6 +82,8 @@ For example, add `RETURNING json_array(scope_id,id) AS trace_node_id` to a start
 
 Select **Main chat**, **Session**, **Agent** to filter the timeline/highlight. **Record highlight** accumulates new references and unattributed snapshot changes. **Pause recording** freezes accumulation; **Reset highlight** clears it without deleting logs. The timeline continues during a pause. **Use log history** explicitly seeds highlighting from logs loaded by this browser. **Only highlighted graph** retains highlighted elements and endpoints of highlighted relationships. Yellow means returned IDs; green means snapshot changes. Off-page or deleted IDs remain counted but cannot be drawn until available in the selected slice.
 
+Click a timeline activity (or focus it and press Enter/Space) to highlight only that event's known IDs, without changing the accumulated recording. **Return to accumulated highlight** restores the recording. Selection persists across live refreshes; changing identity filters, Reset, or Use log history leaves the single-event selection. The status explains when exact IDs are missing, off-page, grouped, or removed. Snapshot observations are shown as **Database observation · author not reported** and never populate chat/session/agent filters. They describe committed graph differences, not an identified agent action. If only observations are available, the viewer explicitly says no traced calls with caller metadata were loaded. Seeing this does not establish which client made those changes or whether host tracing was configured correctly.
+
 Recording controls affect browser-local highlighting, not executor logging. To stop collecting logs on disk, restart the executor without tracing flags. Reloading resets browser recording/selection and rereads logs. Each process stops logging at 32 MiB and reports failures/limits on stderr without undoing SQL. Archive logs deliberately; the viewer refuses more than 1,000 files. Browser history and highlight retain at most 10,000 events with a visible limit notice. This is observation, not a lossless audit log.
 
 ## Bounds and interpretation
@@ -86,3 +93,5 @@ Nodes/groups paginate by graph ID: default 500, maximum 2,000. A slice draws up 
 SQL/table inspection returns at most 200 rows; evidence detail at most 200. Queries have a five-second SQLite VM deadline and one-second lock wait. Requests are capped at 64 KiB, responses at 8 MiB, schema inspection at 200 tables. Individual text/BLOB values above 16 KiB become explicit previews. Narrow expensive projections/filters or inspect an isolated copy; full counts can cost substantial work on large databases. A changed filter resets snapshot comparisons. No production host integration or measured development-efficiency gain is claimed.
 
 Run `python -m unittest discover -s tests -v`. For manual browser checks, `python tests/test_viewer.py --serve-demo` serves synthetic fixtures under excluded `.evomneme-tests/viewer-demo/`.
+
+When Node.js is already available for development, the Python suite also runs the geometry regressions against the bundled Cytoscape with `node tests/test_viewer_layout.js`. Otherwise that optional check is skipped; Node.js is not a viewer runtime dependency.

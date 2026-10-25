@@ -5,7 +5,8 @@ if (token) sessionStorage.setItem('evomneme-viewer-token', token);
 history.replaceState(null, '', location.pathname);
 const state = { snapshot: null, offset: 0, root: '', selected: null, pathStart: null, recording: false,
   recorded: [], history: [], sessions: new Map(), cursors: {}, changes: new Set(), previous: null,
-  busy: false, tableOffset: 0, missed: false, view: 'graph', filterKey: '', recordingSince: Infinity, nullField:'' };
+  busy: false, tableOffset: 0, missed: false, view: 'graph', filterKey: '', recordingSince: Infinity, nullField:'',
+  selectedActivity:null,pendingLayout:false };
 const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c8d889','#88cdd7','#ccab91','#b0a3d4'];
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
 function showError(error) { $('error').textContent = error.message || String(error); $('error').classList.remove('hidden'); clearTimeout(showError.timer); showError.timer = setTimeout(() => $('error').classList.add('hidden'), 12000); }
@@ -13,15 +14,16 @@ async function api(route, values = {}) { const response = await fetch('/api/' + 
 function guarded(fn) { return (...args) => Promise.resolve().then(() => fn(...args)).catch(showError); }
 const cy = cytoscape({container:$('cy'), elements:[], minZoom:.05, maxZoom:5,
   style:[
-    {selector:'node',style:{'background-color':'data(color)',label:'data(label)','font-size':10,color:'#becde0','text-outline-color':'#101925','text-outline-width':2,'text-valign':'bottom','text-margin-y':7,width:'data(size)',height:'data(size)','border-width':1,'border-color':'#62768c','text-max-width':130,'text-wrap':'ellipsis'}},
-    {selector:'edge',style:{width:1.3,'line-color':'data(color)','target-arrow-color':'data(color)','target-arrow-shape':'triangle','curve-style':'bezier',opacity:.65,label:'','font-size':9,color:'#b7c8dc','text-rotation':'autorotate','text-background-color':'#111b2b','text-background-opacity':.9}},
+    {selector:'node',style:{'background-color':'data(color)',label:'data(displayLabel)','font-size':10,'min-zoomed-font-size':7,color:'#becde0','text-outline-color':'#101925','text-outline-width':2,'text-valign':'bottom','text-margin-y':7,width:'data(size)',height:'data(size)','border-width':1,'border-color':'#62768c','text-max-width':130,'text-wrap':'ellipsis'}},
+    {selector:'edge',style:{width:1.3,'line-color':'data(color)','target-arrow-color':'data(color)','target-arrow-shape':'triangle','curve-style':'bezier',opacity:.65,label:'data(displayLabel)','font-size':9,'min-zoomed-font-size':7,color:'#b7c8dc','text-rotation':'autorotate','text-background-color':'#111b2b','text-background-opacity':.9}},
     {selector:'.touched',style:{'border-width':5,'border-color':'#f7cd71','line-color':'#f7cd71','target-arrow-color':'#f7cd71',width:4,opacity:1}},
     {selector:'node.touched',style:{width:'data(size)',height:'data(size)'}},
     {selector:'.changed, .recordedChange',style:{'border-color':'#71eab8','border-width':5,'line-color':'#71eab8','target-arrow-color':'#71eab8',opacity:1}},
     {selector:':selected',style:{'border-color':'#fff','border-width':5,'line-color':'#fff','target-arrow-color':'#fff',opacity:1}},
     {selector:'.path',style:{'border-color':'#f0a0ff','border-width':5,'line-color':'#f0a0ff','target-arrow-color':'#f0a0ff',width:4,opacity:1}},
     {selector:'node.path',style:{width:'data(size)',height:'data(size)'}},
-    {selector:'.hidden',style:{display:'none'}}
+    {selector:'.hidden',style:{display:'none'}},
+    {selector:'edge:selected, edge:active, edge.hovered',style:{label:'data(label)','min-zoomed-font-size':0}}
   ]});
 function filters() {
   const result = {limit:Number($('limit').value), offset:state.offset, root:state.root,
@@ -73,9 +75,10 @@ function decorate() {
     (field==='validity'?validityColors[v]:field==='confidence'?confidenceColors[v]:null) || palette[i%palette.length]]));
   cy.batch(() => cy.elements().forEach(el => {
     el.data('color',colors.get(value(el)));
+    el.data('displayLabel',(el.isNode()?$('labels').checked:$('edgeLabels').checked)?el.data('label'):'');
     if (el.isNode()) {
       const attrs = el.data('attributes');
-      el.data('size',attrs._aggregate ? 24+Math.min(60,Math.log2(attrs.member_count+1)*6) : 20+Math.min(24,el.degree()*2));
+      el.data('size',attrs._aggregate ? 22+Math.min(36,Math.log2(attrs.member_count+1)*4) : 14+Math.min(16,Math.log2(el.degree()+1)*4));
     }
   }));
   $('legend').replaceChildren();
@@ -86,10 +89,14 @@ function decorate() {
     $('legend').append(item);
   }
   if (values.length > 30) $('legend').append(text('span',`+${values.length-30} categories`));
-  cy.style().selector('node').style('label',$('labels').checked?'data(label)':'')
-    .selector('edge').style('label',$('labels').checked && cy.edges().length<100?'data(label)':'').update();
 }
-function layout() { const name=$('layout').value; cy.layout({name,animate:false,fit:true,padding:55,randomize:false,nodeDimensionsIncludeLabels:true,idealEdgeLength:100,numIter:500}).run(); }
+function layout(options = {}) {
+  const bounds=$('cy').getBoundingClientRect();
+  if (bounds.width<1 || bounds.height<1) {state.pendingLayout=true;return;}
+  state.pendingLayout=false;
+  cy.resize();
+  MemoryGraphLayout.arrange(cy,{name:$('layout').value,width:bounds.width,height:bounds.height,...options});
+}
 function signatureMap(data) { return new Map([...data.nodes.map(n=>['n:'+n.graph_id,JSON.stringify(n)]),...data.edges.map(e=>['e:'+e.graph_id,JSON.stringify(e)])]); }
 function draw(data, resetLayout, key) {
   const next = signatureMap(data);
@@ -104,8 +111,7 @@ function draw(data, resetLayout, key) {
     }
     const removed = [...state.previous.keys()].filter(id => !next.has(id));
     if (changed.length || removed.length) {
-      ingest([{time:Date.now()/1000, chat:'Unattributed database changes',
-        session:'Snapshot changes', agent:'External / unknown', read:[], write:[],
+      ingest([{source:'snapshot',time:Date.now()/1000, read:[], write:[],
         references:[], changed, removed, ok:true, elapsed_ms:0, returned_rows:0}]);
     } else if (!resetLayout) {
       // Preserve a user's layout, selection and path while the database is unchanged.
@@ -116,6 +122,8 @@ function draw(data, resetLayout, key) {
   state.previous = next;
   state.filterKey = key;
   const oldPositions = new Map(cy.nodes().map(n => [n.id(), n.position()]));
+  const oldIds = new Set(cy.elements().map(el=>el.id()));
+  const topologyChanged = oldIds.size!==next.size || [...next.keys()].some(id=>!oldIds.has(id));
   const selected = state.selected?.id();
   const ids = new Set(data.nodes.map(n => 'n:' + n.graph_id));
   const old = [...oldPositions.values()];
@@ -129,15 +137,15 @@ function draw(data, resetLayout, key) {
       const angle = ++added * 2.4, radius = 50 + 12 * Math.sqrt(added);
       position = {x:center.x+Math.cos(angle)*radius, y:center.y+Math.sin(angle)*radius};
     }
-    return {group:'nodes', data:{id,label:String(n.label)+(n._aggregate?` · ${n.member_count} nodes`:''),attributes:n,color:palette[0],size:24},position};
+    return {group:'nodes', data:{id,label:String(n.label)+(n._aggregate?` · ${n.member_count} nodes`:''),displayLabel:'',attributes:n,color:palette[0],size:24},position};
   });
   const edges = data.edges.filter(e => ids.has('n:' + e.source) && ids.has('n:' + e.target))
     .map(e => ({group:'edges',data:{id:'e:'+e.graph_id,source:'n:'+e.source,target:'n:'+e.target,
-      label:e._aggregate?`${e.member_count} links`:String(e.kind||''),attributes:e,color:'#506984'}}));
+      label:e._aggregate?`${e.member_count} links`:String(e.kind||''),displayLabel:'',attributes:e,color:'#506984'}}));
   cy.batch(() => { cy.elements().remove(); cy.add([...nodes,...edges]); });
   decorate();
   applyHighlight();
-  cy.elements().filter(el => state.changes.has(el.id())).addClass('changed');
+  if (!state.selectedActivity) cy.elements().filter(el => state.changes.has(el.id())).addClass('changed');
   if (selected && cy.getElementById(selected).length) {
     state.selected = cy.getElementById(selected);
     state.selected.select();
@@ -147,7 +155,11 @@ function draw(data, resetLayout, key) {
     $('selectionActions').classList.add('hidden');
     $('openGroup').classList.add('hidden');
   }
-  if (resetLayout || !oldPositions.size) layout();
+  if (resetLayout || !oldPositions.size || (topologyChanged && $('followGraph').checked)) {
+    layout({seed:resetLayout || !oldPositions.size,fit:!state.selectedActivity});
+  } else if (added) {
+    MemoryGraphLayout.separate(cy.nodes(),new Set(data.nodes.filter(n=>!oldPositions.has('n:'+n.graph_id)).map(n=>'n:'+n.graph_id)));
+  }
 }
 async function refresh(resetLayout=false) {
   if (state.busy) return;
@@ -187,9 +199,28 @@ async function refresh(resetLayout=false) {
   }
 }
 function matches(e){return ['chat','session','agent'].every(key=>!$(key).value||e[key]===$(key).value);}
+function isObservation(event) {
+  return event.source === 'snapshot' || Array.isArray(event.changed);
+}
+function identityLabel(event, key) {
+  const titles = {chat:'chat_title',session:'session_title',agent:'agent_name'};
+  const title = event[titles[key]], id = event[key];
+  if (title) return `${title}${id ? ' · ' + id : ''}`;
+  if (key === 'chat' && event.identity?.chat === false) return 'Chat not reported';
+  if (key === 'agent' && event.identity?.agent === false) return `Process ${String(id || '').slice(0,8)}`;
+  return id || `${key} not reported`;
+}
+function selectActivity(event) {
+  $('followGraph').checked=false;
+  state.selectedActivity = event;
+  cy.elements().unselect().removeClass('path changed');
+  applyHighlight();
+  const highlighted = cy.elements('.touched');
+  if (highlighted.length) MemoryGraphLayout.fit(cy,highlighted.union(highlighted.edges().connectedNodes()),60);
+}
 function references(event){const ids=(event.references||[]).map(r=>r.graph_type?(r.graph_type==='nodes'?'n:':'e:')+r.graph_id:(r.table==='records'?'n:':'e:')+JSON.stringify([r.scope_id,r.id]));return ids.concat(event.changed||[]);}
 function applyHighlight() {
-  const events = state.recorded.filter(matches);
+  const events = state.selectedActivity ? [state.selectedActivity] : state.recorded.filter(matches);
   const touched = new Set(events.flatMap(references));
   const changed = new Set(events.flatMap(e => e.changed || []));
   cy.batch(() => {
@@ -203,13 +234,51 @@ function applyHighlight() {
     }
   });
   $('highlightCount').textContent = `${touched.size} accumulated IDs · ${cy.elements('.touched').length} visible`;
+  const selected = state.selectedActivity;
+  $('showAccumulated').classList.toggle('hidden',!selected);
+  if (selected) {
+    const removed = selected.removed?.length || 0;
+    const visible = cy.elements('.touched').length;
+    $('highlightCount').textContent = `${touched.size} event IDs · ${visible} visible`;
+    $('activitySelection').textContent = touched.size
+      ? `Selected activity: ${visible} / ${touched.size} IDs visible${removed?`; ${removed} removed IDs`:''}.`
+        + (visible < touched.size ? ' Other IDs are outside this slice, deleted, or grouped.' : '')
+      : removed ? `Selected observation: ${removed} IDs were removed from the graph.`
+        : 'Selected activity has no exact node/relationship IDs; only table-level access was recorded.';
+  } else $('activitySelection').textContent = '';
   renderTimeline();
 }
-function updateSessionOptions(){for(const key of ['chat','session','agent']){const selected=$(key).value;const values=[...new Set([...state.sessions.values()].filter(e=>key==='chat'||(!$('chat').value||e.chat===$('chat').value)).filter(e=>key!=='agent'||(!$('session').value||e.session===$('session').value)).map(e=>e[key]))].sort();$(key).replaceChildren(new Option('All '+(key==='chat'?'chats':key+'s'),''));for(const value of values)$(key).add(new Option(value,value));if(values.includes(selected))$(key).value=selected;}}
+function updateSessionOptions() {
+  const identities = [...state.sessions.values()];
+  for (const key of ['chat','session','agent']) {
+    const selected = $(key).value;
+    const candidates = identities.filter(e => typeof e[key] === 'string' && e[key])
+      .filter(e => key !== 'chat' || e.identity?.chat !== false)
+      .filter(e => key === 'chat' || !$('chat').value || e.chat === $('chat').value)
+      .filter(e => key !== 'agent' || !$('session').value || e.session === $('session').value);
+    const choices = new Map();
+    for (const event of candidates) {
+      const client = event.client?.name;
+      choices.set(event[key],(client ? client + ' · ' : '') + identityLabel(event,key));
+    }
+    $(key).replaceChildren(new Option('All '+(key==='chat'?'chats':key+'s'),''));
+    for (const [id,label] of [...choices.entries()].sort((a,b)=>a[1].localeCompare(b[1]))) $(key).add(new Option(label,id));
+    if (choices.has(selected)) $(key).value = selected;
+  }
+  $('identityStatus').textContent = identities.length
+    ? 'Identity filters contain SQL-call metadata only. Missing chat titles/IDs must be supplied by callers in activity_context; client names come from MCP initialization.'
+    : 'Only database observations are available. No traced SQL calls with caller metadata have been loaded; no chat or agent can be identified from these changes.';
+}
 function ingest(events) {
   for (const event of events) {
-    state.sessions.set(JSON.stringify([event.chat,event.session,event.agent]),
-      {chat:event.chat,session:event.session,agent:event.agent});
+    if (!isObservation(event)) {
+      const key = JSON.stringify([event.chat,event.session,event.agent]);
+      const previous = state.sessions.get(key) || {};
+      const identity = {...previous};
+      for (const field of ['chat','session','agent','client','identity']) identity[field] = event[field];
+      for (const title of ['chat_title','session_title','agent_name']) identity[title] = event[title] || previous[title];
+      state.sessions.set(key,identity);
+    }
     state.history.push(event);
     if (state.recording && event.time >= state.recordingSince) state.recorded.push(event);
   }
@@ -236,9 +305,14 @@ async function pollEvents() {
 }
 function renderTimeline() {
   const list = $('timeline');
+  const focused = document.activeElement?._activity;
   list.replaceChildren();
   for (const event of state.history.filter(matches).slice(-35).reverse()) {
-    const row = text('div','','event');
+    const row = text('button','','event');
+    row.type = 'button';
+    row._activity = event;
+    row.setAttribute('aria-pressed',String(event === state.selectedActivity));
+    row.onclick = () => selectActivity(event);
     row.append(text('span',new Date(event.time*1000).toLocaleTimeString(),'time'));
     const details = event.changed
       ? `${event.changed.length} created / modified · ${event.removed.length} removed from snapshot`
@@ -248,8 +322,12 @@ function renderTimeline() {
         + (event.durable_effects_possible ? ' · durable effects possible' : '')
         + (event.has_more ? ' · bounded output' : '')
         + (event.references_truncated ? ' · ID limit: table-level only' : '');
-    row.append(text('span',`${event.chat} / ${event.session} / ${event.agent} · ${details}${event.ok?'':' · FAILED'}`,event.ok?'':'failed'));
+    const label = isObservation(event)
+      ? 'Database observation · author not reported'
+      : [event.client?.name || 'SQL client not reported',identityLabel(event,'chat'),identityLabel(event,'session'),identityLabel(event,'agent')].join(' / ');
+    row.append(text('span',`${label} · ${details}${event.ok?'':' · FAILED'}`,event.ok?'':'failed'));
     list.append(row);
+    if (focused === event) row.focus({preventScroll:true});
   }
 }
 function table(container,rows){container.replaceChildren();if(!rows.length){container.append(text('p','No rows.','hint'));return;}const el=document.createElement('table'),thead=document.createElement('thead'),head=document.createElement('tr'),columns=[...new Set(rows.flatMap(Object.keys))];columns.forEach(c=>head.append(text('th',c)));thead.append(head);el.append(thead);const body=document.createElement('tbody');for(const row of rows){const tr=document.createElement('tr');columns.forEach(c=>tr.append(text('td',typeof row[c]==='object'?JSON.stringify(row[c],null,2):row[c])));body.append(tr);}el.append(body);container.append(el);}
@@ -330,9 +408,12 @@ $('previous').onclick = () => { state.offset=Math.max(0,state.offset-Number($('l
 $('next').onclick = () => { state.offset+=Number($('limit').value); refresh(true); };
 $('limit').onchange = () => { state.offset=0; refresh(true); };
 $('perspective').onchange = decorate;
-$('labels').onchange = decorate;
-$('layout').onchange = layout;
-$('fit').onclick = () => cy.fit(cy.elements(':visible'),45);
+$('labels').onchange = () => {decorate();if ($('followGraph').checked) layout();};
+$('edgeLabels').onchange = decorate;
+$('layout').onchange = () => layout({seed:true});
+$('relayout').onclick = () => layout({seed:true});
+$('followGraph').onchange = () => {if ($('followGraph').checked) layout();};
+$('fit').onclick = () => MemoryGraphLayout.fit(cy,cy.elements(':visible'));
 $('neighbors').onclick = () => {
   if (state.selected?.isNode()) {
     state.root=state.selected.data('attributes').graph_id;
@@ -341,7 +422,69 @@ $('neighbors').onclick = () => {
   }
 };
 $('pinPath').onclick=()=>{state.pathStart=state.selected?.id();$('pathInfo').textContent='Path start: '+(state.selected?.data('label')||'none');};$('findPath').onclick=()=>{cy.elements().removeClass('path');if(!state.pathStart||!state.selected?.isNode()||!cy.getElementById(state.pathStart).length){$('pathInfo').textContent='Select and set a path start in this slice first.';return;}const result=cy.elements().dijkstra({root:cy.getElementById(state.pathStart),directed:false}),distance=result.distanceTo(state.selected);if(Number.isFinite(distance)){result.pathTo(state.selected).addClass('path');$('pathInfo').textContent=`${distance} hops · undirected shortest path within loaded slice`;}else $('pathInfo').textContent='No path in loaded slice; expand scope to investigate.';};
-$('record').onclick=()=>{state.recording=!state.recording;state.recordingSince=state.recording?Date.now()/1000:Infinity;$('record').classList.toggle('recording',state.recording);$('record').textContent=state.recording?'Ⅱ Pause recording':'● Record highlight';};$('reset').onclick=()=>{state.recorded=[];state.recordingSince=state.recording?Date.now()/1000:Infinity;applyHighlight();};$('loadHistory').onclick=()=>{state.recorded=[...state.history];applyHighlight();};for(const key of ['chat','session','agent'])$(key).onchange=()=>{updateSessionOptions();applyHighlight();};$('onlyTouched').onchange=applyHighlight;
-document.querySelectorAll('.tab').forEach(button=>button.onclick=guarded(async()=>{state.view=button.dataset.view;document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b===button));for(const v of ['graph','tables','query'])$(v+'View').classList.toggle('hidden',v!==state.view);if(state.view==='graph'){cy.resize();}if(state.view==='tables')await loadTable();}));$('tableSelect').onchange=guarded(async()=>{state.tableOffset=0;await loadTable();});$('tableNext').onclick=guarded(async()=>{state.tableOffset+=200;await loadTable();});$('tablePrevious').onclick=guarded(async()=>{state.tableOffset=Math.max(0,state.tableOffset-200);await loadTable();});$('runQuery').onclick=guarded(async()=>{const started=performance.now();const result=await api('query',{sql:$('sql').value});table($('queryData'),result.rows);$('queryStatus').textContent=`${result.rows.length} rows${result.has_more?' · more available':''} · ${Math.round(performance.now()-started)} ms`;});$('export').onclick=()=>download('evomneme-selection.json',JSON.stringify({selection:filters(),snapshot:state.snapshot,recorded:state.recorded.filter(matches),note:'Local export may contain host knowledge.'},null,2),'application/json');$('png').onclick=()=>{const a=document.createElement('a');a.href=cy.png({bg:'#0e1623',scale:2,full:true});a.download='evomneme-graph.png';a.click();};
+$('record').onclick=()=>{state.recording=!state.recording;state.recordingSince=state.recording?Date.now()/1000:Infinity;$('record').classList.toggle('recording',state.recording);$('record').textContent=state.recording?'Ⅱ Pause recording':'● Record highlight';};
+$('reset').onclick = () => {
+  state.recorded=[];
+  state.selectedActivity=null;
+  state.recordingSince=state.recording?Date.now()/1000:Infinity;
+  cy.elements().removeClass('changed');
+  applyHighlight();
+};
+$('loadHistory').onclick = () => {state.selectedActivity=null;state.recorded=[...state.history];applyHighlight();};
+$('showAccumulated').onclick = () => {state.selectedActivity=null;applyHighlight();};
+for (const key of ['chat','session','agent']) $(key).onchange = () => {
+  state.selectedActivity=null;
+  updateSessionOptions();
+  applyHighlight();
+};
+$('onlyTouched').onchange=applyHighlight;
+
+// Pointer interaction opts out of following growth; programmatic fit/layout does not.
+let pointerStart=null;
+$('cy').addEventListener('wheel',()=>{$('followGraph').checked=false;},{passive:true});
+$('cy').addEventListener('pointerdown',event=>{pointerStart={x:event.clientX,y:event.clientY};});
+$('cy').addEventListener('pointermove',event=>{
+  if (pointerStart && Math.hypot(event.clientX-pointerStart.x,event.clientY-pointerStart.y)>5) $('followGraph').checked=false;
+});
+window.addEventListener('pointerup',()=>{pointerStart=null;});
+window.addEventListener('pointercancel',()=>{pointerStart=null;});
+cy.on('mouseover','node,edge',event=>{
+  event.target.addClass('hovered');
+  $('cy').title=event.target.data('label');
+});
+cy.on('mouseout','node,edge',event=>{event.target.removeClass('hovered');$('cy').title='';});
+let resizeTimer;
+const graphResize=new ResizeObserver(()=>{
+  const bounds=$('cy').getBoundingClientRect();
+  if (bounds.width<1 || bounds.height<1) return;
+  cy.resize();
+  clearTimeout(resizeTimer);
+  resizeTimer=setTimeout(()=>{
+    if (state.pendingLayout) layout({seed:true});
+    else if ($('followGraph').checked) layout({runLayout:false});
+  },150);
+});
+graphResize.observe($('cy'));
+document.querySelectorAll('.tab').forEach(button => button.onclick=guarded(async () => {
+  state.view=button.dataset.view;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b===button));
+  for (const view of ['graph','tables','query']) $(view+'View').classList.toggle('hidden',view!==state.view);
+  if (state.view==='graph') {
+    cy.resize();
+    if (state.pendingLayout) layout({seed:true});
+  }
+  if (state.view==='tables') await loadTable();
+}));
+$('tableSelect').onchange=guarded(async()=>{state.tableOffset=0;await loadTable();});
+$('tableNext').onclick=guarded(async()=>{state.tableOffset+=200;await loadTable();});
+$('tablePrevious').onclick=guarded(async()=>{state.tableOffset=Math.max(0,state.tableOffset-200);await loadTable();});
+$('runQuery').onclick=guarded(async()=>{
+  const started=performance.now();
+  const result=await api('query',{sql:$('sql').value});
+  table($('queryData'),result.rows);
+  $('queryStatus').textContent=`${result.rows.length} rows${result.has_more?' · more available':''} · ${Math.round(performance.now()-started)} ms`;
+});
+$('export').onclick=()=>download('evomneme-selection.json',JSON.stringify({selection:filters(),snapshot:state.snapshot,recorded:state.recorded.filter(matches),note:'Local export may contain host knowledge.'},null,2),'application/json');
+$('png').onclick=()=>{const a=document.createElement('a');a.href=cy.png({bg:'#0e1623',scale:2,full:true});a.download='evomneme-graph.png';a.click();};
 if(!token)showError(new Error('Open the complete viewer URL printed by the server, including its token.'));
 refresh(true);setInterval(()=>{if($('live').checked)refresh();},2000);
