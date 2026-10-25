@@ -241,6 +241,18 @@ class ExecutorTests(unittest.TestCase):
                 self.assertFalse(self.execute(sql, params=params)['ok'])
         self.assertFalse(external.exists())
 
+    def test_temporary_attach_is_literal_only_and_bound_filenames_stay_denied(self):
+        """The authorizer sees an empty literal, not the value of an ATTACH parameter."""
+        self.assertTrue(self.execute([{'sql': "ATTACH '' AS literal_scratch"}, {'sql': 'DETACH literal_scratch'}])['ok'])
+        external = self.area / 'external.sqlite3'
+        for destination in ('', str(external)):
+            with self.subTest(destination=destination):
+                result = self.execute('ATTACH ? AS bound_scratch', params=[destination])
+                self.assertFalse(result['ok'])
+                self.assertEqual(result['error']['sqlite_errorname'], 'SQLITE_AUTH')
+        self.assertFalse(external.exists())
+        self.assertEqual([row[1] for row in self.rows('PRAGMA database_list')], ['main'])
+
     def test_select_prefix_stops_early_and_does_not_count_omitted_rows(self):
         """A bounded SELECT needs only its prefix/lookahead, not a complete table scan."""
         seen = []
@@ -393,6 +405,57 @@ class ExecutorTests(unittest.TestCase):
         self.assertTrue(responses[4]['result']['isError'])
         self.assertEqual(responses[5]['result'], {})
         self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='forbidden'"), [])
+
+    def test_deep_json_rejection_recovers_wire_cli_and_python_without_writes(self):
+        """A small but excessively nested input fails before SQL and keeps MCP alive."""
+        self.assertTrue(self.execute('CREATE TABLE protected(value)')['ok'])
+        nested_json = ('[' * 10000) + '0' + (']' * 10000)
+        raw = ('{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute_sql",'
+               '"arguments":{"sql":"INSERT INTO protected VALUES(1)","params":' + nested_json + '}}}').encode()
+        self.assertLess(len(raw), runtime.MAX_INPUT_BYTES)
+        responses = self.wire(self.handshake() + [raw, {'jsonrpc': '2.0', 'id': 3, 'method': 'ping'},
+                              self.call({'sql': 'SELECT count(*) FROM protected'}, 4)])
+        self.assertEqual(responses[1]['error']['code'], -32700)
+        self.assertEqual(responses[2]['result'], {})
+        self.assertEqual(responses[3]['result']['structuredContent']['results'][0]['rows'], [[0]])
+        cli = self.cli('--input', '-', input_bytes=(
+            '{"sql":"INSERT INTO protected VALUES(1)","params":' + nested_json + '}').encode())
+        self.assertNotEqual(cli.returncode, 0)
+        self.assertIn('nesting', json.loads(cli.stdout)['error']['message'])
+        nested = 0
+        for _ in range(10000):
+            nested = [nested]
+        direct = self.execute('INSERT INTO protected VALUES(1)', params=nested)
+        self.assertFalse(direct['ok'])
+        self.assertEqual(direct['error']['kind'], 'request')
+        self.assertIn('nesting', direct['error']['message'])
+        self.assertEqual(self.rows('SELECT count(*) FROM protected'), [[0]])
+
+    def test_unencodable_unicode_and_invalid_utf8_fail_before_dispatch_and_recover(self):
+        """Lone surrogates fail while valid supplementary characters still round-trip."""
+        self.assertTrue(self.execute('CREATE TABLE protected(value)')['ok'])
+        lone_id = b'{"jsonrpc":"2.0","id":"\\ud800","method":"ping"}'
+        lone_write = (b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute_sql",'
+                      b'"arguments":{"sql":"INSERT INTO protected VALUES(1)"}},"unused":"\\udfff"}')
+        invalid_utf8 = b'{"jsonrpc":"2.0","id":"\xff","method":"ping"}'
+        pair_id = b'{"jsonrpc":"2.0","id":"\\ud83d\\ude00","method":"ping"}'
+        pair_parameter = (b'{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute_sql",'
+                          b'"arguments":{"sql":"SELECT ?","params":["\\ud83d\\ude00"]}}}')
+        notification = b'{"jsonrpc":"2.0","method":"ping","params":{"unused":"valid"}}'
+        responses = self.wire(self.handshake() + [lone_id, lone_write, invalid_utf8, notification, pair_id, pair_parameter,
+                              self.call({'sql': 'SELECT count(*) FROM protected'}, 5)])
+        self.assertEqual([item['error']['code'] for item in responses[1:4]], [-32700] * 3)
+        self.assertTrue(all(item['id'] is None for item in responses[1:4]))
+        self.assertEqual(responses[4], {'jsonrpc': '2.0', 'id': '\U0001f600', 'result': {}})
+        self.assertEqual(responses[5]['result']['structuredContent']['results'][0]['rows'], [['\U0001f600']])
+        self.assertEqual(responses[6]['result']['structuredContent']['results'][0]['rows'], [[0]])
+        cli = self.cli('--input', '-', input_bytes=b'{"sql":"INSERT INTO protected VALUES(1)","unused":"\\ud800"}')
+        self.assertNotEqual(cli.returncode, 0)
+        self.assertIn('Unicode', json.loads(cli.stdout)['error']['message'])
+        direct = self.execute('INSERT INTO protected VALUES(?)', params=['\ud800'])
+        self.assertFalse(direct['ok'])
+        self.assertEqual(direct['error']['kind'], 'request')
+        self.assertEqual(self.rows('SELECT count(*) FROM protected'), [[0]])
 
     def test_self_keyword_uses_shared_validation_and_wire_recovers_without_writes(self):
         """A JSON argument cannot collide with the bound method receiver or stop MCP."""

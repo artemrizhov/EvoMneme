@@ -49,11 +49,20 @@ def json_bytes(value):
 
 
 def json_loads(value):
-    """Reject NaN/Infinity before inspecting any JSON fields."""
+    """Reject unsupported depth, numeric constants and Unicode before dispatch."""
     def reject_constant(constant):
         """Reject the permissive constants otherwise accepted by Python's decoder."""
         raise RequestError('Nonstandard JSON numeric constant: ' + constant)
-    return json.loads(value, parse_constant=reject_constant)
+    try:
+        decoded = json.loads(value, parse_constant=reject_constant)
+        # Escaped surrogate pairs decode to valid Unicode; lone surrogates must
+        # fail here before an echoed request id or diagnostic reaches UTF-8 output.
+        json_bytes(decoded)
+    except RecursionError as exc:
+        raise RequestError('JSON nesting exceeds the supported depth') from exc
+    except UnicodeEncodeError as exc:
+        raise RequestError('JSON contains an unencodable Unicode string') from exc
+    return decoded
 
 
 def parameter(value):
@@ -197,6 +206,8 @@ class Executor:
         try:
             batch = commands(sql, params, limits, unknown)
             self._check_binding()
+        except RecursionError as exc:
+            return error_result(response, 'request', RequestError('Execution arguments exceed the supported nesting depth'), None, budget)
         except (OSError, ValueError, TypeError) as exc:
             return error_result(response, 'request', exc, None, budget)
         deadline = time.monotonic() + timeout_ms / 1000

@@ -88,7 +88,7 @@ def serve(executor, incoming, outgoing):
             try:
                 message = json_loads(raw.decode('utf-8'))
             except (ValueError, UnicodeError):
-                response = protocol_error(None, -32700, 'Invalid UTF-8 JSON')
+                response = protocol_error(None, -32700, 'Invalid or unsupported UTF-8 JSON')
             else:
                 response = server.handle(message)
         if response is not None:
