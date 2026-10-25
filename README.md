@@ -15,11 +15,9 @@ New sessions and limited working context can leave an agent rediscovering projec
 The tool is deliberately thin: **receive SQL → execute it in SQLite → return a compact result**. The agent chooses and evolves the schema, writes SQL, checks source/version provenance, and reconciles knowledge during normal work. No domain-specific indexing API or automatic code analyzer stands between the agent and SQLite.
 
 ```mermaid
-flowchart LR
-    Source[Project source] -->|Inspect and verify| Agent[AI development agent]
-    Agent -->|Authorized code changes| Source
-    Agent -->|Record and reconcile via SQL| Memory[(Local SQLite knowledge)]
-    Memory -->|Retrieve compact context| Agent
+flowchart TB
+    Source[Project source] <-->|"Inspect and verify<br/>Authorized code changes"| Agent[AI development agent]
+    Agent <-->|"Record and reconcile via SQL<br/>Retrieve compact context"| Memory[(Local SQLite knowledge)]
 ```
 
 The agent drives this loop during active development sessions. SQLite stores knowledge; optional MCP carries SQL calls and results. Neither independently interprets code or maintains the graph.
