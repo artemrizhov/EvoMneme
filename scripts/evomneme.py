@@ -33,6 +33,10 @@ INPUT_SCHEMA = {
                        'properties': {'sql': {'type': 'string'}, 'params': PARAMS_SCHEMA}}},
         ]},
         'params': PARAMS_SCHEMA,
+        'activity_context': {'type': 'object', 'additionalProperties': False,
+                             'description': 'Optional explicit main chat, work session and agent identities for configured local tracing. Never inferred from MCP. Does not change SQL results.',
+                             'properties': {key: {'type': 'string', 'minLength': 1, 'maxLength': 200}
+                                            for key in ('chat_id', 'session_id', 'agent_id')}},
         **{key: {'type': 'integer', 'default': bounds[0], 'minimum': bounds[1], 'maximum': bounds[2]}
            for key, bounds in LIMITS.items()},
     },
@@ -170,6 +174,7 @@ class Executor:
         self.connection = sqlite3.connect(self.path.as_uri() + '?mode=rw', uri=True,
                                           isolation_level=None, timeout=LIMITS['timeout_ms'][0] / 1000)
         self.closed = False
+        self.activity_log = None
         try:
             self.connection.execute('PRAGMA foreign_keys=ON')
             self.connection.enable_load_extension(False)
@@ -198,7 +203,20 @@ class Executor:
 
     def execute_sql(self, /, sql=None, params=None, max_rows=LIMITS['max_rows'][0],
                     max_output_bytes=LIMITS['max_output_bytes'][0],
-                    timeout_ms=LIMITS['timeout_ms'][0], **unknown):
+                    timeout_ms=LIMITS['timeout_ms'][0], activity_context=None, **unknown):
+        """Keep SQL results unchanged when optional activity observation is enabled."""
+        started = time.monotonic()
+        accesses = []
+        if activity_context is not None and (not isinstance(activity_context, dict) or
+                set(activity_context) - {'chat_id', 'session_id', 'agent_id'} or
+                any(not isinstance(v, str) or not 1 <= len(v) <= 200 for v in activity_context.values())):
+            return error_result(empty_result(), 'request', RequestError('Invalid activity_context'), None, LIMITS['max_output_bytes'][0])
+        response = self._execute_sql(sql, params, max_rows, max_output_bytes, timeout_ms, accesses, unknown)
+        if self.activity_log:
+            self.activity_log.record(response, accesses, (time.monotonic() - started) * 1000, activity_context)
+        return response
+
+    def _execute_sql(self, sql, params, max_rows, max_output_bytes, timeout_ms, accesses, unknown):
         """Run native statements; callers own SQL transactions, requests clean up open ones."""
         response = empty_result()
         limits = {'max_rows': max_rows, 'max_output_bytes': max_output_bytes, 'timeout_ms': timeout_ms}
@@ -226,6 +244,11 @@ class Executor:
 
         def authorize(action, first, second, database, trigger):
             """Use engine write metadata for RETURNING; prohibit external file capabilities."""
+            if self.activity_log and database == 'main' and accesses:
+                if action == sqlite3.SQLITE_READ:
+                    accesses[-1]['read'].add(first)
+                elif action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE}:
+                    accesses[-1]['write'].add(first)
             if action == sqlite3.SQLITE_ATTACH and first != '':
                 return sqlite3.SQLITE_DENY
             if action == sqlite3.SQLITE_FUNCTION and (second or '').lower() in {'load_extension', 'readfile', 'writefile'}:
@@ -243,6 +266,7 @@ class Executor:
         try:
             self.connection.set_progress_handler(expired, PROGRESS_STEPS)
             for index, (statement, bindings) in enumerate(batch):
+                accesses.append({'read': set(), 'write': set()})
                 if expired():
                     raise TimeoutError('SQL execution exceeded timeout_ms')
                 self.connection.set_authorizer(None)
@@ -347,6 +371,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', required=True, help='Absolute local SQLite path; existing unless --create')
     parser.add_argument('--create', action='store_true', help='Create a new empty file; refuses existing paths')
+    parser.add_argument('--trace-directory', help='Optional absolute host-local activity directory')
+    parser.add_argument('--session-id', help='Explicit chat/session identity for optional activity tracing')
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--sql', help='One native SQLite statement')
     source.add_argument('--sql-file', help='UTF-8 file containing ONE statement, or - for stdin')
@@ -370,6 +396,9 @@ def main(argv=None):
                 arguments['params'] = json_loads(args.params)
             arguments.update({key: getattr(args, key) for key in LIMITS if getattr(args, key) is not None})
         executor = Executor(args.database, args.create)
+        if args.trace_directory or args.session_id:
+            from evomneme_trace import configure_trace
+            configure_trace(executor, args.trace_directory, args.session_id)
         result = executor.execute_sql(**arguments)
     except (OSError, ValueError, TypeError, sqlite3.Error) as exc:
         result = error_result(empty_result(), 'request', exc, None, LIMITS['max_output_bytes'][0])

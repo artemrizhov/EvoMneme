@@ -1,5 +1,7 @@
 # Host knowledge through SQL
 
+For read-only visual investigation, graph slices, provenance detail and explicit session/agent activity highlighting, see the optional [local memory explorer](viewer.md). It accepts starter or custom SQL graph projections without migrating the host schema.
+
 The agent designs and maintains knowledge; the tool only executes SQL. It accepts reads, writes, DDL, and agent-authored migrations against an explicitly bound SQLite file. It has no knowledge-specific commands, automatic schema, source scanner, Git integration, loader installer, or automatic reconciliation. Use it only for an authorized host; never create a live host store for EvoMneme itself, its forks, or worktrees.
 
 ## Connect one local store

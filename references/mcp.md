@@ -1,5 +1,7 @@
 # Optional MCP SQL transport
 
+Optional local [Cytoscape explorer and activity tracing](viewer.md) add explicit per-call `activity_context` (`chat_id`, `session_id`, `agent_id`) and startup `--trace-directory` / `--session-id` flags. Tracing is off unless configured and does not change SQL results or discover chat ancestry. The separate read-only viewer binds to loopback; the stdio adapter remains network-free.
+
 The stdio adapter exposes one `execute_sql` tool backed by the same executor as the CLI. Its database is bound once at startup; callers cannot choose a path in tool arguments. It has no network server, SDK dependency, code scanner, knowledge API, automatic schema, or instruction loader. Use it only when the authorized host's existing MCP client supports stdio; otherwise the SQL CLI or an existing authorized SQLite interface is sufficient.
 
 ## Project-local setup

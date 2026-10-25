@@ -101,10 +101,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', required=True)
     parser.add_argument('--create', action='store_true')
+    parser.add_argument('--trace-directory', help='Optional absolute host-local activity directory')
+    parser.add_argument('--session-id', help='Explicit chat/session identity for optional activity tracing')
     args = parser.parse_args(argv)
     executor = None
     try:
         executor = Executor(args.database, args.create)
+        if args.trace_directory or args.session_id:
+            from evomneme_trace import configure_trace
+            configure_trace(executor, args.trace_directory, args.session_id)
         serve(executor, sys.stdin.buffer, sys.stdout.buffer)
         return 0
     except (OSError, ValueError, sqlite3.Error) as exc:
