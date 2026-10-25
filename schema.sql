@@ -2,9 +2,11 @@
 -- Never auto-applied: the agent owns schema design, versioning and migrations.
 -- Apply only to a new empty authorized HOST database, never the tool repository.
 -- Inspect/preserve existing tables and data; do not blindly rerun this script.
--- The SQL executor supplies the transaction and enables foreign keys per connection.
--- Direct SQLite users: enable foreign_keys before BEGIN and wrap this entire script
--- in a transaction themselves. Host identity, scope and source hashes are agent-owned.
+-- RAW SQLITE SCRIPT: use an authorized SQLite script facility, not execute_sql
+-- or CLI --sql-file (each accepts only one native statement). Never add a splitter.
+-- Host identity, scope and source hashes are agent-owned.
+PRAGMA foreign_keys = ON;
+BEGIN IMMEDIATE;
 CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE scopes (
     id TEXT PRIMARY KEY, branch TEXT NOT NULL, worktree TEXT NOT NULL,
@@ -48,3 +50,4 @@ CREATE INDEX evidence_record ON evidence(scope_id,record_id);
 CREATE INDEX evidence_relation ON evidence(scope_id,relation_id);
 INSERT INTO metadata VALUES ('schema_version','2');
 PRAGMA user_version = 2;
+COMMIT;

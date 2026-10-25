@@ -5,23 +5,14 @@ import argparse
 import sqlite3
 import sys
 
-from evomneme import Executor, MAX_INPUT_BYTES, RequestError, json_bytes, json_loads
+from evomneme import Executor, INPUT_SCHEMA, MAX_INPUT_BYTES, RequestError, json_bytes, json_loads
 
 PROTOCOL_VERSION = '2025-11-25'
 SUPPORTED_PROTOCOLS = {PROTOCOL_VERSION, '2025-06-18'}
 TOOL = {
     'name': 'execute_sql',
-    'description': 'Execute SQLite SQL atomically on the one database bound at server startup. Params require one statement. Output may omit whole rows; check rows_omitted/output_truncated. SQL errors roll back the complete request.',
-    'inputSchema': {
-        'type': 'object', 'required': ['sql'], 'additionalProperties': False,
-        'properties': {
-            'sql': {'type': 'string'},
-            'params': {'anyOf': [{'type': 'array'}, {'type': 'object'}]},
-            'max_rows': {'type': 'integer', 'minimum': 0, 'maximum': 1000, 'default': 50},
-            'max_output_bytes': {'type': 'integer', 'minimum': 1024, 'maximum': 1048576, 'default': 16384},
-            'timeout_ms': {'type': 'integer', 'minimum': 1, 'maximum': 60000, 'default': 5000},
-        },
-    },
+    'description': 'Execute one native SQLite statement or an explicit array of {sql,params} commands on the bound database. Callers own SQL transactions; unclosed ones roll back at request end. Earlier autocommitted effects remain. Check has_more for bounded rows.',
+    'inputSchema': INPUT_SCHEMA,
 }
 
 
@@ -74,7 +65,7 @@ class Server:
                 return protocol_error(request_id, -32602, 'Unknown tool')
             if not isinstance(params.get('arguments'), dict):
                 return protocol_error(request_id, -32602, 'Tool arguments must be an object')
-            output = self.executor.execute(params['arguments'])
+            output = self.executor.execute_sql(**params['arguments'])
             result = {'content': [{'type': 'text', 'text': json_bytes(output).decode('utf-8')}],
                       'structuredContent': output, 'isError': not output['ok']}
         else:
