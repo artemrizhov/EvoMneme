@@ -1,6 +1,6 @@
 # Local memory explorer
 
-The optional explorer renders an explicitly selected host SQLite database with **Cytoscape.js**. It opens the file read-only and never applies a schema, migrates data, or activates EvoMneme. Develop this repository using synthetic fixtures only. Keep host databases, traces, mappings and exports in the host's excluded local working area.
+The optional explorer renders an explicitly selected host SQLite database with **Cytoscape.js**. By default it opens the file read-only. Explicit `--record-changes` installs and maintains the published [row-change journal](change-history.md); graph/table/SQL inspection still uses read-only connections. It never activates EvoMneme or migrates the base graph schema. Develop this repository using synthetic fixtures only. Keep host databases, traces, mappings and exports in the host's excluded local working area.
 
 ## Start
 
@@ -42,7 +42,7 @@ The starter `records`/`relations` and code `code_symbols`/`code_edges` schemas a
 
 Code detail shows the original owner, qualified name, signature and source locator, plus the stored `code_files` coverage/review row when compatible. Partial signatures and review statuses are displayed as stored, without asserting semantic correctness. Starter evidence is attached only to knowledge records/relationships, never to a code symbol merely sharing a local ID. The compact whole-graph response omits long detail fields; content fingerprints still reveal updates to those fields, and selection retrieves full bounded details.
 
-The viewer builds its built-in normalized projections in request-local **memory-only temporary tables** and indexes for efficient joins and filters. The main file stays SQLite `mode=ro`; this performs no host schema/data migration or persistent indexing. Caller SQL remains `query_only` and cannot enable writes, attach files or load extensions. A read-only `PRAGMA data_version` watcher avoids retransmitting an unchanged whole graph and detects commits from active WAL writers. Changes during a read appear on a subsequent poll. Close/restart the server to release its watcher. After installing these Python changes, restart the viewer server and reload the browser; no host database migration is needed.
+The viewer builds its built-in normalized projections in request-local **memory-only temporary tables** and indexes for efficient joins and filters. Inspection connections use SQLite `mode=ro`; caller SQL remains `query_only` and cannot enable writes, attach files or load extensions. A read-only `PRAGMA data_version` watcher avoids retransmitting an unchanged whole graph and detects commits from active WAL writers. Changes during a read appear on a subsequent poll. Close/restart the server to release its watcher. After installing Python changes, restart the viewer server and reload the browser. Persistent history is a separate explicit schema extension, enabled with `--record-changes` as described below.
 
 ## Other schemas
 
@@ -59,7 +59,9 @@ Nodes require unique **text** `graph_id` and `label`. Edges require unique **tex
 
 ## Live activity and identities
 
-**Live** refreshes every two seconds. Created/modified elements in the unchanged loaded slice turn green. Removed elements disappear and are counted in the timeline. Snapshot changes are **unattributed**: they are never assigned to the last chat that queried the database. Changes outside the loaded slice or entirely between polls cannot be reconstructed.
+**Live** refreshes every two seconds. Dropdown elements/options are retained when unchanged; changed options wait until a focused dropdown loses focus. Created/modified elements in the unchanged loaded slice turn green. Removed elements disappear and are counted in the timeline. Snapshot changes are **unattributed**: they are never assigned to the last chat that queried the database. Without persistent recording, changes outside the loaded slice or entirely between polls cannot be reconstructed.
+
+To retain row changes across page/server restarts, explicitly add `--record-changes` to the viewer command. This creates `evomneme_change_log`, `evomneme_change_elements`, `evomneme_change_meta` and ordinary SQLite triggers in the selected database. Each changed row has its own change ID, bounded typed before/after values and supported graph references. The latest changes load on opening the page; **Older database changes** retrieves earlier pages. Select an activity to highlight its current graph elements and inspect the saved row transition, including deleted elements. Reset highlight only clears browser highlighting. See [persistent change history](change-history.md) for setup, suspension, schema compatibility, storage and recording limits. Changes predating installation are not recoverable from this journal.
 
 Opt in to read/write tracing on each SQL/MCP process:
 
@@ -93,7 +95,7 @@ Tracing preserves SQL result objects. Events record time, identities, table acce
 - A single-table `records`, `relations`, `code_symbols` or `code_edges` result with unique `scope_id` and `id` columns yields returned node/relationship references in that table's namespace. Joins involving other tables, aggregate queries and results omitting IDs remain table-level activity.
 - For custom schemas, explicitly return `trace_node_id` or `trace_edge_id` with the **same text IDs** as the graph mapping. SELECT and DML RETURNING support these aliases; they are explicit agent assertions identifying graph elements.
 - A reference means an ID was **returned to the caller**, not that every examined row was returned or that the agent understood/used it. Output bounds and aggregation hide some/all exact IDs. Writes without returned identifiers remain attempted table activity; rollback is labeled. Use `RETURNING scope_id,id` or explicit aliases for precise affected IDs. Per-chat committed node creation is never guessed from write attempts.
-- Uninstrumented clients cannot report reads. Their committed changes may appear through snapshots. No triggers or tracing tables are installed in the host database.
+- Uninstrumented clients cannot report reads. Their committed changes appear through snapshots or the separately enabled SQLite journal. JSONL call tracing itself installs no triggers or tables.
 
 For example, add `RETURNING json_array(scope_id,id) AS trace_node_id` to a starter record INSERT, or `RETURNING json_array(scope_id,id) AS trace_edge_id` to a relationship INSERT. The explicit aliases also work when foreign-key checks/triggers access additional tables and make implicit single-table attribution ambiguous.
 

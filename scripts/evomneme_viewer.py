@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only, loopback Cytoscape explorer for an explicitly selected host SQLite file."""
+"""Loopback Cytoscape explorer; read-only unless row-history recording is requested."""
 
 import argparse
 from contextlib import contextmanager
@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from evomneme import cell, json_bytes
 from evomneme_graph import projection_sql
+from evomneme_journal import install as install_journal, read as read_changes, status as journal_status
 
 ASSETS = Path(__file__).parent / 'viewer'
 MAX_ROWS = 2000
@@ -31,7 +32,7 @@ def read_authorizer(action, first, second, database, trigger):
     if action == sqlite3.SQLITE_FUNCTION and (second or '').lower() in {'load_extension', 'readfile', 'writefile'}:
         return sqlite3.SQLITE_DENY
     if action == sqlite3.SQLITE_PRAGMA:
-        if (first or '').lower() not in {'table_info', 'foreign_key_list', 'page_count', 'page_size', 'freelist_count', 'query_only', 'user_version', 'schema_version'}:
+        if (first or '').lower() not in {'table_info', 'table_list', 'foreign_key_list', 'page_count', 'page_size', 'freelist_count', 'query_only', 'user_version', 'schema_version'}:
             return sqlite3.SQLITE_DENY
         if (first or '').lower() in {'query_only', 'user_version', 'schema_version'} and second is not None:
             return sqlite3.SQLITE_DENY
@@ -49,7 +50,7 @@ def bounded_cell(value):
 
 
 class Explorer:
-    def __init__(self, database, mapping=None, trace_directory=None):
+    def __init__(self, database, mapping=None, trace_directory=None, record_changes=False):
         requested = Path(database)
         if not requested.is_absolute() or str(database).startswith(('\\\\', '//')):
             raise ValueError('database must be an absolute local file path')
@@ -67,6 +68,23 @@ class Explorer:
         self.watch_lock = threading.Lock()
         self.watch_token = secrets.token_hex(8)
         self.snapshot_key = None
+        self.manage_changes = record_changes
+        self.journal_schema_version = None
+        if record_changes:
+            self.journal_schema_version = install_journal(self.path)['schema_version']
+
+    def maintain_journal(self):
+        if not self.manage_changes:
+            return
+        with self.connect() as db:
+            version = db.execute('PRAGMA schema_version').fetchone()[0]
+        if version != self.journal_schema_version:
+            self.journal_schema_version = install_journal(self.path)['schema_version']
+
+    def changes(self, values):
+        self.maintain_journal()
+        with self.connect() as db:
+            return read_changes(db, values)
 
     def close(self):
         with self.watch_lock:
@@ -193,6 +211,7 @@ class Explorer:
 
     def snapshot(self, values):
         started = time.monotonic()
+        self.maintain_journal()
         whole = values.get('whole_graph') is True
         revision = self.revision() if whole else None
         snapshot_key = json.dumps({k: v for k, v in values.items() if k != 'revision'}, sort_keys=True)
@@ -206,7 +225,7 @@ class Explorer:
             result = {'tables': tables, 'bytes': db.execute('PRAGMA page_count').fetchone()[0] * db.execute('PRAGMA page_size').fetchone()[0],
                       'nodes': [], 'edges': [], 'graph_available': bool(mapping), 'facets': {}, 'edge_facets': {}, 'totals': {}, 'offset': offset,
                       'node_has_more': False, 'edge_has_more': False, 'whole_graph': whole,
-                      'revision': revision, 'layers': []}
+                      'revision': revision, 'layers': [], 'journal': journal_status(db, False)}
             if mapping:
                 columns = [c[0] for c in db.execute('SELECT * FROM (' + mapping['nodes'] + ') LIMIT 0').description]
                 edge_columns = [c[0] for c in db.execute('SELECT * FROM (' + mapping['edges'] + ') LIMIT 0').description]
@@ -482,7 +501,8 @@ def make_server(explorer, port=0):
                 if not isinstance(values, dict):
                     raise ValueError('Expected object')
                 routes = {'/api/snapshot': explorer.snapshot, '/api/query': explorer.query,
-                          '/api/detail': explorer.detail, '/api/events': explorer.events}
+                          '/api/detail': explorer.detail, '/api/events': explorer.events,
+                          '/api/changes': explorer.changes}
                 if self.path not in routes:
                     return self.respond(404, {'error': 'Not found'})
                 self.respond(200, routes[self.path](values))
@@ -500,9 +520,10 @@ def main():
     parser.add_argument('--mapping', help='JSON file with read-only nodes and edges SQL projections')
     parser.add_argument('--trace-directory', help='Same explicit directory used by traced executors')
     parser.add_argument('--port', type=int, default=0)
+    parser.add_argument('--record-changes', action='store_true', help='Explicitly install/maintain versioned row-history tables and triggers in this database; default is read-only')
     args = parser.parse_args()
     mapping = json.loads(Path(args.mapping).read_text(encoding='utf-8')) if args.mapping else None
-    explorer = Explorer(args.database, mapping, args.trace_directory)
+    explorer = Explorer(args.database, mapping, args.trace_directory, record_changes=args.record_changes)
     server, token = make_server(explorer, args.port)
     print('EvoMneme viewer: http://127.0.0.1:' + str(server.server_port) + '/#token=' + token, flush=True)
     try:

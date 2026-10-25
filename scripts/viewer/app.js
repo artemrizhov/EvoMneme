@@ -6,7 +6,8 @@ history.replaceState(null, '', location.pathname);
 const state = { snapshot: null, offset: 0, root: '', selected: null, pathStart: null, recording: false,
   recorded: [], history: [], sessions: new Map(), cursors: {}, changes: new Set(), previous: null,
   busy: false, tableOffset: 0, missed: false, view: 'graph', filterKey: '', recordingSince: Infinity, nullField:'',
-  selectedActivity:null,pendingLayout:false,disabledLayers:new Set(),revision:null,refreshQueued:false,resetQueued:false };
+  selectedActivity:null,pendingLayout:false,disabledLayers:new Set(),revision:null,refreshQueued:false,resetQueued:false,
+  journal:null,changeAfter:null,changeBefore:null,changeOlder:false,changeBusy:false,seenChanges:new Set(),timelineLimit:35 };
 const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c8d889','#88cdd7','#ccab91','#b0a3d4'];
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
 function showError(error) { $('error').textContent = error.message || String(error); $('error').classList.remove('hidden'); clearTimeout(showError.timer); showError.timer = setTimeout(() => $('error').classList.add('hidden'), 12000); }
@@ -40,6 +41,37 @@ function filters() {
   result.null_field = state.nullField;
   return result;
 }
+function syncSelect(select, choices, preserveMissing=true, force=false) {
+  const selected=select.value;
+  const next=choices.map(([value,label])=>[String(value),String(label)]);
+  if (preserveMissing && selected && !next.some(([value])=>value===selected)) next.push([selected,selected+' (0)']);
+  const key=JSON.stringify(next);
+  if (select._optionsKey===key) {select._pendingOptions=null;return;}
+  if (!force && document.activeElement===select) {
+    select._pendingOptions={choices,preserveMissing};
+    if (!select._blurSync) {
+      select._blurSync=true;
+      select.addEventListener('blur',()=>{
+        const pending=select._pendingOptions;
+        select._pendingOptions=null;
+        if (pending) syncSelect(select,pending.choices,pending.preserveMissing,true);
+      });
+    }
+    return;
+  }
+  select.replaceChildren(...next.map(([value,label])=>new Option(label,value)));
+  if (next.some(([value])=>value===selected)) select.value=selected;
+  select._optionsKey=key;
+}
+function facetSelect(container,field,label,prefix) {
+  let select=$(prefix+field);
+  if (!select) {
+    const wrapper=text('label',label);
+    select=document.createElement('select');select.id=prefix+field;select.dataset.field=field;
+    wrapper.append(select);container.append(wrapper);
+  }
+  return select;
+}
 function renderLayers(layers = []) {
   const labels={code:'Code entities',knowledge:'Knowledge',cross:'Cross-layer relationships',unresolved:'Unresolved / ambiguous references',custom:'Custom graph'};
   $('layers').replaceChildren();
@@ -60,27 +92,18 @@ function renderLayers(layers = []) {
 }
 function renderEdgeFilters(facets) {
   const container = $('edgeFilters');
-  const previous = {};
-  container.querySelectorAll('select').forEach(el => previous[el.dataset.field] = el.value);
-  container.replaceChildren();
   for (const [field, values] of Object.entries(facets)) {
-    const label = text('label', 'Relationship ' + field);
-    const select = document.createElement('select');
-    select.id = 'edge-' + field;
-    select.dataset.field = field;
-    select.add(new Option('All', ''));
-    for (const item of values) {
-      if (item.value != null) select.add(new Option(`${item.value} (${item.count})`, item.value));
-    }
-    if (previous[field] && ![...select.options].some(o => o.value === previous[field])) {
-      select.add(new Option(previous[field],previous[field]));
-    }
-    select.value = previous[field] || '';
-    label.append(select);
-    container.append(label);
+    const select=facetSelect(container,field,'Relationship '+field,'edge-');
+    syncSelect(select,[['','All'],...values.filter(v=>v.value!=null).map(v=>[v.value,`${v.value} (${v.count})`])]);
   }
 }
-function renderFilters(facets) { const container = $('filters'); const previous = {}; container.querySelectorAll('select').forEach(el => previous[el.dataset.field] = el.value); container.replaceChildren(); for (const [field, values] of Object.entries(facets)) { const label = text('label', {scope_id:'Scope / version',kind:'Node type',validity:'Validity',confidence:'Confidence',source_path:'Source file'}[field]); const select = document.createElement('select'); select.id = 'filter-' + field; select.dataset.field = field; select.add(new Option('All', '')); for (const item of values) if (item.value != null) select.add(new Option(`${item.value} (${item.count})`, item.value)); if (previous[field] && ![...select.options].some(o=>o.value===previous[field])) select.add(new Option(previous[field], previous[field])); select.value = previous[field] || ''; label.append(select); container.append(label); } }
+function renderFilters(facets) {
+  const labels={scope_id:'Scope / version',kind:'Node type',validity:'Validity',confidence:'Confidence',source_path:'Source file'};
+  for (const [field,values] of Object.entries(facets)) {
+    const select=facetSelect($('filters'),field,labels[field] || field,'filter-');
+    syncSelect(select,[['','All'],...values.filter(v=>v.value!=null).map(v=>[v.value,`${v.value} (${v.count})`])]);
+  }
+}
 function metrics(data) {
   $('overview').replaceChildren();
   const values = [
@@ -149,7 +172,7 @@ async function draw(data, resetLayout, key) {
       }
     }
     const removed = [...state.previous.keys()].filter(id => !next.has(id));
-    if (changed.length || removed.length) {
+    if ((changed.length || removed.length) && !state.journal?.enabled) {
       ingest([{source:'snapshot',time:Date.now()/1000, read:[], write:[],
         references:[], changed, removed, ok:true, elapsed_ms:0, returned_rows:0}]);
     } else if (!resetLayout) {
@@ -240,6 +263,8 @@ async function refresh(resetLayout=false) {
     }
     state.revision=data.revision;
     state.snapshot = data;
+    state.journal=data.journal || null;
+    $('storageMode').textContent=state.journal?.enabled?'LOCAL · HISTORY RECORDING':'LOCAL · READ ONLY';
     metrics(data);
     renderFilters(data.facets);
     renderEdgeFilters(data.edge_facets);
@@ -282,7 +307,7 @@ async function refresh(resetLayout=false) {
 }
 function matches(e){return ['chat','session','agent'].every(key=>!$(key).value||e[key]===$(key).value);}
 function isObservation(event) {
-  return event.source === 'snapshot' || Array.isArray(event.changed);
+  return event.source === 'snapshot' || event.source==='database_change' || Array.isArray(event.changed);
 }
 function identityLabel(event, key) {
   const titles = {chat:'chat_title',session:'session_title',agent:'agent_name'};
@@ -336,7 +361,29 @@ function applyHighlight() {
       : removed ? `Selected observation: ${removed} IDs were removed from the graph.`
         : 'Selected activity has no exact node/relationship IDs; only table-level access was recorded.';
   } else $('activitySelection').textContent = '';
+  renderChangeDetail(selected);
   renderTimeline();
+}
+function renderChangeDetail(event) {
+  const container=$('changeDetail');
+  const persistent=event?.source==='database_change';
+  container.classList.toggle('hidden',!persistent);
+  if (!persistent || container.dataset.changeId===String(event.change_id)) return;
+  container.dataset.changeId=String(event.change_id);
+  container.open=true;
+  $('changeMeta').textContent=`Change #${event.change_id} · ${event.operation.toUpperCase()} · ${event.table} · ${new Date(event.time*1000).toLocaleString()}`;
+  const before=event.before || {},after=event.after || {};
+  const keys=[...new Set([...Object.keys(before),...Object.keys(after)])].sort();
+  const format=cell=>{
+    if (!cell) return '(absent)';
+    const value=cell.value==null?'NULL':typeof cell.value==='object'?JSON.stringify(cell.value):String(cell.value);
+    return `[${cell.type}] ${value}${cell.truncated?` (preview; full length ${cell.length})`:''}`;
+  };
+  const changed=keys.filter(key=>JSON.stringify(before[key])!==JSON.stringify(after[key]));
+  table($('changeDiff'),(changed.length?changed:keys).map(key=>({field:key,before:format(before[key]),after:format(after[key])})));
+  $('changeNote').textContent=changed.length
+    ? 'Stored row transition. Deleted or renamed elements may be absent from the current graph. Long values are explicit previews.'
+    : 'The row changed, but bounded previews may be identical. Full values beyond the previews were not archived.';
 }
 function updateSessionOptions() {
   const identities = [...state.sessions.values()];
@@ -351,9 +398,7 @@ function updateSessionOptions() {
       const client = event.client?.name;
       choices.set(event[key],(client ? client + ' · ' : '') + identityLabel(event,key));
     }
-    $(key).replaceChildren(new Option('All '+(key==='chat'?'chats':key+'s'),''));
-    for (const [id,label] of [...choices.entries()].sort((a,b)=>a[1].localeCompare(b[1]))) $(key).add(new Option(label,id));
-    if (choices.has(selected)) $(key).value = selected;
+    syncSelect($(key),[['','All '+(key==='chat'?'chats':key+'s')],...[...choices.entries()].sort((a,b)=>a[1].localeCompare(b[1]))],false);
   }
   $('identityStatus').textContent = identities.length
     ? 'Identity filters contain SQL-call metadata only. Missing chat titles/IDs must be supplied by callers in activity_context; client names come from MCP initialization.'
@@ -361,6 +406,10 @@ function updateSessionOptions() {
 }
 function ingest(events) {
   for (const event of events) {
+    if (event.source==='database_change') {
+      if (state.seenChanges.has(event.change_id)) continue;
+      state.seenChanges.add(event.change_id);
+    }
     if (!isObservation(event)) {
       const key = JSON.stringify([event.chat,event.session,event.agent]);
       const previous = state.sessions.get(key) || {};
@@ -372,6 +421,7 @@ function ingest(events) {
     state.history.push(event);
     if (state.recording && event.time >= state.recordingSince) state.recorded.push(event);
   }
+  if (events.length) state.history.sort((a,b)=>a.time-b.time || (a.change_id || 0)-(b.change_id || 0));
   for (const collection of [state.history,state.recorded]) {
     if (collection.length > 10000) {
       collection.splice(0,collection.length-10000);
@@ -382,6 +432,7 @@ function ingest(events) {
     state.sessions.delete(state.sessions.keys().next().value);
     state.missed = true;
   }
+  state.seenChanges=new Set(state.history.filter(e=>e.source==='database_change').map(e=>e.change_id));
   updateSessionOptions();
   applyHighlight();
 }
@@ -392,19 +443,63 @@ async function pollEvents() {
   $('traceStatus').textContent = (data.enabled ? 'Tracing configured' : 'Tracing not configured')
     + (data.has_more ? ' · catching up' : '')
     + (state.missed ? ' · history / identities limited to latest 10,000' : '');
+  await pollChanges();
+}
+function historyButton() {
+  const scoped=['chat','session','agent'].some(key=>$(key).value);
+  $('olderChanges').disabled=scoped || state.changeBusy || (state.timelineLimit>=state.history.filter(matches).length && !state.changeOlder);
+  $('olderChanges').title=scoped?'Clear caller filters to inspect database changes with unknown authors.':'';
+}
+async function pollChanges(older=false) {
+  if (state.changeBusy) return;
+  if (!state.journal?.version) {
+    $('journalStatus').textContent='Persistent history is not enabled. Use --record-changes at server startup to install it explicitly.';
+    historyButton();return;
+  }
+  if (older && state.timelineLimit<state.history.filter(matches).length) {
+    state.timelineLimit=Math.min(10000,state.timelineLimit+100);renderTimeline();return;
+  }
+  state.changeBusy=true;
+  historyButton();
+  try {
+    let more=false;
+    for (let page=0;page<5;page++) {
+      const request={limit:state.changeAfter==null?100:200};
+      if (older) request.before_id=state.changeBefore;
+      else if (state.changeAfter!=null) request.after_id=state.changeAfter;
+      const data=await api('changes',request);
+      state.journal=data.journal;
+      $('storageMode').textContent=state.journal.enabled?'LOCAL · HISTORY RECORDING':'LOCAL · READ ONLY';
+      if (older || state.changeAfter==null) {
+        state.changeBefore=data.before_id;
+        state.changeOlder=data.has_older;
+      }
+      if (!older) state.changeAfter=data.after_id;
+      ingest(data.events);
+      if (older) state.timelineLimit=Math.min(10000,state.timelineLimit+data.events.length);
+      more=data.has_more;
+      if (!more || older) break;
+    }
+    const gaps=[...(state.journal.untracked_tables || []),...(state.journal.unsupported_tables || [])];
+    $('journalStatus').textContent=`Database history ${state.journal.enabled?'recording':'suspended'} · since ${state.journal.started_at || 'unknown'}`
+      +(more?' · catching up':'')+(gaps.length?' · not tracked: '+gaps.join(', '):'');
+    if (older) renderTimeline();
+  } finally {state.changeBusy=false;historyButton();}
 }
 function renderTimeline() {
   const list = $('timeline');
   const focused = document.activeElement?._activity;
   list.replaceChildren();
-  for (const event of state.history.filter(matches).slice(-35).reverse()) {
+  for (const event of state.history.filter(matches).slice(-state.timelineLimit).reverse()) {
     const row = text('button','','event');
     row.type = 'button';
     row._activity = event;
     row.setAttribute('aria-pressed',String(event === state.selectedActivity));
     row.onclick = () => selectActivity(event);
     row.append(text('span',new Date(event.time*1000).toLocaleTimeString(),'time'));
-    const details = event.changed
+    const details = event.source==='database_change'
+      ? `${event.operation.toUpperCase()} ${event.table} · ${new Set(references(event)).size} related IDs · saved in SQLite`
+      : event.changed
       ? `${event.changed.length} created / modified · ${event.removed.length} removed from snapshot`
       : `${event.read.length?'read '+event.read.join(', '):''} ${event.write.length?'write attempted '+event.write.join(', '):''}`
         + ` · ${event.returned_rows} returned · ${event.elapsed_ms} ms`
@@ -412,13 +507,16 @@ function renderTimeline() {
         + (event.durable_effects_possible ? ' · durable effects possible' : '')
         + (event.has_more ? ' · bounded output' : '')
         + (event.references_truncated ? ' · ID limit: table-level only' : '');
-    const label = isObservation(event)
+    const label = event.source==='database_change'
+      ? `Change #${event.change_id} · author not reported`
+      : isObservation(event)
       ? 'Database observation · author not reported'
       : [event.client?.name || 'SQL client not reported',identityLabel(event,'chat'),identityLabel(event,'session'),identityLabel(event,'agent')].join(' / ');
     row.append(text('span',`${label} · ${details}${event.ok?'':' · FAILED'}`,event.ok?'':'failed'));
     list.append(row);
     if (focused === event) row.focus({preventScroll:true});
   }
+  historyButton();
 }
 function table(container,rows){container.replaceChildren();if(!rows.length){container.append(text('p','No rows.','hint'));return;}const el=document.createElement('table'),thead=document.createElement('thead'),head=document.createElement('tr'),columns=[...new Set(rows.flatMap(Object.keys))];columns.forEach(c=>head.append(text('th',c)));thead.append(head);el.append(thead);const body=document.createElement('tbody');for(const row of rows){const tr=document.createElement('tr');columns.forEach(c=>tr.append(text('td',typeof row[c]==='object'?JSON.stringify(row[c],null,2):row[c])));body.append(tr);}el.append(body);container.append(el);}
 function attributes(container,record){const dl=document.createElement('dl');for(const [key,value]of Object.entries(record)){dl.append(text('dt',key),text('dd',typeof value==='object'?JSON.stringify(value,null,2):value));}container.append(dl);}
@@ -491,7 +589,7 @@ $('aggregate').onchange = () => {
   if ($('aggregate').value) $('perspective').value = $('aggregate').value;
   refresh(true);
 };
-function renderTables(tables){const select=$('tableSelect'),selected=select.value;select.replaceChildren();tables.forEach(t=>select.add(new Option(`${t.name} (${t.count})`,t.name)));if(tables.some(t=>t.name===selected))select.value=selected;}
+function renderTables(tables){syncSelect($('tableSelect'),tables.map(t=>[t.name,`${t.name} (${t.count})`]),false);}
 async function loadTable(){const name=$('tableSelect').value;if(!name){$('tableData').replaceChildren();return;}const definition=state.snapshot.tables.find(t=>t.name===name);$('schemaDetail').textContent=definition.sql+'\n\nForeign keys: '+JSON.stringify(definition.foreign_keys,null,2);const quoted='"'+name.replaceAll('"','""')+'"';const result=await api('query',{sql:`SELECT * FROM ${quoted} LIMIT 201 OFFSET ${state.tableOffset}`});table($('tableData'),result.rows);$('tablePage').textContent=`Rows ${state.tableOffset+1}–${state.tableOffset+result.rows.length} / ${definition.count}`;$('tablePrevious').disabled=state.tableOffset===0;$('tableNext').disabled=!result.has_more;}
 function download(name,data,type){const url=URL.createObjectURL(new Blob([data],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('refresh').onclick = () => refresh();
@@ -541,6 +639,7 @@ for (const key of ['chat','session','agent']) $(key).onchange = () => {
   applyHighlight();
 };
 $('onlyTouched').onchange=applyHighlight;
+$('olderChanges').onclick=guarded(()=>pollChanges(true));
 
 // Pointer interaction opts out of following growth; programmatic fit/layout does not.
 let pointerStart=null;
