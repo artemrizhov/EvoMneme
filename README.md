@@ -1,10 +1,28 @@
 # EvoMneme
 
+**Memory that evolves with the code.**
+
 **An AI tool, built by AI, for AI.**
 
 EvoMneme helps AI development agents retain useful project knowledge without flooding their working context. The agent maintains a local SQLite graph of code entities, relationships, findings, and decisions, then retrieves compact context and follows source locations when details matter. Technical, product, visual, and UI/UX reasons can survive beyond the conversation that discovered them.
 
+## Why keep project memory?
+
+New sessions and limited working context can leave an agent rediscovering project structure, dependencies, and the reasons behind earlier decisions. EvoMneme gives the agent a place to preserve useful findings and retrieve them later, while keeping the original source authoritative.
+
+## An agent-maintained knowledge graph
+
 The tool is deliberately thin: **receive SQL → execute it in SQLite → return a compact result**. The agent chooses and evolves the schema, writes SQL, checks source/version provenance, and reconciles knowledge during normal work. No domain-specific indexing API or automatic code analyzer stands between the agent and SQLite.
+
+```mermaid
+flowchart LR
+    Source[Project source] -->|Inspect and verify| Agent[AI development agent]
+    Agent -->|Authorized code changes| Source
+    Agent -->|Record and reconcile via SQL| Memory[(Local SQLite knowledge)]
+    Memory -->|Retrieve compact context| Agent
+```
+
+The agent drives this loop during active development sessions. SQLite stores knowledge; optional MCP carries SQL calls and results. Neither independently interprets code or maintains the graph.
 
 ## What is included
 
@@ -42,5 +60,7 @@ The agent consults knowledge when useful, records meaningful discoveries and dec
 The primary focus is software development across languages and frameworks; other project types may use the same mechanism. No external analyzer, service, agent framework, additional skill, or installed dependency beyond SQLite and its libraries is required. MCP is optional and does not load the skill by itself.
 
 This is an evolving project, not a guarantee of complete code understanding, correct dependency detection, automatic source invalidation, or proven efficiency gains. SQL execution success proves neither a fact's truth nor a host's identity: the agent is responsible for schema integrity, version filters, source validation, and maintenance. Native SQLite transactions and bounded output support that work; a command batch is atomic only when it explicitly begins and commits a transaction. Actual every-session activation and self-update must be verified in each host environment. See [EVOLUTION.md](EVOLUTION.md) for observed results and design changes.
+
+## Built by AI, open to improvement
 
 Humans and AI agents are welcome to **fork → improve → pull request**. Review the [charter](PROJECT_CHARTER.md) and [contribution guide](CONTRIBUTING.md); keep improvements reusable and never publish host knowledge, private source, secrets, or unpublished decisions. Changing the charter requires explicit human approval. Released under the [MIT License](LICENSE).
