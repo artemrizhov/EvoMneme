@@ -4,6 +4,8 @@ For read-only visual investigation, graph slices, provenance detail and explicit
 
 The agent designs and maintains knowledge; the tool only executes SQL. It accepts reads, writes, DDL, and agent-authored migrations against an explicitly bound SQLite file. It has no knowledge-specific commands, automatic schema, source scanner, Git integration, loader installer, or automatic reconciliation. Use it only for an authorized host; never create a live host store for EvoMneme itself, its forks, or worktrees.
 
+Design storage for the [full code graph and coverage state](code-graph.md), including source inventory, qualified symbol identities, traversable relationships, and unresolved work. The optional starter can represent symbols and edges through its open-ended `kind` fields and source locators; it does not prescribe a coverage model. Add suitable host-local tables or records deliberately, preserving existing architecture, decisions, and evidence. Small SQL result limits control retrieval, not how much code the graph must cover.
+
 ## Connect one local store
 
 Choose one absolute database path in the host's dedicated local working area, for example `<canonical-host>/.evomneme/knowledge.sqlite3`. Resolve host identity before connecting. Linked worktrees must explicitly use that **same canonical path**; separate clones/projects must use separate files. A matching repository remote is not a shared project identity. Record the selected path, canonical root, identity, and instruction reference in an excluded local connection receipt. Confirm identity before every session's use; the executor does not infer it.

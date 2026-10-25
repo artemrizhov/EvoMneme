@@ -4,7 +4,7 @@
 
 **An AI tool, built by AI, for AI.**
 
-EvoMneme helps AI development agents retain useful project knowledge without flooding their working context. The agent maintains a local SQLite graph of code entities, relationships, findings, and decisions, then retrieves compact context and follows source locations when details matter. Technical, product, visual, and UI/UX reasons can survive beyond the conversation that discovered them.
+EvoMneme directs AI development agents to build and maintain a full local SQLite graph of the project's code, alongside findings and decisions, without flooding their working context. The graph covers declarations and relationships across project-owned sources; the agent retrieves compact context and follows source locations when details matter. Technical, product, visual, and UI/UX reasons can survive beyond the conversation that discovered them.
 
 ## Why keep project memory?
 
@@ -22,6 +22,8 @@ flowchart TB
 
 The agent drives this loop during active development sessions. SQLite stores knowledge; optional MCP carries SQL calls and results. Neither independently interprets code or maintains the graph.
 
+Full graph maintenance is the default for an authorized software host: modules, classes, functions, methods, fields, and other declarations, including private/nested symbols, tests and scripts, with containment, imports, inheritance, calls, data dependencies, and runtime wiring. Compactness limits descriptions and query output, not source coverage. The agent inventories sources, tracks gaps and exclusions, builds missing coverage in resumable batches, and reconciles additions, edits, renames, deletions, and affected relationships during active work. [Coverage and maintenance](references/code-graph.md) distinguish verified structural coverage from unresolved dynamic relationships; architecture summaries or large record counts alone do not establish completeness.
+
 ## What is included
 
 - [SKILL.md](SKILL.md): one live portable instruction set for authorized host projects, connected through their agent's native instruction mechanism.
@@ -35,7 +37,7 @@ The agent drives this loop during active development sessions. SQLite stores kno
 
 Authorize your agent, for example:
 
-> Connect EvoMneme from this trusted checkout to my project at `<host-project>`. Keep its database local and excluded from Git. Load the live instructions in every project session and verify fresh-session loading and instruction update/reload. Choose the schema and maintain useful knowledge during ordinary development. Use the SQL CLI or optional project-local MCP transport already supported by my environment.
+> Connect EvoMneme from this trusted checkout to my project at `<host-project>`. Keep its database local and excluded from Git. Load the live instructions in every project session and verify fresh-session loading and instruction update/reload. Choose the schema, build the full code graph, and maintain its coverage, relationships, and useful project knowledge during ordinary development. Use the SQL CLI or optional project-local MCP transport already supported by my environment.
 
 Finding this README or a skill in a catalog does not grant integration permission. Once authorized, follow [connection and verification](references/integration.md), [SQL/storage practice](references/storage.md), and [optional MCP setup](references/mcp.md). A skill catalog entry, running MCP process, or written instruction pointer alone does not prove that every session loads the instructions. Unsupported activation or self-update verification remains an explicit incomplete setup.
 
