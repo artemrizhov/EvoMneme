@@ -3,19 +3,39 @@
 
 import argparse
 from contextlib import contextmanager
+import gzip
+import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
 import secrets
 import sqlite3
 import time
+import threading
 from urllib.parse import urlsplit
 
-from evomneme import cell
+from evomneme import cell, json_bytes
+from evomneme_graph import projection_sql
 
 ASSETS = Path(__file__).parent / 'viewer'
 MAX_ROWS = 2000
 MAX_RESPONSE = 8 * 1024 * 1024
+MAX_GRAPH_RESPONSE = 64 * 1024 * 1024
+MAX_GRAPH_NODES = 100000
+MAX_GRAPH_EDGES = 200000
+
+
+def read_authorizer(action, first, second, database, trigger):
+    if action in {sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH}:
+        return sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_FUNCTION and (second or '').lower() in {'load_extension', 'readfile', 'writefile'}:
+        return sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_PRAGMA:
+        if (first or '').lower() not in {'table_info', 'foreign_key_list', 'page_count', 'page_size', 'freelist_count', 'query_only'}:
+            return sqlite3.SQLITE_DENY
+        if (first or '').lower() == 'query_only' and second is not None:
+            return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
 
 
 def quote(name):
@@ -43,6 +63,25 @@ class Explorer:
                         any(not isinstance(v, str) for v in mapping.values())):
             raise ValueError('Mapping requires nodes and edges SQL strings')
         self.trace_directory = Path(trace_directory) if trace_directory else None
+        self.watch = None
+        self.watch_lock = threading.Lock()
+        self.watch_token = secrets.token_hex(8)
+        self.snapshot_key = None
+
+    def close(self):
+        with self.watch_lock:
+            if self.watch:
+                self.watch.close()
+                self.watch = None
+
+    def revision(self):
+        if self.requested.resolve(strict=True) != self.path or self.file_identity() != self.identity:
+            raise ValueError('Database replaced or retargeted; restart the viewer')
+        with self.watch_lock:
+            if self.watch is None:
+                self.watch = sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True, check_same_thread=False, timeout=1)
+                self.watch.execute('PRAGMA query_only=ON')
+            return self.watch_token + ':' + str(self.watch.execute('PRAGMA data_version').fetchone()[0])
 
     def file_identity(self):
         info = self.path.stat()
@@ -56,52 +95,68 @@ class Explorer:
         deadline = time.monotonic() + 5
         try:
             db.execute('PRAGMA query_only=ON')
+            db.execute('PRAGMA temp_store=MEMORY')
             db.enable_load_extension(False)
+            db.create_function('viewer_fingerprint', -1,
+                               lambda *values: hashlib.sha256(json_bytes([cell(v) for v in values])).hexdigest(),
+                               deterministic=True)
             db.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 8 * 1024 * 1024)
             db.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 65536)
             db.set_progress_handler(lambda: time.monotonic() > deadline, 1000)
             db.execute('BEGIN')
-            def authorize(action, first, second, database, trigger):
-                if action in {sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH}:
-                    return sqlite3.SQLITE_DENY
-                if action == sqlite3.SQLITE_FUNCTION and (second or '').lower() in {'load_extension', 'readfile', 'writefile'}:
-                    return sqlite3.SQLITE_DENY
-                if action == sqlite3.SQLITE_PRAGMA:
-                    # Only introspection required by the explorer and SELECT pragma_* functions.
-                    if (first or '').lower() not in {'table_info', 'foreign_key_list', 'page_count', 'page_size', 'freelist_count', 'query_only'}:
-                        return sqlite3.SQLITE_DENY
-                    if (first or '').lower() == 'query_only' and second is not None:
-                        return sqlite3.SQLITE_DENY
-                return sqlite3.SQLITE_OK
-            db.set_authorizer(authorize)
+            db.set_authorizer(read_authorizer)
             yield db
         finally:
             db.close()
 
-    def rows(self, db, sql, params=(), limit=MAX_ROWS):
+    def rows(self, db, sql, params=(), limit=MAX_ROWS, max_bytes=MAX_RESPONSE):
         cursor = db.execute(sql, params)
         columns = [c[0] for c in cursor.description or []]
         if len(set(columns)) != len(columns):
             raise ValueError('Use unique column aliases')
-        rows = cursor.fetchmany(limit + 1)
-        return [{c: bounded_cell(v) for c, v in zip(columns, row)} for row in rows[:limit]], len(rows) > limit
+        rows, used = [], 0
+        for row in cursor:
+            if len(rows) >= limit:
+                return rows, True
+            encoded = {c: bounded_cell(v) for c, v in zip(columns, row)}
+            used += len(json_bytes(encoded))
+            if used > max_bytes:
+                raise ValueError('Graph output exceeds its byte budget; narrow layers, filters, or projections')
+            rows.append(encoded)
+        return rows, False
 
     def projections(self, db):
         if self.mapping:
-            return self.mapping
-        tables = {r[0] for r in db.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
-        if not {'records', 'relations'} <= tables:
+            mapping = dict(self.mapping)
+            for key in ('nodes', 'edges'):
+                columns = [c[0] for c in db.execute('SELECT * FROM (' + mapping[key] + ') LIMIT 0').description]
+                if 'layer' not in columns:
+                    mapping[key] = "SELECT *, 'custom' AS layer FROM (" + mapping[key] + ')'
+                else:
+                    fields = ["CAST(coalesce(layer,'custom') AS TEXT) AS layer" if c == 'layer' else quote(c) for c in columns]
+                    mapping[key] = 'SELECT ' + ','.join(fields) + ' FROM (' + mapping[key] + ')'
+            return mapping
+        if db.execute("SELECT 1 FROM temp.sqlite_schema WHERE name='viewer_nodes'").fetchone():
+            return {'nodes': 'SELECT * FROM temp.viewer_nodes', 'edges': 'SELECT * FROM temp.viewer_edges'}
+        mapping = projection_sql(db)
+        if mapping is None:
             return None
-        required = {'records': {'scope_id', 'id', 'title'}, 'relations': {'scope_id', 'id', 'source_id', 'target_id'}}
-        for table, columns in required.items():
-            if not columns <= {r[1] for r in db.execute('PRAGMA table_info(' + quote(table) + ')')}:
-                return None
-        node_evidence = edge_evidence = ''
-        if 'evidence' in tables and {'scope_id', 'record_id', 'relation_id'} <= {r[1] for r in db.execute('PRAGMA table_info(evidence)')}:
-            node_evidence = ',(SELECT count(*) FROM evidence e WHERE e.scope_id=records.scope_id AND e.record_id=records.id) AS evidence_count'
-            edge_evidence = ',(SELECT count(*) FROM evidence e WHERE e.scope_id=relations.scope_id AND e.relation_id=relations.id) AS evidence_count'
-        return {'nodes': "SELECT json_array(scope_id,id) AS graph_id, title AS label, *" + node_evidence + " FROM records",
-                'edges': "SELECT json_array(scope_id,id) AS graph_id, json_array(scope_id,source_id) AS source, json_array(scope_id,target_id) AS target, *" + edge_evidence + " FROM relations"}
+        # Only our fixed built-in projections may create request-local, in-memory
+        # workspace. The main database remains mode=ro; caller SQL stays query_only.
+        db.set_authorizer(None)
+        try:
+            db.execute('PRAGMA query_only=OFF')
+            db.execute('CREATE TEMP TABLE viewer_nodes AS ' + mapping['nodes'])
+            db.execute('CREATE UNIQUE INDEX temp.viewer_node_id ON viewer_nodes(graph_id)')
+            db.execute('CREATE TEMP TABLE viewer_edges AS ' + mapping['edges'])
+            db.execute('CREATE UNIQUE INDEX temp.viewer_edge_id ON viewer_edges(graph_id)')
+            db.execute('CREATE INDEX temp.viewer_edge_source ON viewer_edges(source)')
+            db.execute('CREATE INDEX temp.viewer_edge_target ON viewer_edges(target)')
+        finally:
+            db.execute('PRAGMA query_only=ON')
+            db.set_authorizer(read_authorizer)
+        return {'nodes': 'SELECT * FROM temp.viewer_nodes', 'edges': 'SELECT * FROM temp.viewer_edges',
+                'warnings': mapping['warnings']}
 
     def schema(self, db):
         tables = []
@@ -118,6 +173,12 @@ class Explorer:
     @staticmethod
     def filters(sql, values, columns):
         terms, params = [], []
+        excluded = values.get('excluded_layers', [])
+        if not isinstance(excluded, list) or len(excluded) > 200 or any(not isinstance(v, str) or len(v) > 200 for v in excluded):
+            raise ValueError('excluded_layers requires at most 200 layer names')
+        if excluded and 'layer' in columns:
+            terms.append('layer NOT IN (' + ','.join('?' for _ in excluded) + ')')
+            params.extend(excluded)
         if values.get('null_field') in {'scope_id', 'kind', 'validity', 'confidence', 'source_path'} and values['null_field'] in columns:
             terms.append(quote(values['null_field']) + ' IS NULL')
         for field in ('scope_id', 'kind', 'validity', 'confidence', 'source_path'):
@@ -132,14 +193,20 @@ class Explorer:
 
     def snapshot(self, values):
         started = time.monotonic()
-        limit = max(1, min(int(values.get('limit', 500)), MAX_ROWS))
-        offset = max(0, min(int(values.get('offset', 0)), 100000000))
+        whole = values.get('whole_graph') is True
+        revision = self.revision() if whole else None
+        snapshot_key = json.dumps({k: v for k, v in values.items() if k != 'revision'}, sort_keys=True)
+        if whole and values.get('revision') == revision and self.snapshot_key == snapshot_key:
+            return {'unchanged': True, 'revision': revision}
+        limit = MAX_GRAPH_NODES if whole else max(1, min(int(values.get('limit', 500)), MAX_ROWS))
+        offset = 0 if whole else max(0, min(int(values.get('offset', 0)), 100000000))
         with self.connect() as db:
             tables = self.schema(db)
             mapping = self.projections(db)
             result = {'tables': tables, 'bytes': db.execute('PRAGMA page_count').fetchone()[0] * db.execute('PRAGMA page_size').fetchone()[0],
                       'nodes': [], 'edges': [], 'graph_available': bool(mapping), 'facets': {}, 'edge_facets': {}, 'totals': {}, 'offset': offset,
-                      'node_has_more': False, 'edge_has_more': False}
+                      'node_has_more': False, 'edge_has_more': False, 'whole_graph': whole,
+                      'revision': revision, 'layers': []}
             if mapping:
                 columns = [c[0] for c in db.execute('SELECT * FROM (' + mapping['nodes'] + ') LIMIT 0').description]
                 edge_columns = [c[0] for c in db.execute('SELECT * FROM (' + mapping['edges'] + ') LIMIT 0').description]
@@ -147,16 +214,30 @@ class Explorer:
                     raise ValueError('Projection columns: nodes need graph_id,label; edges need graph_id,source,target')
                 for key in ('nodes', 'edges'):
                     result['totals'][key] = db.execute('SELECT count(*) FROM (' + mapping[key] + ')').fetchone()[0]
+                catalog = {}
+                for key in ('nodes', 'edges'):
+                    for layer, count in db.execute('SELECT layer,count(*) FROM (' + mapping[key] + ') GROUP BY layer'):
+                        item = catalog.setdefault(layer, {'id': layer, 'nodes': 0, 'edges': 0})
+                        item[key] = count
+                result['layers'] = list(catalog.values())
+                result['reference_total'] = catalog.get('unresolved', {}).get('nodes', 0)
+                result['projection_warnings'] = mapping.get('warnings', [])
                 for field in ('scope_id', 'kind', 'validity', 'confidence', 'source_path'):
                     if field in columns:
                         result['facets'][field] = self.rows(db, 'SELECT ' + quote(field) + ' AS value,count(*) AS count FROM (' + mapping['nodes'] + ') GROUP BY ' + quote(field) + ' ORDER BY count(*) DESC', limit=200)[0]
                 for field in ('kind', 'validity', 'confidence'):
                     if field in edge_columns:
                         result['edge_facets'][field] = self.rows(db, 'SELECT ' + quote(field) + ' AS value,count(*) AS count FROM (' + mapping['edges'] + ') GROUP BY ' + quote(field) + ' ORDER BY count(*) DESC', limit=200)[0]
-                edges_sql, edge_params = self.filters(mapping['edges'], {field: values.get('edge_' + field) for field in ('kind', 'validity', 'confidence')}, edge_columns)
+                edge_values = {field: values.get('edge_' + field) for field in ('kind', 'validity', 'confidence')}
+                edge_values['excluded_layers'] = values.get('excluded_layers', [])
+                edges_sql, edge_params = self.filters(mapping['edges'], edge_values, edge_columns)
                 result['isolated_total'] = db.execute('WITH endpoints AS (SELECT source AS id FROM (' + mapping['edges'] + ') UNION SELECT target FROM (' + mapping['edges'] + ')) SELECT count(*) FROM (' + mapping['nodes'] + ') n LEFT JOIN endpoints p ON p.id=n.graph_id WHERE p.id IS NULL').fetchone()[0]
                 result['dangling_total'] = db.execute('WITH ns AS MATERIALIZED (SELECT graph_id FROM (' + mapping['nodes'] + ')) SELECT count(*) FROM (' + mapping['edges'] + ') e LEFT JOIN ns s ON s.graph_id=e.source LEFT JOIN ns t ON t.graph_id=e.target WHERE s.graph_id IS NULL OR t.graph_id IS NULL').fetchone()[0]
                 nodes_sql, params = self.filters(mapping['nodes'], values, columns)
+                if values.get('excluded_layers'):
+                    visible_sql, visible_params = self.filters(mapping['nodes'], {'excluded_layers': values['excluded_layers']}, columns)
+                    edges_sql = 'WITH enabled AS MATERIALIZED (' + visible_sql + ') SELECT e.* FROM (' + edges_sql + ') e JOIN enabled s ON s.graph_id=e.source JOIN enabled t ON t.graph_id=e.target'
+                    edge_params = visible_params + edge_params
                 if values.get('focus') == 'unsupported':
                     if 'evidence_count' not in columns:
                         raise ValueError('This projection has no evidence_count column')
@@ -165,10 +246,12 @@ class Explorer:
                     nodes_sql = 'WITH endpoints AS (SELECT source AS id FROM (' + mapping['edges'] + ') UNION SELECT target FROM (' + mapping['edges'] + ')) SELECT n.* FROM (' + nodes_sql + ') n LEFT JOIN endpoints p ON p.id=n.graph_id WHERE p.id IS NULL'
                 if values.get('aggregate'):
                     field = values['aggregate']
-                    if field not in {'kind', 'scope_id', 'source_path', 'validity', 'confidence'} or field not in columns:
+                    if field not in {'kind', 'scope_id', 'source_path', 'validity', 'confidence', 'layer'} or field not in columns:
                         raise ValueError('Grouping field is unavailable in this projection')
                     self.aggregate(db, result, nodes_sql, params, edges_sql, edge_params, field, columns, limit, offset)
                     result['elapsed_ms'] = round((time.monotonic() - started) * 1000, 1)
+                    if whole:
+                        self.snapshot_key = snapshot_key
                     return result
                 if values.get('root'):
                     # Bounded depth, cycles deduplicated at each depth; query deadline also applies.
@@ -176,20 +259,39 @@ class Explorer:
                     nodes_sql = ('WITH RECURSIVE reach(id,depth) AS (SELECT ?,0 UNION SELECT CASE WHEN e.source=r.id THEN e.target ELSE e.source END,r.depth+1 FROM reach r JOIN (' + edges_sql + ') e ON e.source=r.id OR e.target=r.id WHERE r.depth<?) SELECT n.* FROM (' + nodes_sql + ') n WHERE n.graph_id IN (SELECT id FROM reach)')
                     params = [values['root']] + edge_params + [depth] + params
                 result['matched_nodes'] = db.execute('SELECT count(*) FROM (' + nodes_sql + ')', params).fetchone()[0]
-                result['nodes'], result['node_has_more'] = self.rows(db, nodes_sql + ' ORDER BY graph_id LIMIT ? OFFSET ?', params + [limit + 1, offset], limit)
+                result['nodes'], result['node_has_more'] = self.rows(db, nodes_sql + ' ORDER BY graph_id LIMIT ? OFFSET ?', params + [limit + 1, offset], limit, MAX_GRAPH_RESPONSE if whole else MAX_RESPONSE)
+                if whole and result['node_has_more']:
+                    raise ValueError('Whole graph exceeds 100,000 nodes; use layers, filters, or an aggregate view')
                 ids = [n['graph_id'] for n in result['nodes']]
                 if any(not isinstance(i, str) for i in ids) or len(ids) != len(set(ids)):
                     raise ValueError('graph_id must be unique text; use composite keys across scopes')
                 if ids:
-                    marks = ','.join('?' for _ in ids)
-                    # Both endpoints belong to the slice; boundary counts expose omitted connections.
-                    edge_sql = 'SELECT * FROM (' + edges_sql + ') WHERE source IN (' + marks + ') AND target IN (' + marks + ') ORDER BY graph_id'
-                    result['edges'], result['edge_has_more'] = self.rows(db, edge_sql, edge_params + ids + ids)
-                    result['boundary_edges'] = db.execute('SELECT count(*) FROM (' + edges_sql + ') WHERE (source IN (' + marks + ')) != (target IN (' + marks + '))', edge_params + ids + ids).fetchone()[0]
+                    if whole:
+                        prefix = 'WITH selected AS MATERIALIZED (' + nodes_sql + ') '
+                        query = prefix + 'SELECT e.* FROM (' + edges_sql + ') e JOIN selected s ON s.graph_id=e.source JOIN selected t ON t.graph_id=e.target ORDER BY e.graph_id'
+                        result['edges'], result['edge_has_more'] = self.rows(db, query, params + edge_params, MAX_GRAPH_EDGES, MAX_GRAPH_RESPONSE)
+                        if result['edge_has_more']:
+                            raise ValueError('Whole graph exceeds 200,000 relationships; use layers, filters, or an aggregate view')
+                        result['boundary_edges'] = db.execute(prefix + 'SELECT count(*) FROM (' + edges_sql + ') e LEFT JOIN selected s ON s.graph_id=e.source LEFT JOIN selected t ON t.graph_id=e.target WHERE (s.graph_id IS NULL)!=(t.graph_id IS NULL)', params + edge_params).fetchone()[0]
+                    else:
+                        marks = ','.join('?' for _ in ids)
+                        edge_sql = 'SELECT * FROM (' + edges_sql + ') WHERE source IN (' + marks + ') AND target IN (' + marks + ') ORDER BY graph_id'
+                        result['edges'], result['edge_has_more'] = self.rows(db, edge_sql, edge_params + ids + ids)
+                        result['boundary_edges'] = db.execute('SELECT count(*) FROM (' + edges_sql + ') WHERE (source IN (' + marks + ')) != (target IN (' + marks + '))', edge_params + ids + ids).fetchone()[0]
                 edge_ids = [e['graph_id'] for e in result['edges']]
                 if any(not isinstance(i, str) for i in edge_ids) or len(set(edge_ids)) != len(edge_ids):
                     raise ValueError('Edge graph_id must be unique text')
+                if whole:
+                    keep_nodes = {'graph_id', 'label', 'scope_id', 'id', 'kind', 'confidence', 'validity', 'source_path', 'source_table', 'evidence_count', 'layer', 'fingerprint'}
+                    keep_edges = {'graph_id', 'source', 'target', 'scope_id', 'id', 'kind', 'confidence', 'validity', 'resolution', 'source_table', 'layer', 'fingerprint'}
+                    if self.mapping:
+                        for row in result['nodes'] + result['edges']:
+                            row['fingerprint'] = hashlib.sha256(json_bytes(row)).hexdigest()
+                    result['nodes'] = [{k: v for k, v in row.items() if k in keep_nodes} for row in result['nodes']]
+                    result['edges'] = [{k: v for k, v in row.items() if k in keep_edges} for row in result['edges']]
             result['elapsed_ms'] = round((time.monotonic() - started) * 1000, 1)
+            if whole:
+                self.snapshot_key = snapshot_key
             return result
 
     def aggregate(self, db, result, nodes_sql, params, edges_sql, edge_params, field, columns, limit, offset):
@@ -246,12 +348,24 @@ class Explorer:
                 raise ValueError('Unknown graph projection')
             rows, _ = self.rows(db, 'SELECT * FROM (' + mapping[values['type']] + ') WHERE graph_id=?', [values.get('id')], 1)
             evidence = []
-            if rows and not self.mapping and db.execute("SELECT 1 FROM sqlite_schema WHERE name='evidence' AND type='table'").fetchone():
+            coverage = []
+            if rows and not self.mapping:
+                row = rows[0]
+                table = row.get('source_table')
+                if table in {'records', 'relations', 'code_symbols', 'code_edges'}:
+                    raw, _ = self.rows(db, 'SELECT * FROM ' + quote(table) + ' WHERE scope_id=? AND id=?', [row['scope_id'], row['id']], 1)
+                    if raw:
+                        row.update(raw[0])
+                if table in {'code_symbols', 'code_edges'} and db.execute("SELECT 1 FROM sqlite_schema WHERE name='code_files' AND type='table'").fetchone():
+                    columns = {r[1] for r in db.execute('PRAGMA table_info(code_files)')}
+                    if {'scope_id', 'path'} <= columns:
+                        coverage, _ = self.rows(db, 'SELECT * FROM code_files WHERE scope_id=? AND path=?', [row['scope_id'], row.get('source_path')], 1)
+            if rows and not self.mapping and rows[0].get('source_table') in {'records', 'relations'} and db.execute("SELECT 1 FROM sqlite_schema WHERE name='evidence' AND type='table'").fetchone():
                 row = rows[0]
                 field = 'record_id' if values['type'] == 'nodes' else 'relation_id'
                 evidence, more = self.rows(db, 'SELECT * FROM evidence WHERE scope_id=? AND ' + field + '=?', [row['scope_id'], row['id']], 200)
-                return {'rows': rows, 'evidence': evidence, 'evidence_has_more': more}
-            return {'rows': rows, 'evidence': evidence}
+                return {'rows': rows, 'evidence': evidence, 'evidence_has_more': more, 'coverage': coverage}
+            return {'rows': rows, 'evidence': evidence, 'coverage': coverage}
 
     def events(self, values):
         cursors = values.get('cursors', {})
@@ -303,13 +417,19 @@ def make_server(explorer, port=0):
             pass  # Never log tokens, queries, or host contents.
 
         def respond(self, code, data, mime='application/json; charset=utf-8'):
+            whole = isinstance(data, dict) and data.get('whole_graph') is True
             if not isinstance(data, bytes):
                 data = json.dumps(data, ensure_ascii=True, allow_nan=False).encode('utf-8')
-            if len(data) > MAX_RESPONSE:
-                code, data = 413, b'{"error":"Response exceeds 8 MiB; narrow the selection"}'
+            if len(data) > (MAX_GRAPH_RESPONSE if whole else MAX_RESPONSE):
+                code, data = 413, b'{"error":"Response exceeds the graph output budget; narrow the layers or selection"}'
+            compressed = 'gzip' in self.headers.get('Accept-Encoding', '') and len(data) > 262144 and mime.startswith('application/json')
+            if compressed:
+                data = gzip.compress(data, compresslevel=3)
             self.send_response(code)
             self.send_header('Content-Type', mime)
             self.send_header('Content-Length', str(len(data)))
+            if compressed:
+                self.send_header('Content-Encoding', 'gzip')
             self.send_header('Cache-Control', 'no-store')
             self.send_header('Referrer-Policy', 'no-referrer')
             self.send_header('X-Content-Type-Options', 'nosniff')
@@ -377,6 +497,7 @@ def main():
         pass
     finally:
         server.server_close()
+        explorer.close()
 
 
 if __name__ == '__main__':

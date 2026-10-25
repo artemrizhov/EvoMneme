@@ -60,4 +60,13 @@ try {
   assertSeparated(chain);
 } finally {chain.destroy();}
 
+const large=graph();
+try {
+  large.add(Array.from({length:1101},(_,i)=>({data:{id:'large'+i,label:'Large graph node '+i}})));
+  graphLayout.arrange(large,{width:1200,height:500,fit:false});
+  assert.equal(large.scratch('memory-layout'),'grid-large');
+  assert.equal(new Set(large.nodes().map(n=>n.position('x')+','+n.position('y'))).size,1101);
+  assertSeparated(large);
+} finally {large.destroy();}
+
 console.log('Graph layout regressions passed: live growth, label separation, manual positions, landscape and portrait orientation.');

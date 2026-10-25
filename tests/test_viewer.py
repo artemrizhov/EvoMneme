@@ -1,6 +1,7 @@
 """Synthetic host-only explorer, activity and loopback boundary checks."""
 
 import hashlib
+import gzip
 import contextlib
 import http.client
 import io
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -37,6 +39,28 @@ def fixture(path):
     db.close()
 
 
+def code_fixture(path):
+    db = sqlite3.connect(path)
+    db.executescript('''
+        CREATE TABLE code_symbols(scope_id TEXT,id TEXT,file_path TEXT,owner_id TEXT,
+          qualified_name TEXT,kind TEXT,signature TEXT,line_start INTEGER,line_end INTEGER,
+          sha256 TEXT,confidence TEXT,PRIMARY KEY(scope_id,id));
+        CREATE TABLE code_edges(scope_id TEXT,id TEXT,source_id TEXT,target_id TEXT,kind TEXT,
+          resolution TEXT,file_path TEXT,line_start INTEGER,sha256 TEXT,detail TEXT,PRIMARY KEY(scope_id,id));
+        CREATE TABLE code_files(scope_id TEXT,path TEXT,declaration_status TEXT,relationship_status TEXT,PRIMARY KEY(scope_id,path));
+        INSERT INTO code_symbols VALUES('main','c0','src/demo.py',NULL,'Agent','class','class Agent:',1,9,'fixture','inferred');
+        INSERT INTO code_symbols VALUES('main','c1','src/demo.py','c0','Agent.call','method','def call(',3,8,'fixture','inferred');
+        INSERT INTO code_symbols VALUES('branch','c0','src/demo.py',NULL,'branch_function','function','def branch_function():',1,2,'fixture','inferred');
+        INSERT INTO code_edges VALUES('main','contains','c0','c1','contains','resolved','src/demo.py',3,'fixture','Stored ownership');
+        INSERT INTO code_edges VALUES('main','summary','c1','record:0','semantic-summary','resolved','src/demo.py',3,'fixture','Stored summary link');
+        INSERT INTO code_edges VALUES('main','source','knowledge-record:1','c0','knowledge-source','resolved','src/demo.py',1,'fixture','Stored source link');
+        INSERT INTO code_edges VALUES('main','external','c1','outside.module','imports','unresolved','src/demo.py',4,'fixture','Unresolved import');
+        INSERT INTO code_files VALUES('main','src/demo.py','partial','pending');
+    ''')
+    db.commit()
+    db.close()
+
+
 class ViewerTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('node'), 'Optional layout regression needs an existing Node.js')
     def test_graph_layout_growth_spacing_and_orientation(self):
@@ -52,6 +76,7 @@ class ViewerTests(unittest.TestCase):
         self.path = self.directory / 'host.sqlite3'
         fixture(self.path)
         self.explorer = Explorer(self.path)
+        self.addCleanup(self.explorer.close)
 
     def test_whole_database_scope_keys_filter_page_boundary_and_neighborhood(self):
         whole = self.explorer.snapshot({})
@@ -90,6 +115,158 @@ class ViewerTests(unittest.TestCase):
         self.assertEqual(detail['rows'][0]['scope_id'], 'main')
         self.assertEqual(before, self.path.read_bytes())
 
+    def test_unified_layers_cross_links_and_unresolved_references(self):
+        code_fixture(self.path)
+        before = self.path.read_bytes()
+        graph = self.explorer.snapshot({'whole_graph':True})
+        self.assertEqual(graph['totals'],{'nodes':12,'edges':8})
+        self.assertEqual(len(graph['nodes']),12)
+        self.assertEqual(len(graph['edges']),8)
+        self.assertEqual(graph['reference_total'],1)
+        self.assertEqual({n['layer'] for n in graph['nodes']},{'code','knowledge','unresolved'})
+        self.assertEqual(sum(e['layer']=='cross' for e in graph['edges']),2)
+        nodes = {n['graph_id'] for n in graph['nodes']}
+        self.assertTrue(all(e['source'] in nodes and e['target'] in nodes for e in graph['edges']))
+        summary = next(e for e in graph['edges'] if e['id']=='summary')
+        self.assertEqual(summary['target'],'["main","0"]')
+        self.assertEqual(summary['source'],'["code","main","c1"]')
+        code_only = self.explorer.snapshot({'whole_graph':True,'excluded_layers':['knowledge','unresolved']})
+        self.assertEqual(len(code_only['nodes']),3)
+        self.assertEqual(len(code_only['edges']),1)
+        knowledge_only = self.explorer.snapshot({'whole_graph':True,'excluded_layers':['code','unresolved','cross']})
+        self.assertEqual(len(knowledge_only['nodes']),8)
+        self.assertEqual(len(knowledge_only['edges']),4)
+        no_cross = self.explorer.snapshot({'whole_graph':True,'excluded_layers':['cross']})
+        self.assertEqual(len(no_cross['nodes']),12)
+        self.assertEqual(len(no_cross['edges']),6)
+        empty = self.explorer.snapshot({'whole_graph':True,'excluded_layers':['code','knowledge','unresolved','cross']})
+        self.assertEqual(empty['nodes'],[])
+        self.assertEqual(empty['edges'],[])
+        detail = self.explorer.detail({'type':'nodes','id':'["code","main","c1"]'})
+        self.assertEqual(detail['rows'][0]['owner_id'],'c0')
+        self.assertEqual(detail['rows'][0]['signature'],'def call(')
+        self.assertEqual(detail['coverage'][0]['declaration_status'],'partial')
+        self.assertEqual(detail['evidence'],[])
+        self.assertEqual(before,self.path.read_bytes())
+        executor = Executor(self.path)
+        self.addCleanup(executor.close)
+        configure_trace(executor,self.directory/'activity','code-session')
+        result = executor.execute_sql(sql='SELECT scope_id,id FROM code_symbols WHERE scope_id=? AND id=?',params=['main','c1'])
+        self.assertTrue(result['ok'])
+        events = Explorer(self.path,trace_directory=self.directory/'activity').events({})['events']
+        self.assertEqual(events[0]['references'],[{'table':'code_symbols','scope_id':'main','id':'c1'}])
+
+    def test_ambiguous_endpoint_is_not_assigned_to_an_arbitrary_namespace(self):
+        code_fixture(self.path)
+        db = sqlite3.connect(self.path)
+        db.execute("INSERT INTO code_symbols(scope_id,id,qualified_name,kind) VALUES('main','0','SameIdClass','class')")
+        db.execute("INSERT INTO code_edges(scope_id,id,source_id,target_id,kind) VALUES('main','ambiguous','0','c1','calls')")
+        db.commit()
+        db.close()
+        graph = self.explorer.snapshot({'whole_graph':True})
+        ids = {n['graph_id'] for n in graph['nodes']}
+        self.assertIn('["main","0"]',ids)
+        self.assertIn('["code","main","0"]',ids)
+        edge = next(e for e in graph['edges'] if e['id']=='ambiguous')
+        reference = next(n for n in graph['nodes'] if n['graph_id']==edge['source'])
+        self.assertEqual(reference['kind'],'ambiguous_reference')
+        stored = next(e for e in graph['edges'] if e['source_table']=='relations' and e['scope_id']=='main' and e['id']=='e0')
+        self.assertEqual(stored['source'],'["main","0"]')
+
+    def test_neighborhood_does_not_traverse_disabled_node_layers(self):
+        code_fixture(self.path)
+        db = sqlite3.connect(self.path)
+        db.executemany('INSERT INTO code_symbols(scope_id,id,qualified_name,kind) VALUES(?,?,?,?)',
+                       [('main','isolated-a','A','function'),('main','isolated-b','B','function')])
+        db.executemany('INSERT INTO code_edges(scope_id,id,source_id,target_id,kind) VALUES(?,?,?,?,?)',
+                       [('main','bridge-a','isolated-a','record:0','explains'),
+                        ('main','bridge-b','record:0','isolated-b','explains')])
+        db.commit()
+        db.close()
+        values = {'whole_graph':True,'root':'["code","main","isolated-a"]','depth':2}
+        complete = self.explorer.snapshot(values)
+        self.assertTrue(any(n['id']=='isolated-b' for n in complete['nodes']))
+        hidden = self.explorer.snapshot({**values,'excluded_layers':['knowledge','unresolved']})
+        self.assertEqual([n['id'] for n in hidden['nodes']],['isolated-a'])
+
+    def test_code_only_database_and_layer_aggregation(self):
+        path = self.directory / 'code-only.sqlite3'
+        code_fixture(path)
+        explorer = Explorer(path)
+        self.addCleanup(explorer.close)
+        graph = explorer.snapshot({'whole_graph':True})
+        self.assertTrue(graph['graph_available'])
+        self.assertEqual(sum(n['layer']=='code' for n in graph['nodes']),3)
+        self.assertEqual(len(graph['edges']),4)
+        overview = self.explorer.snapshot({'whole_graph':True,'aggregate':'layer'})
+        self.assertEqual(overview['nodes'][0]['group_value'],'knowledge')
+        self.assertEqual(overview['grouped_members'],8)
+
+    def test_full_graph_exceeds_old_slice_bounds_and_http_compression(self):
+        code_fixture(self.path)
+        db = sqlite3.connect(self.path)
+        db.executemany('INSERT INTO code_symbols(scope_id,id,qualified_name,kind) VALUES(?,?,?,?)',
+                       [('main','large'+str(i),'SyntheticFunction'+str(i),'function') for i in range(2501)])
+        db.executemany('INSERT INTO code_edges(scope_id,id,source_id,target_id,kind) VALUES(?,?,?,?,?)',
+                       [('main','large-edge'+str(i),'large'+str(i),'large'+str(i+1),'calls') for i in range(2500)])
+        db.commit()
+        db.close()
+        whole = self.explorer.snapshot({'whole_graph':True})
+        self.assertGreater(len(whole['nodes']),2000)
+        self.assertGreater(len(whole['edges']),2000)
+        self.assertFalse(whole['node_has_more'])
+        self.assertFalse(whole['edge_has_more'])
+        page = self.explorer.snapshot({'limit':100})
+        self.assertEqual(len(page['nodes']),100)
+        self.assertTrue(page['node_has_more'])
+        server, token = make_server(self.explorer)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        conn = http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=10)
+        self.addCleanup(conn.close)
+        conn.request('POST','/api/snapshot',body='{"whole_graph":true}',headers={'X-Viewer-Token':token,'Accept-Encoding':'gzip'})
+        response = conn.getresponse()
+        self.assertEqual(response.status,200)
+        self.assertEqual(response.getheader('Content-Encoding'),'gzip')
+        graph = json.loads(gzip.decompress(response.read()))
+        self.assertEqual(len(graph['nodes']),len(whole['nodes']))
+        self.assertEqual(len(graph['edges']),len(whole['edges']))
+
+    def test_revision_cache_invalidates_for_database_changes_and_layer_selection(self):
+        code_fixture(self.path)
+        writer = sqlite3.connect(self.path)
+        self.addCleanup(writer.close)
+        writer.execute('PRAGMA journal_mode=WAL')
+        first = self.explorer.snapshot({'whole_graph':True})
+        cached = self.explorer.snapshot({'whole_graph':True,'revision':first['revision']})
+        self.assertTrue(cached['unchanged'])
+        filtered = self.explorer.snapshot({'whole_graph':True,'revision':first['revision'],'excluded_layers':['code']})
+        self.assertNotIn('unchanged',filtered)
+        writer.execute("UPDATE code_symbols SET qualified_name='ChangedName' WHERE scope_id='main' AND id='c0'")
+        writer.commit()
+        changed = self.explorer.snapshot({'whole_graph':True,'revision':first['revision']})
+        self.assertNotEqual(changed['revision'],first['revision'])
+        self.assertTrue(any(n['label']=='ChangedName' for n in changed['nodes']))
+        old = next(n for n in changed['nodes'] if n['graph_id']=='["code","main","c1"]')['fingerprint']
+        writer.execute("UPDATE code_symbols SET signature='def call(self, value):' WHERE scope_id='main' AND id='c1'")
+        writer.commit()
+        updated = self.explorer.snapshot({'whole_graph':True,'revision':changed['revision']})
+        node = next(n for n in updated['nodes'] if n['graph_id']=='["code","main","c1"]')
+        self.assertNotEqual(node['fingerprint'],old)
+        self.assertNotIn('signature',node)
+
+    def test_full_graph_bounds_fail_explicitly_instead_of_returning_a_prefix(self):
+        with patch('evomneme_viewer.MAX_GRAPH_NODES',2):
+            with self.assertRaisesRegex(ValueError,'Whole graph exceeds'):
+                self.explorer.snapshot({'whole_graph':True})
+        with patch('evomneme_viewer.MAX_GRAPH_EDGES',2):
+            with self.assertRaisesRegex(ValueError,'Whole graph exceeds'):
+                self.explorer.snapshot({'whole_graph':True})
+        with self.explorer.connect() as db:
+            with self.assertRaisesRegex(ValueError,'byte budget'):
+                self.explorer.rows(db,"SELECT printf('%1000s','x') AS value",max_bytes=100)
+
     def test_whole_database_grouping_uses_all_members_not_browser_page(self):
         overview = self.explorer.snapshot({'aggregate':'kind','limit':2})
         self.assertEqual(overview['matched_nodes'],4)
@@ -116,6 +293,12 @@ class ViewerTests(unittest.TestCase):
         self.assertEqual(data['totals'], {'nodes':2,'edges':2})
         self.assertEqual(data['dangling_total'], 1)
         self.assertEqual(len(data['edges']), 1)
+        layered = Explorer(self.path,{'nodes':"SELECT k AS graph_id,label,NULL AS layer FROM things",
+                                      'edges':"SELECT k AS graph_id,a AS source,b AS target,'links' AS layer FROM links"})
+        self.addCleanup(layered.close)
+        graph = layered.snapshot({'whole_graph':True,'excluded_layers':['links']})
+        self.assertEqual({n['layer'] for n in graph['nodes']},{'custom'})
+        self.assertEqual(graph['edges'],[])
         empty = self.directory / 'arbitrary.sqlite3'
         db = sqlite3.connect(empty)
         db.execute('CREATE TABLE custom(value)')
@@ -251,6 +434,10 @@ if __name__ == '__main__':
         path=area/'host.sqlite3'
         if not path.exists():
             fixture(path)
+        with sqlite3.connect(path) as check:
+            has_code = check.execute("SELECT 1 FROM sqlite_schema WHERE name='code_symbols'").fetchone()
+        if not has_code:
+            code_fixture(path)
         explorer=Explorer(path,trace_directory=area/'activity')
         server,token=make_server(explorer)
         print(f'http://127.0.0.1:{server.server_port}/#token={token}',flush=True)

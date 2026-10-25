@@ -135,6 +135,16 @@
     if (!nodes.length) return;
     const width=Math.max(100,options.width || cy.width());
     const height=Math.max(100,options.height || cy.height());
+    if (nodes.length>1000) {
+      // Full stores can contain tens of thousands of symbols. Keep this overview
+      // linear rather than running an O(n²) force simulation or collision pass.
+      const cols=Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height*110/180)));
+      nodes.positions((node,i)=>({x:(i%cols)*180,y:Math.floor(i/cols)*110}));
+      cy.scratch('memory-layout','grid-large');
+      if (options.fit!==false) fit(cy,elements);
+      return;
+    }
+    cy.scratch('memory-layout',options.name || 'cose');
     if (options.runLayout!==false) {
       const common={eles:elements,animate:false,fit:false,padding:36,
         nodeDimensionsIncludeLabels:true,avoidOverlap:true};

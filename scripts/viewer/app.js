@@ -6,13 +6,14 @@ history.replaceState(null, '', location.pathname);
 const state = { snapshot: null, offset: 0, root: '', selected: null, pathStart: null, recording: false,
   recorded: [], history: [], sessions: new Map(), cursors: {}, changes: new Set(), previous: null,
   busy: false, tableOffset: 0, missed: false, view: 'graph', filterKey: '', recordingSince: Infinity, nullField:'',
-  selectedActivity:null,pendingLayout:false };
+  selectedActivity:null,pendingLayout:false,disabledLayers:new Set(),revision:null,refreshQueued:false,resetQueued:false };
 const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c8d889','#88cdd7','#ccab91','#b0a3d4'];
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
 function showError(error) { $('error').textContent = error.message || String(error); $('error').classList.remove('hidden'); clearTimeout(showError.timer); showError.timer = setTimeout(() => $('error').classList.add('hidden'), 12000); }
 async function api(route, values = {}) { const response = await fetch('/api/' + route, {method:'POST', headers:{'Content-Type':'application/json','X-Viewer-Token':token || ''}, body:JSON.stringify(values)}); const data = await response.json(); if (!response.ok) throw new Error(data.error || response.statusText); return data; }
 function guarded(fn) { return (...args) => Promise.resolve().then(() => fn(...args)).catch(showError); }
-const cy = cytoscape({container:$('cy'), elements:[], minZoom:.05, maxZoom:5,
+const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
+  hideEdgesOnViewport:true,textureOnViewport:true,
   style:[
     {selector:'node',style:{'background-color':'data(color)',label:'data(displayLabel)','font-size':10,'min-zoomed-font-size':7,color:'#becde0','text-outline-color':'#101925','text-outline-width':2,'text-valign':'bottom','text-margin-y':7,width:'data(size)',height:'data(size)','border-width':1,'border-color':'#62768c','text-max-width':130,'text-wrap':'ellipsis'}},
     {selector:'edge',style:{width:1.3,'line-color':'data(color)','target-arrow-color':'data(color)','target-arrow-shape':'triangle','curve-style':'bezier',opacity:.65,label:'data(displayLabel)','font-size':9,'min-zoomed-font-size':7,color:'#b7c8dc','text-rotation':'autorotate','text-background-color':'#111b2b','text-background-opacity':.9}},
@@ -27,16 +28,35 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.05, maxZoom:5,
   ]});
 function filters() {
   const result = {limit:Number($('limit').value), offset:state.offset, root:state.root,
-    depth:Number($('depth').value), search:$('search').value.trim(), focus:$('focus').value, aggregate:$('aggregate').value};
+    depth:Number($('depth').value), search:$('search').value.trim(), focus:$('focus').value, aggregate:$('aggregate').value,
+    whole_graph:$('wholeGraph').checked,excluded_layers:[...state.disabledLayers]};
   for (const key of ['scope_id','kind','validity','confidence','source_path']) {
-    if ($('filter-' + key)) result[key] = $('filter-' + key).value;
+    result[key] = $('filter-' + key)?.value || '';
   }
   for (const key of ['kind','validity','confidence']) {
-    if ($('edge-' + key)) result['edge_' + key] = $('edge-' + key).value;
+    result['edge_' + key] = $('edge-' + key)?.value || '';
   }
   if (state.nullField && result[state.nullField]) state.nullField = '';
   result.null_field = state.nullField;
   return result;
+}
+function renderLayers(layers = []) {
+  const labels={code:'Code entities',knowledge:'Knowledge',cross:'Cross-layer relationships',unresolved:'Unresolved / ambiguous references',custom:'Custom graph'};
+  $('layers').replaceChildren();
+  for (const layer of layers) {
+    const label=document.createElement('label'),input=document.createElement('input');
+    input.type='checkbox';
+    input.checked=!state.disabledLayers.has(layer.id);
+    input.dataset.layer=layer.id;
+    input.onchange=()=>{
+      if (input.checked) state.disabledLayers.delete(layer.id);
+      else state.disabledLayers.add(layer.id);
+      state.offset=0;
+      refresh(true);
+    };
+    label.append(input,text('span',`${labels[layer.id] || layer.id} · ${layer.nodes} nodes / ${layer.edges} links`));
+    $('layers').append(label);
+  }
 }
 function renderEdgeFilters(facets) {
   const container = $('edgeFilters');
@@ -61,7 +81,22 @@ function renderEdgeFilters(facets) {
   }
 }
 function renderFilters(facets) { const container = $('filters'); const previous = {}; container.querySelectorAll('select').forEach(el => previous[el.dataset.field] = el.value); container.replaceChildren(); for (const [field, values] of Object.entries(facets)) { const label = text('label', {scope_id:'Scope / version',kind:'Node type',validity:'Validity',confidence:'Confidence',source_path:'Source file'}[field]); const select = document.createElement('select'); select.id = 'filter-' + field; select.dataset.field = field; select.add(new Option('All', '')); for (const item of values) if (item.value != null) select.add(new Option(`${item.value} (${item.count})`, item.value)); if (previous[field] && ![...select.options].some(o=>o.value===previous[field])) select.add(new Option(previous[field], previous[field])); select.value = previous[field] || ''; label.append(select); container.append(label); } }
-function metrics(data) { $('overview').replaceChildren(); for (const [value,label] of [[data.totals.nodes ?? '—','Nodes · whole database'],[data.totals.edges ?? '—','Relationships · whole database'],[data.isolated_total ?? '—','Isolated nodes · whole database'],[data.dangling_total ?? '—','Missing endpoints · whole database'],[data.tables.reduce((a,t)=>a+t.count,0),'Rows · all tables'],[(data.bytes/1048576).toFixed(2)+' MB','SQLite pages · logical size']]) { const metric = text('div','', 'metric'); metric.append(text('strong',typeof value==='number'?value.toLocaleString():value),text('span',label)); $('overview').append(metric); } }
+function metrics(data) {
+  $('overview').replaceChildren();
+  const values = [
+    [data.totals.nodes ?? '—','Graph nodes · all layers'],
+    [data.totals.edges ?? '—','Relationships · all layers'],
+    [data.isolated_total ?? '—','Isolated nodes · all layers'],
+    [data.reference_total || data.dangling_total || 0,data.reference_total?'Unresolved / ambiguous reference nodes':'Missing endpoints · all layers'],
+    [data.tables.reduce((a,t)=>a+t.count,0),'Rows · all tables'],
+    [(data.bytes/1048576).toFixed(2)+' MB','SQLite pages · logical size']
+  ];
+  for (const [value,label] of values) {
+    const metric=text('div','','metric');
+    metric.append(text('strong',typeof value==='number'?value.toLocaleString():value),text('span',label));
+    $('overview').append(metric);
+  }
+}
 function decorate() {
   const field = $('perspective').value;
   const components = new Map();
@@ -74,11 +109,14 @@ function decorate() {
   const colors = new Map(values.map((v,i) => [v,
     (field==='validity'?validityColors[v]:field==='confidence'?confidenceColors[v]:null) || palette[i%palette.length]]));
   cy.batch(() => cy.elements().forEach(el => {
-    el.data('color',colors.get(value(el)));
-    el.data('displayLabel',(el.isNode()?$('labels').checked:$('edgeLabels').checked)?el.data('label'):'');
+    const color=colors.get(value(el));
+    if (el.data('color')!==color) el.data('color',color);
+    const displayLabel=(el.isNode()?$('labels').checked:$('edgeLabels').checked)?el.data('label'):'';
+    if (el.data('displayLabel')!==displayLabel) el.data('displayLabel',displayLabel);
     if (el.isNode()) {
       const attrs = el.data('attributes');
-      el.data('size',attrs._aggregate ? 22+Math.min(36,Math.log2(attrs.member_count+1)*4) : 14+Math.min(16,Math.log2(el.degree()+1)*4));
+      const size=attrs._aggregate ? 22+Math.min(36,Math.log2(attrs.member_count+1)*4) : 14+Math.min(16,Math.log2(el.degree()+1)*4);
+      if (el.data('size')!==size) el.data('size',size);
     }
   }));
   $('legend').replaceChildren();
@@ -98,8 +136,9 @@ function layout(options = {}) {
   MemoryGraphLayout.arrange(cy,{name:$('layout').value,width:bounds.width,height:bounds.height,...options});
 }
 function signatureMap(data) { return new Map([...data.nodes.map(n=>['n:'+n.graph_id,JSON.stringify(n)]),...data.edges.map(e=>['e:'+e.graph_id,JSON.stringify(e)])]); }
-function draw(data, resetLayout, key) {
+async function draw(data, resetLayout, key) {
   const next = signatureMap(data);
+  const previous=state.previous,sameView=state.filterKey===key;
   state.changes.clear();
   if (state.previous && state.filterKey === key) {
     const changed = [];
@@ -142,7 +181,31 @@ function draw(data, resetLayout, key) {
   const edges = data.edges.filter(e => ids.has('n:' + e.source) && ids.has('n:' + e.target))
     .map(e => ({group:'edges',data:{id:'e:'+e.graph_id,source:'n:'+e.source,target:'n:'+e.target,
       label:e._aggregate?`${e.member_count} links`:String(e.kind||''),displayLabel:'',attributes:e,color:'#506984'}}));
-  cy.batch(() => { cy.elements().remove(); cy.add([...nodes,...edges]); });
+  const elements=[...nodes,...edges];
+  cy.startBatch();
+  try {
+    cy.elements().removeClass('changed');
+    if (resetLayout || !sameView) cy.elements().removeClass('path');
+    cy.elements().filter(el=>!next.has(el.id())).remove();
+    for (let i=0;i<elements.length;i+=1500) {
+      const additions=[];
+      for (const element of elements.slice(i,i+1500)) {
+        let existing=cy.getElementById(element.data.id);
+        if (existing.length && existing.isEdge() &&
+            (existing.data('source')!==element.data.source || existing.data('target')!==element.data.target)) {
+          existing.remove();
+          existing=cy.collection();
+        }
+        if (!existing.length) additions.push(element);
+        else if (!previous || previous.get(element.data.id)!==next.get(element.data.id)) existing.data(element.data);
+      }
+      if (additions.length) cy.add(additions);
+      if (elements.length>5000) {
+        $('connection').textContent=`Rendering graph · ${Math.min(i+1500,elements.length)} / ${elements.length}`;
+        await new Promise(resolve=>setTimeout(resolve,0));
+      }
+    }
+  } finally {cy.endBatch();}
   decorate();
   applyHighlight();
   if (!state.selectedActivity) cy.elements().filter(el => state.changes.has(el.id())).addClass('changed');
@@ -162,22 +225,33 @@ function draw(data, resetLayout, key) {
   }
 }
 async function refresh(resetLayout=false) {
-  if (state.busy) return;
+  if (state.busy) {state.refreshQueued=true;state.resetQueued ||= resetLayout;return;}
   state.busy = true;
   try {
     const values = filters(), key = JSON.stringify(values), started = performance.now();
-    const data = await api('snapshot', values);
+    $('connection').textContent='Loading graph…';
+    const data = await api('snapshot', {...values,revision:state.revision});
+    if (key!==JSON.stringify(filters())) {state.refreshQueued=true;state.resetQueued=true;return;}
+    if (data.unchanged) {
+      $('connection').textContent='● Connected · '+new Date().toLocaleTimeString();
+      if (state.view==='tables') await loadTable();
+      await pollEvents();
+      return;
+    }
+    state.revision=data.revision;
     state.snapshot = data;
     metrics(data);
     renderFilters(data.facets);
     renderEdgeFilters(data.edge_facets);
-    draw(data, resetLayout, key);
+    renderLayers(data.layers);
+    await draw(data, resetLayout, key);
     $('connection').textContent = '● Connected · ' + new Date().toLocaleTimeString();
     $('performance').textContent = `Query ${data.elapsed_ms} ms · refresh ${Math.round(performance.now()-started)} ms`;
     $('sliceInfo').textContent = `${data.nodes.length} nodes · ${data.edges.length} relationships · ${cy.elements().components().length} components in slice`;
     $('pageInfo').textContent = `${data.matched_nodes?state.offset+1:0}–${state.offset+data.nodes.length} / ${data.matched_nodes||0} matching nodes`;
-    $('previous').disabled = state.offset === 0;
-    $('next').disabled = !data.node_has_more;
+    $('previous').disabled = data.whole_graph || state.offset === 0;
+    $('next').disabled = data.whole_graph || !data.node_has_more;
+    $('limit').disabled=data.whole_graph;
     const notices = [];
     if (!data.graph_available) notices.push('No graph projection for this schema. Inspect tables / SQL, or supply --mapping.');
     if (data.node_has_more || state.offset) notices.push('Partial graph: use filters, pagination or neighborhood focus to inspect other segments.');
@@ -186,6 +260,9 @@ async function refresh(resetLayout=false) {
     if (state.root) notices.push('Neighborhood focus active. Clear filters & focus to return.');
     if (state.nullField) notices.push(`Filtering unspecified ${state.nullField}. Clear filters & focus to remove.`);
     if (data.aggregate) notices.push(`Whole filtered database grouped by ${data.aggregate}: ${data.grouped_members} members. Drill into groups for individual elements and session highlights.`);
+    if (data.reference_total) notices.push(`${data.reference_total} reference targets are represented explicitly as unresolved/ambiguous nodes.`);
+    if (cy.scratch('memory-layout')==='grid-large') notices.push('Large graph: grid overview keeps all selected nodes and links available. Zoom in, filter, or group by layer/type to inspect structure.');
+    notices.push(...(data.projection_warnings || []));
     $('notice').textContent = notices.join(' ') || 'Showing the complete graph for this selection. Select elements to inspect evidence and stored claims.';
     renderTables(data.tables);
     if (state.view === 'tables') await loadTable();
@@ -196,6 +273,11 @@ async function refresh(resetLayout=false) {
     showError(error);
   } finally {
     state.busy = false;
+    if (state.refreshQueued) {
+      const reset=state.resetQueued;
+      state.refreshQueued=state.resetQueued=false;
+      await refresh(reset);
+    }
   }
 }
 function matches(e){return ['chat','session','agent'].every(key=>!$(key).value||e[key]===$(key).value);}
@@ -218,7 +300,15 @@ function selectActivity(event) {
   const highlighted = cy.elements('.touched');
   if (highlighted.length) MemoryGraphLayout.fit(cy,highlighted.union(highlighted.edges().connectedNodes()),60);
 }
-function references(event){const ids=(event.references||[]).map(r=>r.graph_type?(r.graph_type==='nodes'?'n:':'e:')+r.graph_id:(r.table==='records'?'n:':'e:')+JSON.stringify([r.scope_id,r.id]));return ids.concat(event.changed||[]);}
+function references(event) {
+  const ids=(event.references || []).map(r=>{
+    if (r.graph_type) return (r.graph_type==='nodes'?'n:':'e:')+r.graph_id;
+    if (r.table==='code_symbols') return 'n:'+JSON.stringify(['code',r.scope_id,r.id]);
+    if (r.table==='code_edges') return 'e:'+JSON.stringify(['code-edge',r.scope_id,r.id]);
+    return (r.table==='records'?'n:':'e:')+JSON.stringify([r.scope_id,r.id]);
+  });
+  return ids.concat(event.changed || []);
+}
 function applyHighlight() {
   const events = state.selectedActivity ? [state.selectedActivity] : state.recorded.filter(matches);
   const touched = new Set(events.flatMap(references));
@@ -348,9 +438,15 @@ async function inspect(el) {
   const data = await api('detail',{type:el.isNode()?'nodes':'edges',id:attrs.graph_id});
   if (state.selected !== el) return;
   container.replaceChildren();
-  $('selectionHint').textContent = el.isNode() ? 'Stored node and supporting evidence' : 'Stored relationship and supporting evidence';
+  $('selectionHint').textContent = attrs.source_table==='unresolved_reference'
+    ? 'Unresolved endpoint reference; this placeholder is not a verified program declaration.'
+    : el.isNode() ? 'Stored node and supporting evidence' : 'Stored relationship and supporting evidence';
   $('selectionActions').classList.toggle('hidden',!el.isNode());
   data.rows.forEach(r => attributes(container,r));
+  if (data.coverage?.length) {
+    container.append(text('h2','Stored file coverage / review state'));
+    data.coverage.forEach(r=>attributes(container,r));
+  }
   container.append(text('h2','Evidence'));
   if (!data.evidence.length) container.append(text('p','No supporting evidence returned. For custom schemas, inspect provenance using SQL.','hint'));
   for (const e of data.evidence) {
@@ -363,6 +459,12 @@ function openGroup(el) {
   const attrs = el?.data('attributes');
   if (!el?.isNode() || !attrs?._aggregate) return;
   const select = $('filter-' + attrs._aggregate);
+  if (attrs._aggregate==='layer') {
+    state.disabledLayers=new Set(state.snapshot.layers.filter(l=>l.id!==attrs.group_value).map(l=>l.id));
+    // Cross-layer edges have no nodes of their own; incident edges follow visible endpoints.
+    state.disabledLayers.delete('cross');
+    $('aggregate').value='';state.root='';state.offset=0;refresh(true);return;
+  }
   state.nullField = attrs.group_value == null ? attrs._aggregate : '';
   if (attrs.group_value == null) select.value = '';
   else {
@@ -407,6 +509,7 @@ $('clearFilters').onclick = () => {
 $('previous').onclick = () => { state.offset=Math.max(0,state.offset-Number($('limit').value)); refresh(true); };
 $('next').onclick = () => { state.offset+=Number($('limit').value); refresh(true); };
 $('limit').onchange = () => { state.offset=0; refresh(true); };
+$('wholeGraph').onchange=()=>{state.offset=0;state.revision=null;refresh(true);};
 $('perspective').onchange = decorate;
 $('labels').onchange = () => {decorate();if ($('followGraph').checked) layout();};
 $('edgeLabels').onchange = decorate;
