@@ -2,6 +2,15 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## Controlled graph architecture v3
+
+The user requested a controlled starting model rather than a new agent-designed schema in every host. Schema v3 places all graph entities in `nodes` and all adjacency in `edges`, with open type/layer values and supported `symbol_details`, `file_details` and provenance attachments. The shared neighborhood SQL separates traversal and result filters, preserves scope/direction, and returns minimum hop depth across entity types. The thin executor remains generic SQL transport.
+
+Schema changes now follow public EvoMneme architecture development: versioned core/extensions, compatible published migrations, viewer support, documentation and synthetic verification before host adoption. Custom mappings remain inspection aids. The viewer recognizes v3, shows supported details/coverage/evidence, includes detail fields in fingerprints and rejects unsupported version/column contracts; legacy graphs remain readable. The published migration covers only the unextended official v2 starter and preserves IDs, data and provenance. Extended legacy stores require a separately published compatible migration; no live host database was migrated.
+
+Validation: eight new tests cover foreign keys and evidence targets, cross-type depth/direction/cycles and independent result filters, scope/stale exclusion, viewer details/layers/read-only behavior, detail fingerprints/new type values, incompatible versions/columns, SQL tracing and transport, and migration preservation/rollback/structure parity. The existing 25 executor and 19 viewer tests also passed; two loopback HTTP tests required retry outside the network-restricted sandbox after WinError 10013. These are synthetic checks, not fresh-session integration or measured development-efficiency gains. Viewer/Live/journal work in the concurrent chat was coordinated at file/method boundaries.
+
+
 ## Usage contract without implementation reading
 
 Documentation review found that Python imports/creation failures, exact parameter types and limits, CLI result/exit rules, and MCP startup/lifecycle details required assumptions beyond the usage references. The references now publish those details and schema-setup choices in one shared contract with transport-specific examples; the concise skill routes normal use there. The contract was cross-checked against the committed SQL interface and local links/whitespace checked. An independent agent then used the documentation without reading runtime sources against an opaque committed-runtime snapshot: Python lifecycle/bindings/transaction effects, CLI requests/errors, and MCP handshake/calls/recovery/EOF passed. This establishes source-free interface use on that snapshot, not live host integration.

@@ -14,7 +14,7 @@ New sessions and limited working context can leave an agent rediscovering projec
 
 ## An agent-maintained knowledge graph
 
-The tool is deliberately thin: **receive SQL → execute it in SQLite → return a compact result**. The agent chooses and evolves the schema, writes SQL, checks source/version provenance, and reconciles knowledge during normal work. No domain-specific indexing API or automatic code analyzer stands between the agent and SQLite.
+The tool is deliberately thin: **receive SQL → execute it in SQLite → return a compact result**. The agent writes SQL, checks source/version provenance, and reconciles knowledge within a [shared, versioned schema](references/schema.md). All graph entities use `nodes`, all relationships use `edges`; type-specific attributes live in supported detail tables. New types are field values. Schema changes are public EvoMneme architecture changes with matching viewer support, migrations and tests, rather than a model reinvented for each host. No domain-specific indexing API or automatic code analyzer stands between the agent and SQLite.
 
 ```mermaid
 flowchart TB
@@ -31,7 +31,8 @@ Full graph maintenance is the default for an authorized software host: modules, 
 - [SKILL.md](SKILL.md): one live portable instruction set for authorized host projects, connected through their agent's native instruction mechanism.
 - [scripts/evomneme.py](scripts/evomneme.py): an optional Python standard-library SQL executor with the shared `Executor.execute_sql` API, per-command parameters, explicit native transactions, and bounded column/row results.
 - [scripts/evomneme_mcp.py](scripts/evomneme_mcp.py): an optional stdio MCP adapter exposing the same `execute_sql` operation, bound to one explicit database at startup. Agents can call it without constructing outer shell commands.
-- [schema.sql](schema.sql): an optional raw SQLite starter script, never automatically applied or imposed on existing databases. Its multi-statement form requires a native script facility, rather than `--sql-file`.
+- [schema.sql](schema.sql): the controlled version-3 starting schema for new host stores, applied deliberately. Existing databases use compatible published migrations. Its multi-statement form requires a native script facility, rather than `--sql-file`.
+- [queries/neighborhood.sql](queries/neighborhood.sql): cross-type graph retrieval with depth, direction, and separate traversal/result filters.
 
 **Each host project has its own local SQLite file. This repository is not its knowledge store.** Linked worktrees explicitly share one canonical host database; independent clones/projects use separate files. Keep knowledge and associated local state excluded from Git. Never activate EvoMneme in its own repository, forks, or worktrees; isolated development fixtures are allowed.
 
@@ -39,7 +40,7 @@ Full graph maintenance is the default for an authorized software host: modules, 
 
 Authorize your agent, for example:
 
-> Connect EvoMneme from this trusted checkout to my project at `<host-project>`. Keep its database local and excluded from Git. Load the live instructions in every project session and verify fresh-session loading and instruction update/reload. Choose the schema, build the full code graph, and maintain its coverage, relationships, and useful project knowledge during ordinary development. Use the SQL CLI or optional project-local MCP transport already supported by my environment.
+> Connect EvoMneme from this trusted checkout to my project at `<host-project>`. Keep its database local and excluded from Git. Load the live instructions in every project session and verify fresh-session loading and instruction update/reload. Use the released schema and compatible viewer, build the full code graph, and maintain its coverage, relationships, and useful project knowledge during ordinary development. Use the SQL CLI or optional project-local MCP transport already supported by my environment.
 
 Finding this README or a skill in a catalog does not grant integration permission. Once authorized, follow [connection and verification](references/integration.md), [SQL/storage practice](references/storage.md), and [optional MCP setup](references/mcp.md). A skill catalog entry, running MCP process, or written instruction pointer alone does not prove that every session loads the instructions. Unsupported activation or self-update verification remains an explicit incomplete setup.
 
@@ -52,10 +53,10 @@ python <tool>/scripts/evomneme.py --database <absolute-host-db> --input <host-lo
 ```
 
 ```json
-{"sql":"SELECT id,title,summary FROM records WHERE scope_id=:scope AND validity='current' LIMIT 8","params":{"scope":"verified-scope-id"},"max_rows":8}
+{"sql":"SELECT id,title,summary FROM nodes WHERE scope_id=:scope AND validity='current' LIMIT 8","params":{"scope":"verified-scope-id"},"max_rows":8}
 ```
 
-This query assumes the optional starter; the executor accepts agent-designed schemas too. Each SQL string is one native SQLite statement; use a `sql` array of `{sql,params}` commands for batches, with explicit `BEGIN`/`COMMIT` when atomicity is needed. Ordinary SELECTs return a bounded prefix and `has_more`, without scanning omitted rows just to count them. Creation is explicit with `--create`, which creates an empty file only. Inspect existing schemas before changes. Prefer configured host-bound MCP, then a direct Python call without shell wrapping, then CLI JSON input. Native SQLite remains appropriate when deliberately selected or Python is unavailable. This ranking does not authorize switching after a configured integration fails.
+This query uses schema v3. The executor remains generic SQL transport; schema governance is part of the agent's instructions. Each SQL string is one native SQLite statement; use a `sql` array of `{sql,params}` commands for batches, with explicit `BEGIN`/`COMMIT` when atomicity is needed. Ordinary SELECTs return a bounded prefix and `has_more`, without scanning omitted rows just to count them. Creation is explicit with `--create`, which creates an empty file only. Inspect existing schemas before changes and use the [published migration procedure](references/schema.md#initialization-and-compatibility). Prefer configured host-bound MCP, then a direct Python call without shell wrapping, then CLI JSON input. Native SQLite remains appropriate when deliberately selected or Python is unavailable. This ranking does not authorize switching after a configured integration fails.
 
 ## Autonomy and limits
 

@@ -340,10 +340,10 @@ class ExecutorTests(unittest.TestCase):
         self.assertTrue(all(item['ok'] for item in result), result)
         self.assertEqual(self.rows('SELECT count(*),sum(number) FROM value'), [[18, sum(range(18))]])
 
-    def test_existing_v2_schema_is_unmodified_and_agent_can_evolve_it(self):
-        """Load optional raw SQL through SQLite itself, then use ordinary execution without gates."""
+    def test_executor_remains_schema_agnostic_for_legacy_databases(self):
+        """SQL transport does not enforce the separately governed knowledge schema."""
         with contextlib.closing(sqlite3.connect(self.database)) as direct:
-            direct.executescript((REPOSITORY / 'schema.sql').read_text(encoding='utf-8'))
+            direct.executescript((REPOSITORY / 'tests/fixtures/schema-v2.sql').read_text(encoding='utf-8'))
             direct.execute("INSERT INTO scopes VALUES('scope','main','host','head','snapshot','now')")
             direct.execute("INSERT INTO records VALUES('scope','old','finding','Old title','Summary','confirmed','current',NULL,NULL,NULL,NULL,'now')")
             direct.commit()

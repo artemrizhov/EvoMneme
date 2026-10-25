@@ -305,7 +305,7 @@ function references(event) {
     if (r.graph_type) return (r.graph_type==='nodes'?'n:':'e:')+r.graph_id;
     if (r.table==='code_symbols') return 'n:'+JSON.stringify(['code',r.scope_id,r.id]);
     if (r.table==='code_edges') return 'e:'+JSON.stringify(['code-edge',r.scope_id,r.id]);
-    return (r.table==='records'?'n:':'e:')+JSON.stringify([r.scope_id,r.id]);
+    return (r.table==='records'||r.table==='nodes'?'n:':'e:')+JSON.stringify([r.scope_id,r.id]);
   });
   return ids.concat(event.changed || []);
 }

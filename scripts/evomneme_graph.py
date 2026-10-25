@@ -1,4 +1,21 @@
-"""Read-only graph projections for knowledge, code, and unresolved references."""
+"""Controlled v3 graph projections and read-only compatibility for legacy stores."""
+
+SCHEMA_VERSION = '3'
+V3_COLUMNS = {
+    'metadata': {'key', 'value'},
+    'scopes': {'id', 'branch', 'worktree', 'revision', 'snapshot', 'created_at'},
+    'nodes': {'scope_id', 'id', 'kind', 'title', 'summary', 'confidence', 'validity',
+              'source_path', 'source_hash', 'line_start', 'line_end', 'updated_at', 'layer'},
+    'edges': {'scope_id', 'id', 'source_id', 'target_id', 'kind', 'summary', 'confidence',
+              'validity', 'source_path', 'source_hash', 'updated_at', 'layer', 'resolution',
+              'line_start', 'line_end'},
+    'evidence': {'scope_id', 'id', 'node_id', 'edge_id', 'description', 'source_path',
+                 'source_hash', 'validity', 'updated_at'},
+    'symbol_details': {'scope_id', 'node_id', 'qualified_name', 'signature', 'language'},
+    'file_details': {'scope_id', 'node_id', 'declaration_status', 'relationship_status',
+                     'inspected_hash', 'exclusion_reason', 'remaining_work'},
+    'history': {'id', 'happened_at', 'action', 'detail'},
+}
 
 def quoted(name):
     return '"' + name.replace('"', '""') + '"'
@@ -15,6 +32,14 @@ EDGE_COLUMNS = ('graph_id', 'source', 'target', 'scope_id', 'id', 'kind', 'summa
 def projection_sql(db):
     """Namespace identities; resolve endpoints only when their meaning is unique."""
     tables = {r[0] for r in db.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+    version = None
+    if 'metadata' in tables:
+        metadata_columns = {r[1] for r in db.execute('PRAGMA table_info(metadata)')}
+        if {'key', 'value'} <= metadata_columns:
+            version = db.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()
+            version = version[0] if version else None
+    if {'nodes', 'edges'} & tables or version not in (None, '2'):
+        return controlled_projection_sql(db, tables, version)
     columns = {name: {r[1] for r in db.execute('PRAGMA table_info(' + quoted(name) + ')')}
                for name in ('records', 'relations', 'code_symbols', 'code_edges', 'evidence') if name in tables}
     nodes, edges, warnings = [], [], []
@@ -108,3 +133,34 @@ def projection_sql(db):
     return {'nodes': common + 'SELECT * FROM base_nodes UNION ALL ' + ref_sql,
             'edges': common + 'SELECT ' + ','.join(out_edges[c] + ' AS ' + quoted(c) for c in EDGE_COLUMNS) + ' FROM linked',
             'warnings': warnings}
+
+
+def controlled_projection_sql(db, tables, version):
+    """One identity namespace and adjacency model, regardless of node kind."""
+    user_version = db.execute('PRAGMA user_version').fetchone()[0]
+    if version != SCHEMA_VERSION or user_version != int(SCHEMA_VERSION):
+        raise ValueError('Unsupported EvoMneme schema version ' + str(version) + ' / user_version=' + str(user_version) +
+                         '; this viewer requires v3 for nodes/edges. Use a compatible published release or an explicit inspection mapping.')
+    for table, expected in V3_COLUMNS.items():
+        columns = {r[1] for r in db.execute('PRAGMA table_info(' + quoted(table) + ')')} if table in tables else set()
+        if not expected <= columns:
+            raise ValueError('Incompatible EvoMneme v3 table ' + table + ': missing ' + ', '.join(sorted(expected - columns)))
+
+    def fingerprint(alias, table):
+        return 'viewer_fingerprint(' + ','.join(alias + '.' + quoted(c) for c in sorted(V3_COLUMNS[table])) + ')'
+
+    node_fields = {c: 'n.' + quoted(c) for c in NODE_COLUMNS if c in V3_COLUMNS['nodes']}
+    node_fields.update(graph_id='json_array(n.scope_id,n.id)', label='n.title', source_table="'nodes'",
+                       evidence_count='(SELECT count(*) FROM evidence p WHERE p.scope_id=n.scope_id AND p.node_id=n.id)',
+                       fingerprint='viewer_fingerprint(' + ','.join([fingerprint('n', 'nodes'), fingerprint('s', 'symbol_details'), fingerprint('f', 'file_details')]) + ')')
+    edge_fields = {c: 'e.' + quoted(c) for c in EDGE_COLUMNS if c in V3_COLUMNS['edges']}
+    edge_fields.update(graph_id='json_array(e.scope_id,e.id)', source='json_array(e.scope_id,e.source_id)',
+                       target='json_array(e.scope_id,e.target_id)', source_table="'edges'", fingerprint=fingerprint('e', 'edges'))
+    nodes = 'SELECT ' + ','.join(node_fields.get(c, 'NULL') + ' AS ' + quoted(c) for c in NODE_COLUMNS)
+    nodes += ' FROM nodes n LEFT JOIN symbol_details s ON s.scope_id=n.scope_id AND s.node_id=n.id LEFT JOIN file_details f ON f.scope_id=n.scope_id AND f.node_id=n.id'
+    edges = 'SELECT ' + ','.join(edge_fields.get(c, 'NULL') + ' AS ' + quoted(c) for c in EDGE_COLUMNS) + ' FROM edges e'
+    warnings = []
+    legacy = sorted(tables & {'records', 'relations', 'code_symbols', 'code_edges'})
+    if legacy:
+        warnings.append('Legacy graph tables coexist with v3 and are not merged: ' + ', '.join(legacy) + '. Complete a published migration before treating the graph as complete.')
+    return {'nodes': nodes, 'edges': edges, 'warnings': warnings}

@@ -1,6 +1,6 @@
 # Full code graph: coverage and maintenance
 
-Use this procedure for initial construction, expansion of an existing architecture-only store, continuation of incomplete coverage, and structural reconciliation. It applies within an authorized host; it does not activate EvoMneme in its own repository. The agent owns analysis and SQL. No external analyzer, fixed schema, or separate indexing service is required.
+Use this procedure for initial construction, expansion of an existing architecture-only store, continuation of incomplete coverage, and structural reconciliation. It applies within an authorized host; it does not activate EvoMneme in its own repository. The agent owns analysis and SQL within the [controlled schema](schema.md). No external analyzer or separate indexing service is required.
 
 ## Establish the source boundary
 
@@ -10,9 +10,9 @@ Record the host/version/worktree and inspected content identities, included root
 
 ## Represent declarations and relationships
 
-For every in-scope file, record its role and declarations: modules/namespaces, classes/interfaces/types, functions/methods/constructors, fields/properties/constants, and equivalent language structures. Include nested declarations and distinguish overloads, accessors, and same-named symbols in different owners. Use identities qualified by source and owner, plus a language-appropriate disambiguator; line numbers alone are not identities. Preserve concise signatures/responsibilities and source locations with version/content evidence. Distinguish declared members from inherited members reachable through inheritance.
+For every in-scope file, record its role and declarations as `nodes`: modules/namespaces, classes/interfaces/types, functions/methods/constructors, fields/properties/constants, and equivalent language structures. Include nested declarations and distinguish overloads, accessors, and same-named symbols in different owners. Use identities qualified by source and owner, plus a language-appropriate disambiguator; line numbers alone are not identities. Store qualified names/signatures/language in `symbol_details`; common responsibilities and source locations stay on the node. Distinguish declared members from inherited members reachable through inheritance.
 
-Make relationships traversable, rather than burying names in summaries:
+Store every relationship in the shared `edges` table, rather than burying names in summaries or introducing separate code adjacency tables:
 
 - Ownership/containment, imports/exports/re-exports, inheritance, and interface implementation.
 - Calls and symbol references, reads/writes and data dependencies where represented in the source.
@@ -24,7 +24,7 @@ Architecture, contracts, decisions, and findings link to the structural graph. P
 
 ## Build and demonstrate coverage
 
-Keep source inventory and coverage state in the host-local store, using an agent-chosen schema. Track each file's inspected content identity, declaration coverage, relationship categories reviewed, unresolved sites, and remaining work. Distinguish pending, partial, verified, stale, and blocked work, with reasons. A file with no declarations still needs a recorded inspection outcome. Keep explicit exclusions visible alongside coverage, rather than counting them as inspected code.
+Keep source inventory as file `nodes` and coverage state in `file_details`, connected to declarations through `declared_in` edges. Track each file's inspected content identity, declaration coverage, relationship categories reviewed, unresolved sites, and remaining work. Record category review/gaps in `remaining_work` and unresolved sites as graph nodes/edges; do not create private coverage tables. Distinguish pending, partial, verified, stale, and blocked work, with reasons. A file with no declarations still needs a recorded inspection outcome. Keep explicit exclusions visible alongside coverage, rather than counting them as inspected code. Additional structured coverage fields require a published schema/viewer change.
 
 Build in bounded, resumable batches. Prioritize the current development area without dropping the rest of the inventory; save the next pending work and resume it in subsequent active sessions without another user request. Do not block every small task on a full rebuild or repeatedly rescan unchanged implementation bodies. A dedicated maintenance subagent may help under the skill's delegation and ownership rules. If time, access, or available tooling prevents completion, preserve the gap and report partial coverage, not a finished graph.
 

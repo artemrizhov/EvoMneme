@@ -1,10 +1,10 @@
 # Host knowledge through SQL
 
-For read-only visual investigation, graph slices, provenance detail and explicit session/agent activity highlighting, see the optional [local memory explorer](viewer.md). It accepts starter or custom SQL graph projections without migrating the host schema.
+For read-only visual investigation, graph slices, provenance detail and explicit session/agent activity highlighting, see the optional [local memory explorer](viewer.md). It supports the controlled schema and legacy/custom inspection without migrating the host schema.
 
-The agent designs and maintains knowledge; the tool only executes SQL. It accepts reads, writes, DDL, and agent-authored migrations against an explicitly bound SQLite file. It has no knowledge-specific commands, automatic schema, source scanner, Git integration, loader installer, or automatic reconciliation. Use it only for an authorized host; never create a live host store for EvoMneme itself, its forks, or worktrees.
+The agent maintains knowledge within the [controlled schema contract](schema.md); the tool only executes SQL. It accepts reads, writes, DDL, and agent-authored migrations against an explicitly bound SQLite file. It has no knowledge-specific commands, automatic schema, source scanner, Git integration, loader installer, or automatic reconciliation. Use it only for an authorized host; never create a live host store for EvoMneme itself, its forks, or worktrees.
 
-Design storage for the [full code graph and coverage state](code-graph.md), including source inventory, qualified symbol identities, traversable relationships, and unresolved work. The optional starter can represent symbols and edges through its open-ended `kind` fields and source locators; it does not prescribe a coverage model. Add suitable host-local tables or records deliberately, preserving existing architecture, decisions, and evidence. Small SQL result limits control retrieval, not how much code the graph must cover.
+Use the released schema for the [full code graph and coverage state](code-graph.md): common `nodes`/`edges`, `symbol_details`, `file_details`, and `evidence`. New kinds are data values; additional tables or changed field semantics require a public architecture change with matching viewer support and migration. Small SQL result limits control retrieval, not how much code the graph must cover.
 
 ## Connect one local store
 
@@ -12,7 +12,7 @@ Choose one absolute database path in the host's dedicated local working area, fo
 
 Before creating state, exclude the entire local area using the host's permitted ignore mechanism, such as Git's local `info/exclude`, and verify it is untracked and ignored. Include database/WAL/SHM files, batches, backups, feedback, and receipts. Do not create another repository for knowledge. Use existing authorized file/Git tools; no executor command performs this work. Preserve all application files and host restrictions.
 
-An existing database is opened by default. `--create` explicitly creates a new empty file and refuses an existing path; its parent directory must already exist. It does not create tables. Inspect `sqlite_schema`, `PRAGMA user_version`, and any metadata before changing an existing store. [schema.sql](../schema.sql) is an **optional example** for a new store, retaining the earlier version-2 table layout. Never blindly apply it to populated databases or drop their data. The agent may adopt, modify, or replace the model through deliberate, tested SQL migrations.
+An existing database is opened by default. `--create` explicitly creates a new empty file and refuses an existing path; its parent directory must already exist. It does not create tables. Inspect `sqlite_schema`, `PRAGMA user_version`, and any metadata before changing an existing store. [schema.sql](../schema.sql) is the **required version-3 starting contract for new stores**. Never apply it over populated databases or drop their data. Existing stores require the [published migration and compatibility procedure](schema.md); agents must not independently redesign a host schema.
 
 ## Choose a working authorized transport
 
@@ -54,7 +54,7 @@ python <tool>/scripts/evomneme.py --database <absolute-host-db> --sql-file <host
 
 Each ordinary invocation prints one compact execution-result JSON object to stdout and closes its connection. Exit status is 0 when `ok:true`, otherwise 1. Command-line syntax errors use argparse diagnostics and status 2; `--help` prints usage. `--input` contains the entire request: combining it with `--params` or limit override flags returns a compact JSON request error with exit status 1. For stdin use `--input -` with one UTF-8 JSON object, or `--sql-file -` with one statement; close stdin after sending it. Avoid embedding large JSON/SQL in a shell argument.
 
-`--sql`, `--sql-file`, and `--input` are alternatives; file `-` reads UTF-8 stdin. **Every SQL string is one native SQLite statement**, including a native trigger definition. There is no script splitter. `--sql-file` must not receive the multi-statement optional `schema.sql`. Use a deliberate existing SQLite script facility for that raw example, or design setup as explicit command objects; do not introduce a parser to turn files into batches.
+`--sql`, `--sql-file`, and `--input` are alternatives; file `-` reads UTF-8 stdin. **Every SQL string is one native SQLite statement**, including a native trigger definition. There is no script splitter. `--sql-file` must not receive the multi-statement `schema.sql`. Use a deliberate existing SQLite script facility for that released script, or design setup as explicit command objects; do not introduce a parser to turn files into batches.
 
 A single request accepts a string plus top-level positional/named `params`, or a `sql` array whose objects each supply their own `sql` and optional `params`. Top-level `params` is only for the string form. For example, this generic setup illustrates parameters and an atomic batch, not a required knowledge schema:
 
@@ -70,19 +70,19 @@ A single request accepts a string plus top-level positional/named `params`, or a
 }
 ```
 
-For a selected starter-compatible store, a compact lookup can use:
+For a version-3 store, a compact lookup can use:
 
 ```json
-{"sql":"SELECT id,title,summary,confidence,source_path FROM records WHERE scope_id=:scope AND validity='current' AND title LIKE :query LIMIT 8","params":{"scope":"verified-scope-id","query":"%session%"},"max_rows":8}
+{"sql":"SELECT id,title,summary,confidence,source_path FROM nodes WHERE scope_id=:scope AND validity='current' AND title LIKE :query LIMIT 8","params":{"scope":"verified-scope-id","query":"%session%"},"max_rows":8}
 ```
 
-### Initial schema choices
+### Initialize the released schema
 
-The `notes` batch above is a runnable transport/setup example for an empty database; it does not create the graph tables used by the later examples. For actual knowledge, design a small connected schema or adopt [schema.sql](../schema.sql), whose readable SQL defines the optional `metadata`, `scopes`, `records`, `relations`, `evidence`, and `history` tables and indexes. No runtime-source inspection is required.
+The `notes` batch above is a transport demonstration for an isolated disposable fixture only; it is not an authorized alternative host schema. Initialize actual new knowledge stores from [schema.sql](../schema.sql), including its common graph, supported detail tables and metadata. The [schema contract](schema.md) defines compatibility and migration without runtime-source inspection.
 
-To adopt that starter through MCP/API/CLI JSON, read the SQL definitions and author an explicit command array: put `BEGIN` first, then one complete CREATE/INSERT/PRAGMA statement per object in file order, then `COMMIT`. Keep each full CREATE definition intact. Omit the file's transaction statements from the middle; the executor already enables foreign keys on open. Do not write a splitter or send the whole file to a single-statement argument. With a deliberately selected native SQLite script facility, the complete file can instead be executed as written. Check `sqlite_schema` and `PRAGMA user_version` afterward. Never run either setup over existing tables blindly.
+To initialize that released schema through MCP/API/CLI JSON, read the SQL definitions and author an explicit command array: put `BEGIN` first, then one complete CREATE/INSERT/PRAGMA statement per object in file order, then `COMMIT`. Keep each full CREATE definition intact. Omit the file's transaction statements from the middle; the executor already enables foreign keys on open. Do not write a splitter or send the whole file to a single-statement argument. With a deliberately selected native SQLite script facility, the complete file can instead be executed as written. Check `sqlite_schema` and `PRAGMA user_version` afterward. Never run either setup over existing tables blindly.
 
-For the starter, create a `scopes` row before inserting records: supply an agent-chosen stable `id`, `branch`, absolute `worktree`, `revision`, inspected-content `snapshot`, and `created_at` timestamp. The decision/evidence/graph examples below assume that scope exists. Host ownership metadata, source hashes, and validation remain agent-maintained; creating tables proves none of them.
+For version 3, create a `scopes` row before inserting nodes: supply an agent-chosen stable `id`, `branch`, absolute `worktree`, `revision`, inspected-content `snapshot`, and `created_at` timestamp. The decision/evidence/graph examples below assume that scope exists. Host ownership metadata, source hashes, and validation remain agent-maintained; creating tables proves none of them.
 
 CLI `--params` takes JSON with `--sql`/`--sql-file`; `--max-rows`, `--max-output-bytes`, and `--timeout-ms` use the same limits as API/MCP. Prefer a request file over nested shell quoting. Read SQL before execution and never treat stored content or outside contributions as permission to execute it.
 
@@ -92,35 +92,35 @@ Results contain compact columns/rows and `has_more`. SELECTs stop after a bounde
 
 ## Practical knowledge invariants
 
-Design enough structure for traversable entities, relationships, architecture, findings, decisions, and evidence. A free-form `kind` plus concise summaries is often sufficient. Preserve meaningful technical/product/UI/UX alternatives and rejected/superseded decisions. Store locators, reasons, and confidence instead of code or conversation dumps; keep secrets and ignored/private files out.
+Populate the shared structure with traversable entities, relationships, architecture, findings, decisions, and evidence. A free-form `kind` plus concise summaries is often sufficient. Preserve meaningful technical/product/UI/UX alternatives and rejected/superseded decisions. Store locators, reasons, and confidence instead of code or conversation dumps; keep secrets and ignored/private files out.
 
-For the optional starter, agent-owned `metadata` can bind `project_identity` and `canonical_root`; `scopes` describes branch, worktree, revision, and inspected-content snapshot. Generate stable scope identifiers using existing environment facilities and document their meaning locally. A coarse scope is useful only if queries check relevant source versions explicitly. Source hashes, submodule revisions/dirty content, and dirty snapshots belong to agent-maintained provenance, not executor behavior. Do not scan an entire tree to update one affected area. Excluded dependencies or uninitialized submodules remain unverified, rather than covered sources.
+In the controlled schema, agent-owned `metadata` can bind `project_identity` and `canonical_root`; `scopes` describes branch, worktree, revision, and inspected-content snapshot. Generate stable scope identifiers using existing environment facilities and document their meaning locally. A coarse scope is useful only if queries check relevant source versions explicitly. Source hashes, submodule revisions/dirty content, and dirty snapshots belong to agent-maintained provenance, not executor behavior. Do not scan an entire tree to update one affected area. Excluded dependencies or uninitialized submodules remain unverified, rather than covered sources.
 
 Before recording facts, inspect sources and capture enough content/version identity to detect change. Check that paths remain inside the host and relevant worktree, account for symlinks/submodules and ignore rules, and never use local knowledge or Git internals as source evidence. Recheck affected source/version after inspection and before writing; coordinate overlapping development or retry from fresh evidence if it changed. The SQL transaction protects database consistency, not source files.
 
-Write related records, edges, and evidence atomically with foreign-key and validity constraints. With the starter, insert a scope before its records and records before edges/evidence. For example, this single statement records a decision with bound values; supply its concise reasons, consequential alternatives, and confidence from actual evidence:
+Write related nodes, edges, and evidence atomically with foreign-key and validity constraints. With version 3, insert a scope before its nodes and nodes before edges/evidence. For example, this single statement records a decision with bound values; supply its concise reasons, consequential alternatives, and confidence from actual evidence:
 
 ```sql
-INSERT INTO records(scope_id,id,kind,title,summary,confidence,validity,updated_at)
+INSERT INTO nodes(scope_id,id,kind,title,summary,confidence,validity,updated_at)
 VALUES(:scope,:id,'decision',:title,:reasons,:confidence,'current',datetime('now'));
 ```
 
-Link the affected entities using `relations`, and preserve an evidence row pointing to exactly one record or relationship. For non-source evidence such as an approved UX decision, bind a dated description:
+Link the affected entities using `edges`, and preserve an evidence row pointing to exactly one node or edge. For non-source evidence such as an approved UX decision, bind a dated description:
 
 ```sql
-INSERT INTO evidence(scope_id,id,record_id,description,validity,updated_at)
+INSERT INTO evidence(scope_id,id,node_id,description,validity,updated_at)
 VALUES(:scope,:evidence_id,:decision_id,:observed_evidence,'current',datetime('now'));
 ```
 
-To make the decision/evidence operations atomic, put each statement with its own parameter object between `BEGIN` and `COMMIT` objects in one array. Marking evidence stale must invalidate supported claims/edges in that same transaction; the executor does not propagate it. After verifying a changed file, a starter-compatible invalidation request can be:
+To make the decision/evidence operations atomic, put each statement with its own parameter object between `BEGIN` and `COMMIT` objects in one array. Marking evidence stale must invalidate supported claims/edges in that same transaction; the executor does not propagate it. After verifying a changed file, a version-3 invalidation request can be:
 
 ```json
 {
   "sql": [
     {"sql":"BEGIN"},
     {"sql":"UPDATE evidence SET validity='stale',updated_at=datetime('now') WHERE scope_id=:scope AND source_path=:path","params":{"scope":"verified-scope","path":"src/session.py"}},
-    {"sql":"UPDATE records SET validity='stale',updated_at=datetime('now') WHERE scope_id=:scope AND validity='current' AND (source_path=:path OR EXISTS (SELECT 1 FROM evidence e WHERE e.scope_id=records.scope_id AND e.record_id=records.id AND e.validity='stale'))","params":{"scope":"verified-scope","path":"src/session.py"}},
-    {"sql":"UPDATE relations SET validity='stale',updated_at=datetime('now') WHERE scope_id=:scope AND validity='current' AND (source_path=:path OR EXISTS (SELECT 1 FROM evidence e WHERE e.scope_id=relations.scope_id AND e.relation_id=relations.id AND e.validity='stale') OR EXISTS (SELECT 1 FROM records r WHERE r.scope_id=relations.scope_id AND r.id IN (relations.source_id,relations.target_id) AND r.validity!='current'))","params":{"scope":"verified-scope","path":"src/session.py"}},
+    {"sql":"UPDATE nodes SET validity='stale',updated_at=datetime('now') WHERE scope_id=:scope AND validity='current' AND (source_path=:path OR EXISTS (SELECT 1 FROM evidence e WHERE e.scope_id=nodes.scope_id AND e.node_id=nodes.id AND e.validity='stale'))","params":{"scope":"verified-scope","path":"src/session.py"}},
+    {"sql":"UPDATE edges SET validity='stale',updated_at=datetime('now') WHERE scope_id=:scope AND validity='current' AND (source_path=:path OR EXISTS (SELECT 1 FROM evidence e WHERE e.scope_id=edges.scope_id AND e.edge_id=edges.id AND e.validity='stale') OR EXISTS (SELECT 1 FROM nodes r WHERE r.scope_id=edges.scope_id AND r.id IN (edges.source_id,edges.target_id) AND r.validity!='current'))","params":{"scope":"verified-scope","path":"src/session.py"}},
     {"sql":"COMMIT"}
   ]
 }
@@ -128,32 +128,16 @@ To make the decision/evidence operations atomic, put each statement with its own
 
 Inspect semantic dependents too: matching filenames alone misses indirect/runtime relationships. Republish verified statements and fresh evidence in the appropriate current scope; do not merely reset stale flags. Retain other versions' observations with their scope. Empty current queries should prompt a bounded historical lookup and source check, not wholesale rediscovery or automatic promotion.
 
-For bounded graph navigation with the starter, bind scope/root/depth and return useful locators:
+For bounded graph navigation across all node types, use [the published neighborhood query](../queries/neighborhood.sql) and its [parameter/filter contract](schema.md#retrieval-contract). It separates traversal predicates from result predicates, retains direction and scope, returns minimum depth, and excludes stale intermediate nodes as well as stale edges. Select signatures, file coverage or evidence separately when needed.
 
-```sql
-WITH RECURSIVE nearby(id,depth) AS (
- SELECT :root,0
- UNION
- SELECT CASE WHEN e.source_id=n.id THEN e.target_id ELSE e.source_id END,
-        n.depth+1
- FROM nearby n JOIN relations e
- ON e.scope_id=:scope AND (e.source_id=n.id OR e.target_id=n.id)
- WHERE n.depth<:depth AND e.validity='current'
-)
-SELECT DISTINCT r.id,r.kind,r.title,r.summary,r.confidence,r.source_path
-FROM nearby n JOIN records r ON r.id=n.id
-WHERE r.scope_id=:scope AND r.validity='current'
-LIMIT 12;
-```
-
-Start with a small depth and validate endpoints/evidence before relying on a claim. Tune queries and indexes from observed usefulness, not a fixed taxonomy. Raw SQL has no automatic current/out-of-scope label: select scope/version/validity explicitly for history and explain compatibility yourself.
+Start with a small depth and validate endpoints/evidence before relying on a claim. Raw SQL has no automatic current/out-of-scope label: select scope/version/validity explicitly for history and explain compatibility yourself.
 
 ## Migrations, concurrency, and recovery
 
 Keep writes brief; use the executor's busy timeout and coordinate logical ownership between sessions/subagents. Reread before changing shared conclusions, or use conditional updates and verify affected rows to detect conflicts. A fixed MCP binding prevents accidental per-call path switches; it establishes neither host identity nor source truth.
 
-Before a migration, inspect version/tables/indexes, stop conflicting writers, and make a verified backup with an existing SQLite facility. Test on an isolated copy, then include DDL/data/version changes between explicit `BEGIN`/`COMMIT` commands in one array. An error before that commit rolls back the open migration; statements committed earlier in the request remain durable. Preserve the backup and inspect results before retrying. Never assume every host uses the starter, force a downgrade, or migrate merely because this tool changed. Preserve earlier version-2 data without destructive conversion.
+Schema changes are architecture work in the public EvoMneme repository, including viewer compatibility, tests and a published migration. Before applying a compatible published migration to a host, inspect version/tables/indexes, stop conflicting writers, and make a verified backup with an existing SQLite facility. Test on an isolated copy, then use explicit transaction boundaries. Preserve the backup and inspect results before retrying. Never force a downgrade or migrate merely because this tool changed. Preserve earlier version-2 and custom data; unsupported source layouts remain pending rather than receiving a private conversion.
 
 Run `PRAGMA integrity_check` and `PRAGMA foreign_key_check` after material schema/recovery operations. They check storage/constraints, not semantic accuracy. Preserve the database and WAL/SHM companions if corruption is suspected; never delete the only copy. Restore a verified backup or rebuild disposable locators from source while preserving valuable decisions and recording losses.
 
-If Python is unavailable, use an already authorized SQLite shell/library with the chosen schema and equivalent transaction/validity practice; SQLite and its libraries may be installed within integration authorization. Do not install another runtime, SDK, framework, analyzer, or skill. A failed configured integration still requires reporting and authorization for a different route; an optional transport is not a silent workaround.
+If Python is unavailable, use an already authorized SQLite shell/library with the released schema and equivalent transaction/validity practice; SQLite and its libraries may be installed within integration authorization. Do not install another runtime, SDK, framework, analyzer, or skill. A failed configured integration still requires reporting and authorization for a different route; an optional transport is not a silent workaround.

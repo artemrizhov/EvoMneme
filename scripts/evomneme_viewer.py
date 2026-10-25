@@ -31,9 +31,9 @@ def read_authorizer(action, first, second, database, trigger):
     if action == sqlite3.SQLITE_FUNCTION and (second or '').lower() in {'load_extension', 'readfile', 'writefile'}:
         return sqlite3.SQLITE_DENY
     if action == sqlite3.SQLITE_PRAGMA:
-        if (first or '').lower() not in {'table_info', 'foreign_key_list', 'page_count', 'page_size', 'freelist_count', 'query_only'}:
+        if (first or '').lower() not in {'table_info', 'foreign_key_list', 'page_count', 'page_size', 'freelist_count', 'query_only', 'user_version', 'schema_version'}:
             return sqlite3.SQLITE_DENY
-        if (first or '').lower() == 'query_only' and second is not None:
+        if (first or '').lower() in {'query_only', 'user_version', 'schema_version'} and second is not None:
             return sqlite3.SQLITE_DENY
     return sqlite3.SQLITE_OK
 
@@ -352,17 +352,31 @@ class Explorer:
             if rows and not self.mapping:
                 row = rows[0]
                 table = row.get('source_table')
-                if table in {'records', 'relations', 'code_symbols', 'code_edges'}:
+                if table in {'nodes', 'edges', 'records', 'relations', 'code_symbols', 'code_edges'}:
                     raw, _ = self.rows(db, 'SELECT * FROM ' + quote(table) + ' WHERE scope_id=? AND id=?', [row['scope_id'], row['id']], 1)
                     if raw:
                         row.update(raw[0])
+                if table == 'nodes':
+                    extra, _ = self.rows(db, 'SELECT qualified_name,signature,language FROM symbol_details WHERE scope_id=? AND node_id=?', [row['scope_id'], row['id']], 1)
+                    if extra:
+                        row.update(extra[0])
+                    coverage, more = self.rows(db, '''SELECT f.*,n.source_path FROM file_details f
+                        JOIN nodes n ON n.scope_id=f.scope_id AND n.id=f.node_id
+                        WHERE f.scope_id=? AND (f.node_id=? OR f.node_id IN (
+                            SELECT target_id FROM edges WHERE scope_id=? AND source_id=?
+                            AND kind='declared_in' AND validity='current'))''',
+                        [row['scope_id'], row['id'], row['scope_id'], row['id']], 200)
+                    row['coverage_has_more'] = more
                 if table in {'code_symbols', 'code_edges'} and db.execute("SELECT 1 FROM sqlite_schema WHERE name='code_files' AND type='table'").fetchone():
                     columns = {r[1] for r in db.execute('PRAGMA table_info(code_files)')}
                     if {'scope_id', 'path'} <= columns:
                         coverage, _ = self.rows(db, 'SELECT * FROM code_files WHERE scope_id=? AND path=?', [row['scope_id'], row.get('source_path')], 1)
-            if rows and not self.mapping and rows[0].get('source_table') in {'records', 'relations'} and db.execute("SELECT 1 FROM sqlite_schema WHERE name='evidence' AND type='table'").fetchone():
+            if rows and not self.mapping and rows[0].get('source_table') in {'nodes', 'edges', 'records', 'relations'} and db.execute("SELECT 1 FROM sqlite_schema WHERE name='evidence' AND type='table'").fetchone():
                 row = rows[0]
-                field = 'record_id' if values['type'] == 'nodes' else 'relation_id'
+                if row['source_table'] in {'nodes', 'edges'}:
+                    field = 'node_id' if values['type'] == 'nodes' else 'edge_id'
+                else:
+                    field = 'record_id' if values['type'] == 'nodes' else 'relation_id'
                 evidence, more = self.rows(db, 'SELECT * FROM evidence WHERE scope_id=? AND ' + field + '=?', [row['scope_id'], row['id']], 200)
                 return {'rows': rows, 'evidence': evidence, 'evidence_has_more': more, 'coverage': coverage}
             return {'rows': rows, 'evidence': evidence, 'coverage': coverage}

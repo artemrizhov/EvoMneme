@@ -14,6 +14,16 @@ Open the complete printed URL, including `#token=...`. Stop with Ctrl+C. The ser
 
 ## Visual investigation
 
+### Controlled schema v3
+
+New host stores use the [shared version-3 schema](schema.md): all entities in `nodes`, all relationships in `edges`, and supported type attributes in `symbol_details` / `file_details`. The viewer projects these tables directly across every kind/layer. Both node and edge graph IDs are `json_array(scope_id,id)` in separate namespaces. Symbol selection shows qualified name, signature and language; file coverage is available on file nodes and through current `declared_in` edges. Provenance comes from `evidence.node_id` / `evidence.edge_id`. Fingerprints include attached symbol/file attributes so their edits refresh the graph too.
+
+New kind/layer values need no viewer code changes. Unsupported schema versions or missing contract columns produce explicit compatibility errors; update the published schema, migration and viewer together before using a new model in a host. Legacy schemas below remain supported for inspection, and an explicit custom mapping remains an inspection aid, not permission for a private schema fork. Opening a database never migrates it.
+
+For v3 activity SQL, return `scope_id,id` from a single `nodes` or `edges` table, or explicit `json_array(scope_id,id) AS trace_node_id` / `AS trace_edge_id` aliases when joining details. Legacy tracing examples below retain their original namespaces.
+
+### Exploration controls and legacy compatibility
+
 - The default graph combines stored code entities (`code_symbols`), knowledge (`records`), their relationships (`code_edges`, `relations`), and links between these domains. **Graph layers** independently switches **Code entities**, **Knowledge**, **Cross-layer relationships**, and **Unresolved / ambiguous references**. All available layers start enabled. Disabling a node layer also hides incident relationships and removes that layer from neighborhood traversal; disabling cross-layer relationships leaves both sets of nodes visible.
 - **Load complete selected graph** is on initially. It loads the entire selected graph instead of the former first-page-only view. Turn it off for bounded node pages. For graphs above 1,000 visible nodes, a linear grid overview keeps the browser responsive; use zoom, layers, filters or **Whole database · by layer/type** for structural inspection. All selected relationships remain in the graph, with edge rendering temporarily suppressed during viewport gestures. Large graphs are added in batches with progress feedback.
 - Whole-database structural counts show scale: nodes, relationships, isolated nodes, missing endpoints, table rows and logical SQLite page size. They are **not a quality score**, proof of completeness, or physical WAL/file size.

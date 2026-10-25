@@ -25,7 +25,7 @@ from evomneme_viewer import Explorer, make_server
 
 def fixture(path):
     db = sqlite3.connect(path)
-    db.executescript((ROOT / 'schema.sql').read_text())
+    db.executescript((ROOT / 'tests/fixtures/schema-v2.sql').read_text())
     for scope in ('main', 'branch'):
         db.execute('INSERT INTO scopes VALUES(?,?,?,?,?,?)', (scope, scope, 'synthetic', 'abc', 'fixture', '2026-10-25'))
         for i, (kind, confidence, validity) in enumerate([('module','confirmed','current'), ('function','inferred','current'), ('decision','uncertain','stale'), ('constraint','confirmed','superseded')]):
