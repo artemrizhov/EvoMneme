@@ -2,6 +2,10 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## Usage contract without implementation reading
+
+Documentation review found that Python imports/creation failures, exact parameter types and limits, CLI result/exit rules, and MCP startup/lifecycle details required assumptions beyond the usage references. The references now publish those details and schema-setup choices in one shared contract with transport-specific examples; the concise skill routes normal use there. The contract was cross-checked against the committed SQL interface and local links/whitespace checked. An independent agent then used the documentation without reading runtime sources against an opaque committed-runtime snapshot: Python lifecycle/bindings/transaction effects, CLI requests/errors, and MCP handshake/calls/recovery/EOF passed. This establishes source-free interface use on that snapshot, not live host integration.
+
 ## 2026-10-25 — Initial operational implementation (superseded runtime)
 
 - **Problem:** The charter and a skill name alone did not supply an executable host workflow, local knowledge model, or proof of persistent activation.

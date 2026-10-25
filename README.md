@@ -41,6 +41,8 @@ Authorize your agent, for example:
 
 Finding this README or a skill in a catalog does not grant integration permission. Once authorized, follow [connection and verification](references/integration.md), [SQL/storage practice](references/storage.md), and [optional MCP setup](references/mcp.md). A skill catalog entry, running MCP process, or written instruction pointer alone does not prove that every session loads the instructions. Unsupported activation or self-update verification remains an explicit incomplete setup.
 
+These usage references are the public interface: they explain Python import/create/close, CLI/MCP startup, schema setup, and the [shared request/result/error contract and limits](references/mcp.md#shared-sql-contract). Agents need not inspect the scripts to use them.
+
 The optional CLI uses an existing Python 3.11+ runtime and SQLite support; it installs no SDK or third-party package. With a previously selected, excluded host database and reviewed query file:
 
 ```text
