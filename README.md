@@ -2,40 +2,45 @@
 
 **An AI tool, built by AI, for AI.**
 
-EvoMneme helps AI development agents remember how a project works and why earlier choices were made. A compact relational knowledge graph points back to source code, connects dependencies and findings, and preserves technical, product, visual, and UI/UX decisions. Agents retrieve only the context relevant to their task and check the implementation when details matter.
+EvoMneme helps AI development agents retain useful project knowledge without flooding their working context. The agent maintains a local SQLite graph of code entities, relationships, findings, and decisions, then retrieves compact context and follows source locations when details matter. Technical, product, visual, and UI/UX reasons can survive beyond the conversation that discovered them.
 
-This repository contains the reusable instructions and optional tools. **Each host project keeps its own local SQLite database. This repository is not the host knowledge store.** EvoMneme must never activate in its own repository, forks, or worktrees; isolated development tests are allowed.
+The tool is deliberately thin: **receive SQL → execute it in SQLite → return a compact result**. The agent chooses and evolves the schema, writes SQL, checks source/version provenance, and reconciles knowledge during normal work. No domain-specific indexing API or automatic code analyzer stands between the agent and SQLite.
 
-## What runs
+## What is included
 
-- [SKILL.md](SKILL.md) is one portable instruction set, loaded through the host agent's native project instruction mechanism.
-- [scripts/evomneme.py](scripts/evomneme.py) is an optional Python standard-library helper for scoped records, graph traversal, evidence, reconciliation, and safe local storage. [schema.sql](schema.sql) supports existing SQLite interfaces when Python is unavailable.
-- The host's local `.evomneme/knowledge.sqlite3` stores its knowledge. Linked Git worktrees share the canonical checkout's store, with version and worktree scopes; independent clones remain separate. Local knowledge stays outside version control.
+- [SKILL.md](SKILL.md): one live portable instruction set for authorized host projects, connected through their agent's native instruction mechanism.
+- [scripts/evomneme.py](scripts/evomneme.py): an optional Python standard-library SQL executor with parameters, atomic batches, and bounded column/row results.
+- [scripts/evomneme_mcp.py](scripts/evomneme_mcp.py): an optional stdio MCP adapter exposing the same `execute_sql` operation, bound to one explicit database at startup. Agents can call it without constructing outer shell commands.
+- [schema.sql](schema.sql): an optional starter graph schema, never automatically applied or imposed on existing databases.
 
-During ordinary exploration, implementation, debugging, and review, the agent records meaningful findings and decisions, checks changed sources, and improves retrieval when it proves unhelpful. Subagents can handle substantial maintenance when the environment supports them and delegation is useful. Nothing runs continuously after the agent's sessions end.
+**Each host project has its own local SQLite file. This repository is not its knowledge store.** Linked worktrees explicitly share one canonical host database; independent clones/projects use separate files. Keep knowledge and associated local state excluded from Git. Never activate EvoMneme in its own repository, forks, or worktrees; isolated development fixtures are allowed.
 
-EvoMneme primarily serves software development across languages and frameworks. Other project types may use it without expanding the system into a general knowledge platform. It requires SQLite; no external analyzer, service, installed agent framework, or additional skill is required. The optional helper uses an already available Python runtime. See [storage and commands](references/storage.md).
+## Use it in a host project
 
-## Authorize and connect a host project
+Authorize your agent, for example:
 
-Tell your agent, for example:
+> Connect EvoMneme from this trusted checkout to my project at `<host-project>`. Keep its database local and excluded from Git. Load the live instructions in every project session and verify fresh-session loading and instruction update/reload. Choose the schema and maintain useful knowledge during ordinary development. Use the SQL CLI or optional project-local MCP transport already supported by my environment.
 
-> Integrate EvoMneme from this trusted tool checkout into my project at `<host-project>`. Keep that project's knowledge local, load the live instructions in every project session, and verify loading, shared worktree storage, and instruction update/reload. Maintain it during normal development. Publish reusable tool improvements only within my existing Git/GitHub authorization.
+Finding this README or a skill in a catalog does not grant integration permission. Once authorized, follow [connection and verification](references/integration.md), [SQL/storage practice](references/storage.md), and [optional MCP setup](references/mcp.md). A skill catalog entry, running MCP process, or written instruction pointer alone does not prove that every session loads the instructions. Unsupported activation or self-update verification remains an explicit incomplete setup.
 
-An agent finding this README should first establish the user's authorization. Reading this page or discovering a skill does not grant permission to integrate it. No host project is connected merely by cloning this tool or adding it to a skill catalog.
+The optional CLI uses an existing Python 3.11+ runtime and SQLite support; it installs no SDK or third-party package. With a previously selected, excluded host database and reviewed query file:
 
-Once authorized, the agent follows [the connection procedure](references/integration.md): preserve host rules, reference the live instruction file, initialize the host-local store, verify exclusion from Git, and test a fresh session doing an ordinary task. It must also verify that a permitted instruction edit is loaded by a subsequent session. A configured pointer or writable file alone does not prove these behaviors. Unsupported automatic loading or self-update remains an explicit incomplete setup, not a successful installation.
+```text
+python <tool>/scripts/evomneme.py --database <absolute-host-db> --input <host-local>/query.json
+```
 
-For Codex, an existing skill mount may provide discovery. A project instruction loader is still needed to require the full skill in every session. [Connection guidance](references/integration.md#codex) covers instruction precedence and verification without promising that every environment behaves identically.
+```json
+{"sql":"SELECT id,title,summary FROM records WHERE scope_id=:scope AND validity='current' LIMIT 8","params":{"scope":"verified-scope-id"},"max_rows":8}
+```
 
-## Current capabilities and limits
+This query assumes the optional starter; the executor accepts agent-designed schemas too. Creation is explicit with `--create`, which creates an empty file only. Inspect existing schemas before changes. An existing authorized SQLite interface can be used directly when Python is unavailable.
 
-The initial implementation provides local SQLite records and relationships, source evidence, bounded retrieval, conservative version scopes, transactional updates, and source-change invalidation. Agents supply the semantic understanding: there is no automatic full-code analyzer. Source changes can invalidate claims without revealing the correct replacement. Foreign-scope records require explicit inspection before reuse. The helper hashes dirty files in Git hosts; non-Git snapshots walk/hash non-excluded files and can be costly for large trees, where explicit agent-managed SQLite scopes may fit better.
+## Autonomy and limits
 
-This is an evolving project. Complete code understanding, correct dependency detection, uninterrupted activation, and efficiency improvements are goals to test, not guarantees. Fresh-session activation and self-update depend on the host environment and must be verified there. No production host has been integrated by this repository's isolated tests. See [EVOLUTION.md](EVOLUTION.md) for observed results and remaining gaps.
+The agent consults knowledge when useful, records meaningful discoveries and decisions during exploration/coding/review/debugging, and updates stale claims and dependents as sources change. Subagents can handle substantial maintenance when supported and beneficial. Retrieval failures and repeated discovery should lead to measured schema/query/instruction improvements. Nothing runs continuously after the agent's sessions end.
 
-## Improve it
+The primary focus is software development across languages and frameworks; other project types may use the same mechanism. No external analyzer, service, agent framework, additional skill, or installed dependency beyond SQLite and its libraries is required. MCP is optional and does not load the skill by itself.
 
-Humans and other AI agents are welcome. External contributors should **fork → improve → pull request**, using their own fork for publication. Review the [charter](PROJECT_CHARTER.md) and [contribution guide](CONTRIBUTING.md), keep improvements reusable, and bring evidence that they help. The founding charter requires explicit human approval to change; operational files may evolve within authorization. Never publish a host's database, private source, secrets, or unpublished decisions.
+This is an evolving project, not a guarantee of complete code understanding, correct dependency detection, automatic source invalidation, or proven efficiency gains. SQL execution success proves neither a fact's truth nor a host's identity: the agent is responsible for schema integrity, version filters, source validation, and maintenance. The thin executor's transaction and output limits support that work. Actual every-session activation and self-update must be verified in each host environment. See [EVOLUTION.md](EVOLUTION.md) for observed results and design changes.
 
-Released under the [MIT License](LICENSE).
+Humans and AI agents are welcome to **fork → improve → pull request**. Review the [charter](PROJECT_CHARTER.md) and [contribution guide](CONTRIBUTING.md); keep improvements reusable and never publish host knowledge, private source, secrets, or unpublished decisions. Changing the charter requires explicit human approval. Released under the [MIT License](LICENSE).

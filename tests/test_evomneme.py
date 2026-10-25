@@ -1,447 +1,426 @@
-"""Isolated operational tests: never build an index for the tool repository."""
+"""Isolated tests for the thin SQL executor and its CLI/MCP transports."""
 
+import base64
 import concurrent.futures
 import contextlib
-import copy
 import importlib.util
 import json
 import os
 from pathlib import Path
-import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 SCRIPT = REPOSITORY / 'scripts' / 'evomneme.py'
-SPEC = importlib.util.spec_from_file_location('evomneme_test_runtime', SCRIPT)
+MCP_SCRIPT = REPOSITORY / 'scripts' / 'evomneme_mcp.py'
+SPEC = importlib.util.spec_from_file_location('evomneme_sql_test', SCRIPT)
 runtime = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime)
 TEST_AREA = REPOSITORY / '.evomneme-tests'
 
 
-class RuntimeTests(unittest.TestCase):
-    """Exercise project boundaries and useful knowledge operations in host fixtures."""
+class ExecutorTests(unittest.TestCase):
+    """Use fixture databases only; never activate EvoMneme in the tool project."""
 
     def setUp(self):
-        """Create a fresh host fixture with an existing Git installation."""
+        """Create one explicitly selected empty SQLite fixture."""
         TEST_AREA.mkdir(exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=TEST_AREA)
         self.addCleanup(self.temporary.cleanup)
         self.area = Path(self.temporary.name)
-        self.project = self.area / 'host'
-        self.project.mkdir()
-        self.git('init', '-b', 'main')
-        self.git('config', 'user.name', 'Isolated Test')
-        self.git('config', 'user.email', 'isolated@example.invalid')
-        (self.project / 'source.txt').write_text('original source\n', encoding='utf-8')
-        (self.project / '.gitignore').write_text('ignored/\n', encoding='utf-8')
-        self.git('add', '.')
-        self.git('commit', '-m', 'Isolated fixture')
-        self.host = runtime.Host(self.project)
-        with runtime.connect(self.host, initialize=True):
-            pass
+        self.database = self.area / 'host.sqlite3'
+        self.executor = runtime.Executor(self.database, create=True)
+        self.addCleanup(self.executor.close)
 
-    def git(self, *args, project=None):
-        """Use Git solely in the selected isolated host fixture."""
-        result = subprocess.run(['git', '-C', str(project or self.project), *args], capture_output=True)
-        if result.returncode:
-            raise AssertionError(result.stderr.decode('utf-8', 'replace'))
-        return result.stdout
+    def execute(self, sql, **options):
+        """Run SQL through the shared public execution contract."""
+        return self.executor.execute({'sql': sql, **options})
 
-    def cli(self, *args, project=None, payload=None):
-        """Run the public CLI with JSON stdin and capture its honest exit status."""
-        return subprocess.run([sys.executable, str(SCRIPT), '--project', str(project or self.project), *args], input=json.dumps(payload) if payload is not None else None, capture_output=True, text=True)
+    def rows(self, sql):
+        """Require success before inspecting a fixture query result."""
+        result = self.execute(sql)
+        self.assertTrue(result['ok'], result)
+        return result['results'][-1]['rows']
 
-    def sample(self):
-        """Return a small agent-authored graph with a decision and source evidence."""
-        return {'records': [
-            {'id': 'caller', 'kind': 'function', 'title': 'Caller', 'summary': 'Starts the workflow', 'confidence': 'confirmed', 'source_path': 'source.txt', 'line_start': 1},
-            {'id': 'callee', 'kind': 'function', 'title': 'Callee', 'summary': 'Processes requests', 'confidence': 'inferred'},
-            {'id': 'choice', 'kind': 'decision', 'title': 'Use a queue', 'summary': 'A queue preserves ordering; direct calls were rejected', 'confidence': 'confirmed'}],
-            'relations': [
-                {'id': 'calls', 'source_id': 'caller', 'target_id': 'callee', 'kind': 'calls', 'summary': 'Runtime dynamic dispatch', 'confidence': 'inferred'},
-                {'id': 'rationale', 'source_id': 'choice', 'target_id': 'caller', 'kind': 'constrains', 'summary': 'Ordering requirement'}],
-            'evidence': [
-                {'id': 'observed', 'record_id': 'caller', 'description': 'Inspected implementation', 'source_path': 'source.txt'},
-                {'id': 'edge-observed', 'relation_id': 'calls', 'description': 'Inspected runtime wiring', 'source_path': 'source.txt'}]}
+    def cli(self, *arguments, input_bytes=None, database=None):
+        """Run the actual CLI process with byte-exact UTF-8 input/output."""
+        return subprocess.run([sys.executable, str(SCRIPT), '--database', str(database or self.database), *arguments],
+                              input=input_bytes, capture_output=True)
 
-    def put_sample(self):
-        """Write sample knowledge into only the fixture's current scope."""
-        with runtime.connect(self.host) as connection:
-            runtime.update(connection, self.host, self.sample())
+    def wire(self, messages):
+        """Run a real MCP subprocess through initialization, requests and clean EOF."""
+        incoming = b''.join((message if isinstance(message, bytes) else runtime.json_bytes(message)) + b'\n' for message in messages)
+        result = subprocess.run([sys.executable, str(MCP_SCRIPT), '--database', str(self.database)],
+                                input=incoming, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', 'replace'))
+        self.assertEqual(result.stderr, b'')
+        return [json.loads(line) for line in result.stdout.decode('utf-8').splitlines()]
 
-    def test_compact_graph_decisions_and_inference(self):
-        """Retrieve decisions and indirect dependencies with visible inference."""
-        self.put_sample()
-        with runtime.connect(self.host, readonly=True) as connection:
-            decisions = runtime.search(connection, self.host, 'queue')
-            self.assertEqual(decisions['records'][0]['kind'], 'decision')
-            graph = runtime.traverse(connection, self.host, 'choice', depth=2)
-            self.assertEqual({x['id'] for x in graph['records']}, {'caller', 'callee', 'choice'})
-            self.assertEqual(len(graph['relations']), 2)
-            self.assertEqual(len(graph['evidence']), 2)
-            self.assertEqual(next(x for x in graph['relations'] if x['id'] == 'calls')['confidence'], 'inferred')
-            self.assertTrue(all(x['effective_validity'] == 'current' for x in graph['records']))
+    def handshake(self, version='2025-11-25'):
+        """Provide the supported MCP initialize request and initialized notification."""
+        return [
+            {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
+                'protocolVersion': version, 'capabilities': {}, 'clientInfo': {'name': 'isolated-wire-test', 'version': '1'}}},
+            {'jsonrpc': '2.0', 'method': 'notifications/initialized'},
+        ]
 
-    def test_atomic_batch_rollback(self):
-        """Reject dangling graph edges without retaining earlier batch records."""
-        batch = self.sample()
-        batch['relations'][0]['target_id'] = 'missing'
-        with runtime.connect(self.host) as connection:
-            with self.assertRaises(sqlite3.IntegrityError):
-                runtime.update(connection, self.host, batch)
-            self.assertEqual(connection.execute('SELECT count(*) FROM records').fetchone()[0], 0)
-            self.assertEqual(connection.execute('SELECT count(*) FROM scopes').fetchone()[0], 0)
-            self.assertEqual(connection.execute('SELECT count(*) FROM history').fetchone()[0], 0)
+    def test_explicit_empty_creation_and_existing_database_only(self):
+        """No schema is bootstrapped and missing paths are never silently created."""
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE type='table'"), [])
+        missing = self.area / 'missing.sqlite3'
+        with self.assertRaises(FileNotFoundError):
+            runtime.Executor(missing)
+        self.assertFalse(missing.exists())
+        with self.assertRaises(FileExistsError):
+            runtime.Executor(self.database, create=True)
+        with self.assertRaises(runtime.RequestError):
+            runtime.Executor(Path('relative.sqlite3'))
 
-    def test_changed_and_deleted_sources_invalidate_claims_and_edges(self):
-        """Reconcile changed evidence and dependent edges, retaining uncertainty."""
-        self.put_sample()
-        (self.project / 'source.txt').write_text('changed source\n', encoding='utf-8')
-        changed = runtime.Host(self.project)
-        with runtime.connect(changed) as connection:
-            result = runtime.reconcile(connection, changed)
-            self.assertEqual(result['direct_invalidations'], {'records': 1, 'relations': 0, 'evidence': 2})
-            states = {row['id']: row['validity'] for row in connection.execute('SELECT id,validity FROM relations')}
-            self.assertEqual(states, {'calls': 'stale', 'rationale': 'stale'})
-            self.assertEqual(runtime.search(connection, changed, '')['records'], [])
-            old = runtime.search(connection, changed, '', include_stale=True, all_scopes=True)['records']
-            self.assertTrue(all(x['effective_validity'] == 'out_of_scope' for x in old))
-        (self.project / 'source.txt').unlink()
-        deleted = runtime.Host(self.project)
-        with runtime.connect(deleted) as connection:
-            runtime.reconcile(connection, deleted)
-        self.assertNotEqual(changed.snapshot, deleted.snapshot)
+    def test_arbitrary_schema_cte_joins_and_schema_evolution(self):
+        """Let SQLite run arbitrary application tables and normal migration SQL."""
+        result = self.execute("""
+            CREATE TABLE team(id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE person(name TEXT, team_id INTEGER REFERENCES team(id));
+            INSERT INTO team VALUES(1,'Infrastructure');
+            INSERT INTO person VALUES('Ada',1);
+            WITH selected AS (SELECT * FROM person)
+            SELECT selected.name,team.name FROM selected JOIN team ON team.id=selected.team_id;
+            ALTER TABLE person ADD COLUMN active INTEGER DEFAULT 1;
+            CREATE INDEX person_team ON person(team_id);
+        """)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['results'][4]['rows'], [['Ada', 'Infrastructure']])
+        self.assertEqual(self.rows('SELECT active FROM person'), [[1]])
+        self.assertTrue(self.execute('DROP INDEX person_team')['ok'])
 
-    def test_evidence_invalidates_sourceless_claim_and_connected_relation(self):
-        """A claim supported only by evidence cannot remain current after deletion."""
-        sample = self.sample()
-        del sample['records'][0]['source_path']
-        del sample['records'][0]['line_start']
-        with runtime.connect(self.host) as connection:
-            runtime.update(connection, self.host, sample)
-        (self.project / 'source.txt').unlink()
-        with runtime.connect(runtime.Host(self.project)) as connection:
-            runtime.reconcile(connection, runtime.Host(self.project))
-            self.assertEqual(connection.execute("SELECT validity FROM records WHERE id='caller'").fetchone()[0], 'stale')
-            self.assertEqual(connection.execute("SELECT validity FROM relations WHERE id='rationale'").fetchone()[0], 'stale')
+    def test_semicolons_comments_and_triggers_use_sqlite_framing(self):
+        """Preserve SQL strings and trigger bodies rather than splitting on every semicolon."""
+        result = self.execute("""
+            -- A comment containing ; is not a statement boundary.
+            CREATE TABLE events(text TEXT);
+            CREATE TABLE audit(message TEXT);
+            CREATE TRIGGER event_logged AFTER INSERT ON events BEGIN
+              INSERT INTO audit VALUES('seen; event');
+              INSERT INTO audit VALUES(NEW.text);
+            END;
+            INSERT INTO events VALUES('a; ''quoted'' value');
+            SELECT message FROM audit ORDER BY rowid;
+            -- trailing comment;
+        """)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['results'][4]['rows'], [['seen; event'], ["a; 'quoted' value"]])
 
-    def test_stale_evidence_updates_invalidate_record_and_relation_immediately(self):
-        """Explicit evidence invalidation must affect default retrieval before reconcile."""
-        self.put_sample()
-        with runtime.connect(self.host) as connection:
-            runtime.update(connection, self.host, {'evidence': [
-                {'id': 'edge-observed', 'relation_id': 'calls', 'description': 'Previous wiring inference disproved', 'validity': 'stale'}]})
-            self.assertEqual(connection.execute("SELECT validity FROM relations WHERE id='calls'").fetchone()[0], 'stale')
-            self.assertEqual(connection.execute("SELECT validity FROM records WHERE id='caller'").fetchone()[0], 'current')
-            self.assertNotIn('calls', {row['id'] for row in runtime.traverse(connection, self.host, 'caller')['relations']})
-            runtime.update(connection, self.host, {'evidence': [
-                {'id': 'observed', 'record_id': 'caller', 'description': 'Previous claim disproved', 'validity': 'stale'}]})
-            self.assertEqual(connection.execute("SELECT validity FROM records WHERE id='caller'").fetchone()[0], 'stale')
-            self.assertEqual(connection.execute("SELECT validity FROM relations WHERE id='rationale'").fetchone()[0], 'stale')
-            self.assertEqual(runtime.search(connection, self.host, 'Caller')['records'], [])
+    def test_comment_and_empty_fragments_do_not_count_as_parameterized_statements(self):
+        """Bind one actual statement despite leading/trailing comments and delimiters."""
+        for sql in ('SELECT ?; -- trailing comment', 'SELECT ?; /* trailing ; comment */',
+                    '; ; /* leading ; comment */ SELECT ?; ; -- tail\n;',
+                    '-- initial ; comment\n SELECT ? /* inside */; ;'):
+            with self.subTest(sql=sql):
+                result = self.execute(sql, params=["quoted; ' 世界"])
+                self.assertTrue(result['ok'], result)
+                self.assertEqual(len(result['results']), 1)
+                self.assertEqual(result['results'][0]['rows'], [["quoted; ' 世界"]])
+        result = self.cli('--sql-file', '-', '--params', '[7]', input_bytes=b'SELECT ?; -- trailing comment')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['results'][0]['rows'], [[7]])
 
-    def test_evidence_invalidation_and_dependents_roll_back_together(self):
-        """A failure after propagation restores evidence, claims and connected edges."""
-        from unittest.mock import patch
-        self.put_sample()
-        with runtime.connect(self.host) as connection:
-            with patch.object(runtime, 'Host', side_effect=runtime.KnowledgeError('scope check failure')):
-                with self.assertRaisesRegex(runtime.KnowledgeError, 'scope check failure'):
-                    runtime.update(connection, self.host, {'evidence': [
-                        {'id': 'observed', 'record_id': 'caller', 'description': 'Invalidated observation', 'validity': 'stale'},
-                        {'id': 'edge-observed', 'relation_id': 'calls', 'description': 'Invalidated wiring', 'validity': 'stale'}]})
-            for table in ('records', 'relations', 'evidence'):
-                self.assertEqual(connection.execute('SELECT count(*) FROM ' + table + " WHERE validity!='current'").fetchone()[0], 0)
-            self.assertEqual(len(runtime.search(connection, self.host, 'Caller')['records']), 1)
+    def test_statement_indexes_ignore_comments_empty_fragments_and_trigger_delimiters(self):
+        """Errors and results index only executable SQL statements, including full triggers."""
+        result = self.execute('''
+            ; /* initial */ ; CREATE TABLE event(value); -- comment;
+            CREATE TRIGGER event_logged AFTER INSERT ON event BEGIN
+              SELECT 'body; value'; /* body ; comment */ SELECT 2;
+            END; ; /* trailing */ SELECT * FROM missing; -- final
+        ''')
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['error']['failed_statement_index'], 2)
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='event'"), [])
 
-    def test_same_head_dirty_contents_are_distinct(self):
-        """Equal Git status entries with different bytes cannot share a snapshot."""
-        source = self.project / 'source.txt'
-        source.write_text('dirty one\n', encoding='utf-8')
-        first = runtime.Host(self.project)
-        source.write_text('dirty two\n', encoding='utf-8')
-        second = runtime.Host(self.project)
-        self.assertEqual(first.revision, second.revision)
-        self.assertNotEqual(first.snapshot, second.snapshot)
-        self.assertNotEqual(first.scope, second.scope)
+    def test_bound_quotes_unicode_named_parameters_and_duplicate_columns(self):
+        """Bind user values directly, preserving Unicode and duplicate column labels."""
+        value = "O'Reilly; Привет 世界\nnext line"
+        self.assertTrue(self.execute('CREATE TABLE value(text TEXT)')['ok'])
+        self.assertTrue(self.execute('INSERT INTO value VALUES(?)', params=[value])['ok'])
+        self.assertEqual(self.rows('SELECT text FROM value'), [[value]])
+        result = self.execute('SELECT :text AS same, :number AS same', params={'text': value, 'number': 3})
+        self.assertEqual(result['results'][0]['columns'], ['same', 'same'])
+        self.assertEqual(result['results'][0]['rows'], [[value, 3]])
+        rejected = self.execute('SELECT ?; SELECT 2', params=[1])
+        self.assertFalse(rejected['ok'])
+        self.assertIn('exactly one', rejected['error']['message'])
 
-    def test_branch_switch_does_not_invalidate_other_version_history(self):
-        """Keep historical facts tied to the version actually inspected."""
-        self.put_sample()
-        self.git('checkout', '-b', 'changed-version')
-        (self.project / 'source.txt').write_text('new branch implementation\n', encoding='utf-8')
-        self.git('add', 'source.txt')
-        self.git('commit', '-m', 'Different implementation')
-        changed = runtime.Host(self.project)
-        with runtime.connect(changed) as connection:
-            runtime.reconcile(connection, changed)
-            row = connection.execute("SELECT validity FROM records WHERE scope_id=? AND id='caller'", (self.host.scope,)).fetchone()
-            self.assertEqual(row[0], 'current')
-            historical = runtime.search(connection, changed, 'Caller', all_scopes=True)['records']
-            self.assertEqual(historical[0]['effective_validity'], 'out_of_scope')
-            self.assertEqual(runtime.search(connection, changed, 'Caller')['records'], [])
+    def test_batch_error_rolls_back_reads_writes_and_ddl(self):
+        """A failing statement leaves no half-applied schema or earlier writes."""
+        result = self.execute("CREATE TABLE half(value); INSERT INTO missing VALUES('private input')")
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['committed'])
+        self.assertEqual(result['error']['failed_statement_index'], 1)
+        self.assertEqual(result['error']['sqlite_errorname'], 'SQLITE_ERROR')
+        self.assertNotIn('private input', result['error']['message'])
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='half'"), [])
+        self.assertTrue(self.execute('CREATE TABLE durable(value UNIQUE); INSERT INTO durable VALUES(1)')['ok'])
+        result = self.execute('INSERT INTO durable VALUES(2); INSERT INTO durable VALUES(1)')
+        self.assertFalse(result['ok'])
+        self.assertEqual(self.rows('SELECT value FROM durable'), [[1]])
 
-    def test_scope_change_during_update_rolls_back(self):
-        """Do not publish inspected knowledge into an outdated scope snapshot."""
-        (self.project / 'source.txt').write_text('edited after Host was captured', encoding='utf-8')
-        with runtime.connect(self.host) as connection:
-            with self.assertRaisesRegex(runtime.KnowledgeError, 'scope changed'):
-                runtime.update(connection, self.host, self.sample())
-            self.assertEqual(connection.execute('SELECT count(*) FROM records').fetchone()[0], 0)
+    def test_commit_failure_is_error_and_rolls_back(self):
+        """A deferred foreign-key failure at COMMIT must never report success."""
+        self.assertTrue(self.execute('CREATE TABLE parent(id PRIMARY KEY); CREATE TABLE child(id REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)')['ok'])
+        result = self.execute('INSERT INTO child VALUES(99)')
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['committed'])
+        self.assertEqual(result['error']['sqlite_errorname'], 'SQLITE_CONSTRAINT_FOREIGNKEY')
+        self.assertEqual(self.rows('SELECT * FROM child'), [])
 
-    def test_clean_head_and_ignored_files_are_not_hashed(self):
-        """Scope probes skip clean tracked source and ignored dependency trees."""
-        from unittest.mock import patch
-        ignored = self.project / 'ignored'
-        ignored.mkdir()
-        (ignored / 'huge.txt').write_text('dependency', encoding='utf-8')
-        with patch.object(runtime, 'file_hash', side_effect=AssertionError('Unexpected content scan')):
-            self.assertEqual(runtime.Host(self.project).snapshot, self.host.snapshot)
+    def test_transaction_controls_and_cross_file_escapes_are_refused(self):
+        """The caller cannot commit half a batch or access another database file."""
+        external = self.area / 'external.sqlite3'
+        for sql, params in (
+            ('CREATE TABLE leaked(value); COMMIT', []),
+            ('SAVEPOINT caller', []),
+            ('ATTACH DATABASE ? AS other', [str(external)]),
+            ("SELECT load_extension('unused')", []),
+            ('VACUUM INTO ?', [str(external)]),
+            ('PRAGMA foreign_keys=OFF', []),
+        ):
+            with self.subTest(sql=sql):
+                result = self.execute(sql, params=params)
+                self.assertFalse(result['ok'], result)
+        self.assertFalse(external.exists())
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='leaked'"), [])
 
-    def test_local_submodule_revisions_dirty_contents_and_initialization_scope(self):
-        """Scope local gitlinks without hashing clean source or initializing modules."""
-        from unittest.mock import patch
-        dependency = self.area / 'dependency'
-        dependency.mkdir()
-        self.git('init', '-b', 'main', project=dependency)
-        self.git('config', 'user.name', 'Isolated Test', project=dependency)
-        self.git('config', 'user.email', 'isolated@example.invalid', project=dependency)
-        (dependency / 'module.txt').write_text('module original\n', encoding='utf-8')
-        (dependency / '.gitignore').write_text('ignored/\n', encoding='utf-8')
-        self.git('add', '.', project=dependency)
-        self.git('commit', '-m', 'Isolated module', project=dependency)
-        self.git('-c', 'protocol.file.allow=always', 'submodule', 'add', str(dependency), 'module')
-        self.git('commit', '-am', 'Add isolated local module')
-        module = self.project / 'module'
-        self.git('config', 'user.name', 'Isolated Test', project=module)
-        self.git('config', 'user.email', 'isolated@example.invalid', project=module)
-        self.git('config', 'diff.ignoreSubmodules', 'all')
-        with patch.object(runtime, 'file_hash', side_effect=AssertionError('Clean tracked contents scanned')):
-            clean = runtime.Host(self.project)
-        (module / 'module.txt').write_text('dirty module one\n', encoding='utf-8')
-        dirty_one = runtime.Host(self.project)
-        (module / 'module.txt').write_text('dirty module two\n', encoding='utf-8')
-        dirty_two = runtime.Host(self.project)
-        self.assertEqual(clean.revision, dirty_one.revision)
-        self.assertNotEqual(clean.scope, dirty_one.scope)
-        self.assertNotEqual(dirty_one.scope, dirty_two.scope)
-        self.assertEqual(dirty_two.source('module/module.txt')[0], 'module/module.txt')
-        (module / 'ignored').mkdir()
-        (module / 'ignored' / 'private.txt').write_text('ignored', encoding='utf-8')
-        self.assertEqual(runtime.Host(self.project).scope, dirty_two.scope)
-        with self.assertRaisesRegex(runtime.KnowledgeError, 'Ignored'):
-            dirty_two.source('module/ignored/private.txt')
-        self.git('add', 'module.txt', project=module)
-        self.git('commit', '-m', 'New module revision', project=module)
-        changed_revision = runtime.Host(self.project)
-        self.assertEqual(changed_revision.revision, clean.revision)
-        self.assertNotEqual(changed_revision.scope, clean.scope)
-        self.assertNotEqual(changed_revision.scope, dirty_two.scope)
-        # A clean submodule checkout at its committed gitlink is still distinct
-        # from the unavailable implementation after deinitialization.
-        self.git('add', 'module')
-        self.git('commit', '-m', 'Advance module gitlink')
-        initialized = runtime.Host(self.project)
-        self.git('submodule', 'deinit', '--force', '--', 'module')
-        uninitialized = runtime.Host(self.project)
-        self.assertNotEqual(initialized.scope, uninitialized.scope)
-        self.assertEqual(self.cli('status').returncode, 0)
+    def test_journal_mode_setter_is_refused_atomically_but_reads_are_allowed(self):
+        """A request cannot disable the rollback journal that guarantees batch atomicity."""
+        self.assertTrue(self.rows('PRAGMA journal_mode'))
+        result = self.execute('CREATE TABLE not_committed(value); PRAGMA journal_mode=OFF')
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['error']['failed_statement_index'], 1)
+        self.assertIn('journal_mode', result['error']['message'])
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='not_committed'"), [])
 
-    def test_worktrees_share_store_but_not_scope(self):
-        """A shared canonical DB preserves branch/worktree boundaries and ignores."""
-        self.put_sample()
-        linked = self.area / 'linked'
-        self.git('worktree', 'add', '-b', 'feature', str(linked))
-        other = runtime.Host(linked)
-        self.assertEqual(other.database, self.host.database)
-        self.assertNotEqual(other.scope, self.host.scope)
-        with runtime.connect(other) as connection:
-            self.assertEqual(runtime.search(connection, other, '')['records'], [])
-            rows = runtime.search(connection, other, '', all_scopes=True)['records']
-            self.assertTrue(all(x['effective_validity'] == 'out_of_scope' for x in rows))
-            runtime.update(connection, other, {'records': [{'id': 'feature', 'kind': 'finding', 'title': 'Feature only', 'summary': 'Specific to branch'}]})
-        for project in (self.project, linked):
-            self.assertTrue(self.git('check-ignore', '.evomneme/knowledge.sqlite3', project=project))
-        (linked / 'source.txt').write_text('feature change', encoding='utf-8')
-        with runtime.connect(runtime.Host(linked)) as connection:
-            runtime.reconcile(connection, runtime.Host(linked))
-            self.assertEqual(connection.execute("SELECT validity FROM records WHERE scope_id=? AND id='caller'", (self.host.scope,)).fetchone()[0], 'current')
+    def test_sqlite_error_messages_obey_output_budget_with_explicit_truncation(self):
+        """Large SQLite diagnostics fit the same budget without pretending to be complete."""
+        result = self.execute('SELECT ' + ('private_identifier_' * 200), max_output_bytes=1024)
+        self.assertFalse(result['ok'])
+        self.assertTrue(result['error']['message_truncated'])
+        self.assertLessEqual(len(runtime.json_bytes(result)), 1024)
+        self.assertEqual(result['error']['failed_statement_index'], 0)
 
-    def test_clones_and_copied_databases_cannot_contaminate(self):
-        """Clones use separate stores, and a copied store fails its owner check."""
-        clone = self.area / 'clone'
-        self.git('clone', str(self.project), str(clone), project=self.area)
-        other = runtime.Host(clone)
-        self.assertNotEqual(other.database, self.host.database)
-        self.assertNotEqual(other.identity, self.host.identity)
-        with runtime.connect(self.host) as connection:
-            copy = sqlite3.connect(str(self.area / 'copied.sqlite3'))
-            connection.backup(copy)
-            copy.close()
-        other.state.mkdir()
-        shutil.copyfile(self.area / 'copied.sqlite3', other.database)
-        with self.assertRaisesRegex(runtime.KnowledgeError, 'another project identity'):
-            with runtime.connect(other):
-                pass
+    def test_concurrent_writers_use_sqlite_locking_without_lost_updates(self):
+        """Independent connections safely commit their own atomic batches."""
+        self.assertTrue(self.execute('CREATE TABLE concurrent(value INTEGER)')['ok'])
 
-    def test_concurrent_cli_writers_do_not_lose_updates(self):
-        """Independent processes safely serialize distinct knowledge updates."""
-        def writer(number):
-            """Write one unique record through a separate SQLite process."""
-            return self.cli('update', '-', payload={'records': [{'id': 'item-' + str(number), 'kind': 'finding', 'title': 'Concurrent finding', 'summary': 'Observed in parallel'}]})
+        def writer(value):
+            """Create and close each SQLite connection within its owning thread."""
+            executor = runtime.Executor(self.database)
+            try:
+                return executor.execute({'sql': 'INSERT INTO concurrent VALUES(?)', 'params': [value]})
+            finally:
+                executor.close()
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-            results = list(pool.map(writer, range(12)))
-        self.assertTrue(all(x.returncode == 0 for x in results), [x.stderr for x in results if x.returncode])
-        with runtime.connect(self.host) as connection:
-            self.assertEqual(connection.execute('SELECT count(*) FROM records').fetchone()[0], 12)
-            self.assertEqual(connection.execute('SELECT count(*) FROM history').fetchone()[0], 12)
+            results = list(pool.map(writer, range(18)))
+        self.assertTrue(all(result['ok'] for result in results), results)
+        self.assertEqual(self.rows('SELECT count(*),sum(value) FROM concurrent'), [[18, sum(range(18))]])
 
-    def test_concurrent_initializers_publish_identity_atomically(self):
-        """Concurrent first use never exposes an ownerless or partial schema."""
-        fresh = self.area / 'fresh'
-        fresh.mkdir()
-        self.git('init', '-b', 'main', project=fresh)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-            results = list(pool.map(lambda _: self.cli('init', project=fresh), range(4)))
-        self.assertTrue(all(x.returncode == 0 for x in results), [x.stderr for x in results if x.returncode])
-        host = runtime.Host(fresh)
-        with runtime.connect(host, readonly=True) as connection:
-            self.assertEqual(connection.execute("SELECT value FROM metadata WHERE key='project_identity'").fetchone()[0], host.identity)
+    def test_busy_wait_respects_request_deadline(self):
+        """A blocked write returns a bounded error rather than waiting indefinitely."""
+        self.assertTrue(self.execute('CREATE TABLE locked(value)')['ok'])
+        with contextlib.closing(sqlite3.connect(self.database, isolation_level=None)) as blocker:
+            blocker.execute('BEGIN IMMEDIATE')
+            start = time.monotonic()
+            result = self.execute('INSERT INTO locked VALUES(1)', timeout_ms=40)
+            elapsed = time.monotonic() - start
+            blocker.execute('ROLLBACK')
+        self.assertFalse(result['ok'])
+        self.assertLess(elapsed, 1)
+        self.assertEqual(self.rows('SELECT * FROM locked'), [])
 
-    def test_symlink_evidence_escape_is_refused_when_supported(self):
-        """Resolve source links before trusting their project confinement."""
-        outside = self.area / 'outside.txt'
-        outside.write_text('private', encoding='utf-8')
-        link = self.project / 'escape.txt'
-        try:
-            link.symlink_to(outside)
-        except OSError as exc:
-            self.skipTest('Windows symlink creation unavailable: ' + str(exc))
-        with self.assertRaises(runtime.KnowledgeError):
-            self.host.source('escape.txt')
+    def test_output_rows_and_bytes_are_bounded_without_cell_truncation(self):
+        """Omit complete suffix rows and keep SQLite values exactly as returned."""
+        result = self.execute('WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<20) SELECT x FROM n', max_rows=3)
+        output = result['results'][0]
+        self.assertEqual(output['rows'], [[1], [2], [3]])
+        self.assertEqual(output['rows_omitted'], 17)
+        self.assertTrue(result['output_truncated'])
+        result = self.execute("SELECT printf('%02000d',1) AS payload", max_output_bytes=1024)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['results'][0]['rows'], [])
+        self.assertEqual(result['results'][0]['rows_omitted'], 1)
+        self.assertLessEqual(len(runtime.json_bytes(result)), 1024)
+        value = '世界' * 200
+        result = self.execute('SELECT ?', params=[value], max_output_bytes=4096)
+        self.assertEqual(result['results'][0]['rows'], [[value]])
 
-    def test_readonly_sql_is_bounded_and_cannot_modify_or_attach(self):
-        """SQL escape hatches remain read-only and computationally bounded."""
-        self.put_sample()
-        with runtime.connect(self.host, readonly=True) as connection:
-            for query in ('DELETE FROM records', "ATTACH DATABASE ':memory:' AS other", "SELECT load_extension('bad')", 'PRAGMA user_version=10'):
-                with self.assertRaises(sqlite3.DatabaseError):
-                    runtime.readonly_sql(connection, query)
-            rows = runtime.readonly_sql(connection, 'WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<200) SELECT x FROM n')
-            self.assertEqual(len(rows['rows']), runtime.MAX_RESULTS)
-            self.assertTrue(rows['truncated'])
-            with self.assertRaises(sqlite3.DatabaseError):
-                runtime.readonly_sql(connection, 'WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n) SELECT sum(x) FROM n')
+    def test_output_budget_includes_large_columns_and_many_resultsets(self):
+        """Metadata overflow rolls back instead of returning an oversized response."""
+        alias = 'column_' + ('x' * 2000)
+        result = self.execute('CREATE TABLE half(value); SELECT 1 AS "' + alias + '"', max_output_bytes=1024)
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['committed'])
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='half'"), [])
+        result = self.execute(';'.join('SELECT 1 AS x' for _ in range(30)), max_output_bytes=1024)
+        self.assertFalse(result['ok'])
+        self.assertIn('metadata', result['error']['message'])
 
-    def test_source_paths_cannot_escape_or_capture_ignored_state(self):
-        """Prevent traversal, ignored private state and invalid source references."""
-        (self.area / 'secret.txt').write_text('private', encoding='utf-8')
-        ignored = self.project / 'ignored'
-        ignored.mkdir()
-        (ignored / 'secret.txt').write_text('private', encoding='utf-8')
-        for path in ('../secret.txt', str(self.area / 'secret.txt'), '.git/config', '.evomneme/knowledge.sqlite3', 'ignored/secret.txt', 'absent.txt'):
-            with self.assertRaises(runtime.KnowledgeError, msg=path):
-                self.host.source(path)
+    def test_returning_truncation_drains_writes_before_commit(self):
+        """A truncated RETURNING response still accurately commits every inserted row."""
+        self.assertTrue(self.execute('CREATE TABLE returned(value)')['ok'])
+        result = self.execute('INSERT INTO returned VALUES(1),(2),(3),(4),(5) RETURNING value', max_rows=1)
+        self.assertTrue(result['ok'], result)
+        self.assertTrue(result['committed'])
+        self.assertEqual(result['results'][0]['rows'], [[1]])
+        self.assertEqual(result['results'][0]['rows_omitted'], 4)
+        self.assertEqual(result['results'][0]['affected_rows'], 5)
+        self.assertEqual(self.rows('SELECT count(*) FROM returned'), [[5]])
 
-    def test_sources_outside_snapshot_coverage_are_rejected_in_every_batch_section(self):
-        """Reject excluded source components before any record, edge or evidence commits."""
-        self.put_sample()
-        paths = ['.evomneme-tests/source.txt', 'nested/.evomneme-tests/source.txt',
-                 'nested/.evomneme/source.txt', 'nested/.git/source.txt',
-                 'node_modules/source.txt', '.venv/source.txt', 'nested/__pycache__/source.txt']
-        for name in paths:
-            path = self.project / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('excluded contents', encoding='utf-8')
-        for is_git, names in ((True, paths[:4]), (False, paths)):
-            host = copy.copy(self.host)
-            host.is_git = is_git
-            for name in names:
-                for section in ('records', 'relations', 'evidence'):
-                    with self.subTest(is_git=is_git, source=name, section=section):
-                        item = copy.deepcopy(self.sample()[section][0])
-                        item['source_path'] = name
-                        with runtime.connect(self.host) as connection:
-                            before = connection.execute('SELECT count(*) FROM history').fetchone()[0]
-                            with self.assertRaisesRegex(runtime.KnowledgeError, 'snapshot coverage'):
-                                runtime.update(connection, host, {section: [item]})
-                            self.assertEqual(connection.execute('SELECT count(*) FROM history').fetchone()[0], before)
+    def test_binary_and_nonfinite_values_have_explicit_json_tags(self):
+        """BLOB bytes round-trip without text decoding or invisible coercion."""
+        value = b'\x00\xffbinary'
+        tag = {'$blob_base64': base64.b64encode(value).decode('ascii')}
+        result = self.execute('SELECT ? AS bytes,1e999 AS positive,-1e999 AS negative', params=[tag])
+        self.assertEqual(result['results'][0]['rows'], [[tag, {'$float': 'Infinity'}, {'$float': '-Infinity'}]])
 
-    def test_live_loader_is_idempotent_and_preserves_host_instructions(self):
-        """Preserve CRLF text, link live instructions, and report loading honestly."""
-        agents = self.project / 'AGENTS.md'
-        before = b'# Host instructions\r\nKeep user settings.\r\n'
-        agents.write_bytes(before)
-        skill = self.area / 'SKILL.md'
-        skill.write_text('Live portable instructions', encoding='utf-8')
-        override = self.project / 'AGENTS.override.md'
-        override.write_text('Environment override', encoding='utf-8')
-        first = runtime.integrate(self.host, skill)
-        after = agents.read_bytes()
-        self.assertTrue(after.startswith(before))
-        self.assertNotIn(b'Live portable instructions', after)
-        self.assertEqual(first['fresh_session_loading'], 'unverified')
-        self.assertFalse(first['integration_complete'])
-        self.assertIn(str(override), first['override_files'])
-        second = runtime.integrate(self.host, skill)
-        self.assertFalse(second['changed'])
-        self.assertEqual(agents.read_bytes(), after)
-        skill.write_text('Authorized instruction update', encoding='utf-8')
-        third = runtime.integrate(self.host, skill)
-        self.assertNotEqual(first['skill_sha256'], third['skill_sha256'])
-        self.assertEqual(third['updated_instruction_loading'], 'unverified')
-        # Text after the block is outside ownership and must survive replacement.
-        agents.write_bytes(after + b'\r\n# Additional host rule\r\n')
-        runtime.integrate(self.host, skill)
-        self.assertTrue(agents.read_bytes().endswith(b'\r\n# Additional host rule\r\n'))
+    def test_timeout_rolls_back_earlier_writes(self):
+        """A VM budget interruption rolls back the entire script."""
+        self.assertTrue(self.execute('CREATE TABLE timed(value)')['ok'])
+        result = self.execute('INSERT INTO timed VALUES(1); WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n) SELECT sum(x) FROM n', timeout_ms=10)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['error']['kind'], 'timeout')
+        self.assertEqual(result['error']['failed_statement_index'], 1)
+        self.assertEqual(self.rows('SELECT * FROM timed'), [])
 
-    def test_migration_and_future_schema_refusal(self):
-        """Upgrade known v1 indexes while refusing an unknown future schema."""
-        self.put_sample()
-        with contextlib.closing(sqlite3.connect(self.host.database)) as connection, connection:
-            connection.execute('DROP INDEX evidence_record')
-            connection.execute('DROP INDEX evidence_relation')
-            connection.execute("UPDATE metadata SET value='1' WHERE key='schema_version'")
-            connection.execute('PRAGMA user_version=1')
-        with runtime.connect(self.host, initialize=True) as connection:
-            self.assertEqual(connection.execute('PRAGMA user_version').fetchone()[0], 2)
-            self.assertEqual(connection.execute('SELECT count(*) FROM records').fetchone()[0], 3)
-            self.assertEqual(connection.execute("SELECT count(*) FROM history WHERE action='migration'").fetchone()[0], 1)
-        with contextlib.closing(sqlite3.connect(self.host.database)) as connection, connection:
-            connection.execute('PRAGMA user_version=999')
-        with self.assertRaisesRegex(runtime.KnowledgeError, 'newer'):
-            with runtime.connect(self.host, initialize=True):
-                pass
-        with contextlib.closing(sqlite3.connect(self.host.database)) as connection, connection:
-            self.assertEqual(connection.execute('PRAGMA user_version').fetchone()[0], 999)
-
-    def test_corruption_reports_recovery_and_verify_checks_integrity(self):
-        """Return recovery guidance without deleting the damaged database."""
-        self.assertEqual(self.cli('verify').returncode, 0)
-        self.host.database.write_bytes(b'not a sqlite database')
-        result = self.cli('status')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('Preserve the database', result.stderr)
-        self.assertEqual(self.host.database.read_bytes(), b'not a sqlite database')
-
-    def test_tool_repository_forks_and_worktrees_refused(self):
-        """Keep actual tool code and charter-bearing fixture forks free of stores."""
-        with self.assertRaisesRegex(runtime.KnowledgeError, 'own tool repository'):
-            runtime.Host(REPOSITORY)
-        (self.project / 'PROJECT_CHARTER.md').write_text(runtime.TOOL_CHARTER_MARKER, encoding='utf-8')
-        with self.assertRaisesRegex(runtime.KnowledgeError, 'own tool repository'):
-            runtime.Host(self.project)
+    def test_databases_are_explicit_and_separate(self):
+        """Two projects cannot share data unless the agent deliberately selects one file."""
+        second_path = self.area / 'other.sqlite3'
+        second = runtime.Executor(second_path, create=True)
+        self.addCleanup(second.close)
+        self.assertTrue(self.execute('CREATE TABLE private(value); INSERT INTO private VALUES(7)')['ok'])
+        self.assertEqual(second.execute({'sql': "SELECT name FROM sqlite_master WHERE type='table'"})['results'][0]['rows'], [])
+        self.assertFalse(second.execute({'sql': 'SELECT * FROM private'})['ok'])
         self.assertFalse((REPOSITORY / '.evomneme').exists())
 
-    def test_state_remains_excluded_from_git(self):
-        """Local knowledge and SQLite sidecars never appear as tracked candidates."""
-        self.put_sample()
-        self.assertEqual(self.git('status', '--porcelain'), b'')
-        self.assertTrue(self.git('check-ignore', '.evomneme/knowledge.sqlite3'))
+    def test_bound_symlink_retarget_is_rejected_without_touching_second_database(self):
+        """One executor never follows a changed symlink into a different database."""
+        second_path = self.area / 'second.sqlite3'
+        other = runtime.Executor(second_path, create=True)
+        self.addCleanup(other.close)
+        link = self.area / 'selected.sqlite3'
+        try:
+            link.symlink_to(self.database)
+        except OSError as exc:
+            self.skipTest('Symlink creation unavailable: ' + str(exc))
+        selected = runtime.Executor(link)
+        self.addCleanup(selected.close)
+        link.unlink()
+        link.symlink_to(second_path)
+        result = selected.execute({'sql': 'CREATE TABLE escaped(value)'})
+        self.assertFalse(result['ok'])
+        self.assertIn('retargeted', result['error']['message'])
+        self.assertEqual(other.execute({'sql': "SELECT name FROM sqlite_master WHERE type='table'"})['results'][0]['rows'], [])
+
+    def test_existing_v2_store_and_unknown_user_version_remain_agent_owned(self):
+        """Read/write old v2 data without migration and permit arbitrary future version SQL."""
+        script = (REPOSITORY / 'schema.sql').read_text(encoding='utf-8')
+        self.assertTrue(self.execute(script)['ok'])
+        result = self.execute("""
+            INSERT INTO scopes VALUES('scope','main','host','head','snapshot','now');
+            INSERT INTO records VALUES('scope','old','finding','Old title','Preserved summary','confirmed','current',NULL,NULL,NULL,NULL,'now');
+            SELECT title,summary FROM records WHERE id='old';
+        """)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['results'][-1]['rows'], [['Old title', 'Preserved summary']])
+        self.assertTrue(self.execute("ALTER TABLE records ADD COLUMN agent_extension TEXT; UPDATE records SET agent_extension='new' WHERE id='old'; PRAGMA user_version=999")['ok'])
+        self.assertEqual(self.rows('PRAGMA user_version'), [[999]])
+        self.assertEqual(self.rows("SELECT title,agent_extension FROM records WHERE id='old'"), [['Old title', 'new']])
+
+    def test_cli_sql_file_stdin_and_json_input_preserve_utf8(self):
+        """Avoid nested shell quoting with UTF-8 SQL files and exact JSON parameters."""
+        sql_file = self.area / 'query.sql'
+        sql_file.write_text("SELECT 'Привет; 世界' AS greeting", encoding='utf-8')
+        result = self.cli('--sql-file', str(sql_file))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['results'][0]['rows'], [['Привет; 世界']])
+        result = self.cli('--sql-file', '-', input_bytes=b"SELECT 'stdin; SQL'")
+        self.assertEqual(json.loads(result.stdout)['results'][0]['rows'], [['stdin; SQL']])
+        arguments = {'sql': 'SELECT ? AS quoted', 'params': ["O'Reilly 世界"]}
+        result = self.cli('--input', '-', input_bytes=runtime.json_bytes(arguments))
+        self.assertEqual(json.loads(result.stdout), self.executor.execute(arguments))
+
+    def test_mcp_wire_negotiation_list_call_and_sql_error(self):
+        """Actual wire requests share exact executor output and structured SQL errors."""
+        arguments = {'sql': 'SELECT ? AS greeting', 'params': ['世界']}
+        messages = self.handshake() + [
+            {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'},
+            {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': {'name': 'execute_sql', 'arguments': arguments}},
+            {'jsonrpc': '2.0', 'id': 4, 'method': 'tools/call', 'params': {'name': 'execute_sql', 'arguments': {'sql': 'SELECT * FROM missing'}}},
+            {'jsonrpc': '2.0', 'id': 5, 'method': 'ping'},
+        ]
+        responses = self.wire(messages)
+        self.assertEqual(responses[0]['result']['protocolVersion'], '2025-11-25')
+        self.assertEqual([tool['name'] for tool in responses[1]['result']['tools']], ['execute_sql'])
+        output = responses[2]['result']
+        self.assertEqual(output['structuredContent'], self.executor.execute(arguments))
+        self.assertEqual(json.loads(output['content'][0]['text']), output['structuredContent'])
+        self.assertFalse(output['isError'])
+        self.assertTrue(responses[3]['result']['isError'])
+        self.assertEqual(responses[3]['result']['structuredContent']['error']['sqlite_errorname'], 'SQLITE_ERROR')
+        self.assertEqual(responses[4]['result'], {})
+
+    def test_mcp_malformed_requests_and_notifications_have_no_side_effects(self):
+        """No tool notification, wrong protocol, unknown method or premature call executes SQL."""
+        write = {'name': 'execute_sql', 'arguments': {'sql': 'CREATE TABLE forbidden(value)'}}
+        responses = self.wire([
+            b'not JSON',
+            {'jsonrpc': '2.0', 'id': 10, 'method': 'tools/call', 'params': write},
+            *self.handshake(),
+            {'jsonrpc': '2.0', 'method': 'tools/call', 'params': write},
+            {'jsonrpc': '2.0', 'id': 11, 'method': 'tools/call', 'params': {'name': 'unknown', 'arguments': write['arguments']}},
+            {'jsonrpc': '1.0', 'id': 12, 'method': 'tools/call', 'params': write},
+            {'jsonrpc': '2.0', 'id': 13, 'method': 'unknown'},
+            {'jsonrpc': '2.0', 'id': 14, 'method': 'tools/call', 'params': {'name': 'execute_sql', 'arguments': {'sql': 'CREATE TABLE forbidden(value)', 'database': 'other'}}},
+        ])
+        self.assertEqual(responses[0]['error']['code'], -32700)
+        self.assertEqual(responses[1]['error']['code'], -32000)
+        self.assertEqual(responses[3]['error']['code'], -32602)
+        self.assertEqual(responses[4]['error']['code'], -32600)
+        self.assertEqual(responses[5]['error']['code'], -32601)
+        self.assertTrue(responses[6]['result']['isError'])
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='forbidden'"), [])
+
+    def test_nonstandard_json_constants_are_rejected_before_cli_or_mcp_side_effects(self):
+        """Invalid NaN/Infinity JSON never executes SQL and later MCP frames still work."""
+        invalid = []
+        for constant in ('NaN', 'Infinity', '-Infinity'):
+            invalid.append(('{"jsonrpc":"2.0","id":2,"method":"tools/call","params":'
+                            '{"name":"execute_sql","arguments":{"sql":"CREATE TABLE forbidden(value)"}},'
+                            '"unused":' + constant + '}').encode('utf-8'))
+            result = self.cli('--input', '-', input_bytes=(
+                '{"sql":"CREATE TABLE forbidden(value)","unused":' + constant + '}').encode('utf-8'))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Nonstandard JSON', json.loads(result.stdout)['error']['message'])
+            result = self.cli('--sql', 'SELECT ?', '--params', '[' + constant + ']')
+            self.assertNotEqual(result.returncode, 0)
+        responses = self.wire(self.handshake() + invalid + [
+            {'jsonrpc': '2.0', 'id': 9, 'method': 'tools/call', 'params': {
+                'name': 'execute_sql', 'arguments': {'sql': 'SELECT 1 AS still_serving'}}}])
+        self.assertEqual([response['error']['code'] for response in responses[1:4]], [-32700] * 3)
+        self.assertEqual(responses[4]['result']['structuredContent']['results'][0]['rows'], [[1]])
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='forbidden'"), [])
+
+    def test_mcp_bounded_input_recovers_and_negotiates_supported_versions(self):
+        """Oversized wire messages fail cleanly without corrupting the next frame."""
+        responses = self.wire([b'x' * (runtime.MAX_INPUT_BYTES + 1), *self.handshake('2025-06-18'),
+                               {'jsonrpc': '2.0', 'id': 9, 'method': 'ping'}])
+        self.assertEqual(responses[0]['error']['code'], -32600)
+        self.assertEqual(responses[1]['result']['protocolVersion'], '2025-06-18')
+        self.assertEqual(responses[2]['result'], {})
+        negotiated = self.wire(self.handshake('unknown-version'))
+        self.assertEqual(negotiated[0]['result']['protocolVersion'], '2025-11-25')
 
 
 if __name__ == '__main__':

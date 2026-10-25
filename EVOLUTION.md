@@ -2,7 +2,7 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
-## 2026-10-25 — Initial operational implementation
+## 2026-10-25 — Initial operational implementation (superseded runtime)
 
 - **Problem:** The charter and a skill name alone did not supply an executable host workflow, local knowledge model, or proof of persistent activation.
 - **Decision:** Use one live portable instruction set, a host-local SQLite graph with evidence and conservative version scopes, and an optional standard-library helper. Linked worktrees share one canonical store; clones remain isolated. Retain a raw SQLite path rather than requiring an additional runtime installation or analyzer.
@@ -15,3 +15,13 @@ This history records reusable design decisions and evidence. Host-specific knowl
 ### Initial independent review corrections
 
 An independent verifier reproduced a claim still appearing in current search after its evidence was explicitly marked stale. Evidence invalidation now propagates to claims, relationships, and dependent edges within the update transaction. Review also identified dirty submodule snapshots and evidence outside snapshot coverage: submodule revisions/state and recursive dirty content now contribute to scope, and excluded source paths are refused. These corrections preserve version/evidence validity without fetching submodules or scanning ignored dependencies. The developer and an independent builder passed the full isolated suite, including regressions for all three findings; independent re-review accepted the fixes and matching documentation. Separate black-box CLI checks confirmed loader preservation, graph/decision/evidence retrieval, source-change invalidation, host isolation, integrity, and Git exclusion. Actual fresh-session instruction loading and update/reload remain unverified.
+
+## 2026-10-25 — User-directed thin SQL architecture
+
+The user corrected the initial division of responsibility: domain-specific commands and automatic schema/source/Git/integration behavior overconstrained an agent-owned knowledge system. The runtime now accepts SQL and parameters for an explicit SQLite file and returns bounded column/row results. An optional stdio MCP adapter exposes the same executor without outer shell quoting. Agents own schema evolution, version/source checks, reconciliation, path selection, exclusions, and live instruction integration; the version-2 schema remains an optional compatible starter rather than an automatically imposed model.
+
+This simplifies the tool and permits arbitrary agent-designed schemas and SQL migrations. The tradeoff is explicit: successful execution no longer implies correct source validity, host identity, or automatically propagated stale evidence. Operational instructions require those checks and coherent updates from the agent. Earlier runtime test results above describe the superseded implementation only.
+
+The developer's full thin-runtime suite passed in the normal sandbox, covering SQL parameters, arbitrary schemas, atomic DDL/write rollback, bounded output/errors, concurrency, fixed-file execution controls, and MCP lifecycle/tool wire behavior. The optional starter and documented decision/evidence, graph, and invalidation SQL examples also passed isolated in-memory checks. This is not evidence of a configured real MCP client, actual host fresh-session instruction loading/update-reload, or efficiency gains; those remain unverified.
+
+Independent interface review found that empty/comment-only SQL fragments incorrectly affected parameter binding and that Python's JSON decoder admitted nonstandard NaN/Infinity values in unused MCP envelope fields. The fixes ignore non-executable fragments without changing quoted SQL/triggers, and reject nonfinite JSON values before dispatch. The expanded developer suite passed with regression coverage for both failures; this evidence does not establish independent follow-up verification. Earlier independent CLI/MCP checks exercised the thin interface and exposed the framing defect, rather than proving that case correct.
