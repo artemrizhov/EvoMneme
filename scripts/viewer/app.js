@@ -485,6 +485,30 @@ $('runQuery').onclick=guarded(async()=>{
   $('queryStatus').textContent=`${result.rows.length} rows${result.has_more?' · more available':''} · ${Math.round(performance.now()-started)} ms`;
 });
 $('export').onclick=()=>download('evomneme-selection.json',JSON.stringify({selection:filters(),snapshot:state.snapshot,recorded:state.recorded.filter(matches),note:'Local export may contain host knowledge.'},null,2),'application/json');
-$('png').onclick=()=>{const a=document.createElement('a');a.href=cy.png({bg:'#0e1623',scale:2,full:true});a.download='evomneme-graph.png';a.click();};
+async function exportPng() {
+  const background='#0e1623';
+  const graph=await cy.png({bg:background,scale:2,full:true,output:'blob-promise'});
+  const bitmap=await createImageBitmap(graph);
+  const canvas=document.createElement('canvas');
+  try {
+    const padX=Math.ceil(bitmap.width*.05),padY=Math.ceil(bitmap.height*.05);
+    canvas.width=bitmap.width+2*padX;
+    canvas.height=bitmap.height+2*padY;
+    const context=canvas.getContext('2d');
+    if (!context || !canvas.width || !canvas.height) throw new Error('PNG exceeds the supported canvas size');
+    context.fillStyle=background;
+    context.fillRect(0,0,canvas.width,canvas.height);
+    context.drawImage(bitmap,padX,padY);
+    const png=await new Promise((resolve,reject)=>canvas.toBlob(blob=>{
+      if (blob) resolve(blob);
+      else reject(new Error('PNG export failed; reduce the graph selection size'));
+    },'image/png'));
+    download('evomneme-graph.png',png,'image/png');
+  } finally {
+    bitmap.close();
+    canvas.width=canvas.height=0;
+  }
+}
+$('png').onclick=guarded(exportPng);
 if(!token)showError(new Error('Open the complete viewer URL printed by the server, including its token.'));
 refresh(true);setInterval(()=>{if($('live').checked)refresh();},2000);
