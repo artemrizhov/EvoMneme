@@ -1,0 +1,4 @@
+.evomneme/
+.evomneme-tests/
+__pycache__/
+*.py[cod]
