@@ -59,6 +59,14 @@ async function graphStage(stage,total=null) {
     Object.assign(state.progress,{stage,total,done:total==null?null:0});
     state.progress.paint();
   }
+  if(state.replay?.index>=0) {
+    const now=performance.now();
+    if(now-(state.replay.lastYield ?? -Infinity)<8)return;
+    const replay=state.replay;
+    await graphPaint();
+    if(state.replay===replay)replay.lastYield=performance.now();
+    return;
+  }
   await graphPaint();
 }
 async function graphChunks(items,fn,stage,batch=false) {
@@ -69,7 +77,10 @@ async function graphChunks(items,fn,stage,batch=false) {
     try {for (let i=start;i<end;i++) fn(items[i],i);}
     finally {if(batch)cy.endBatch();}
     if (stage && state.progress) {state.progress.done=end;state.progress.paint();}
-    if (items.length>1500) await graphYield();
+    if (items.length>1500) {
+      await graphYield();
+      if(state.replay)state.replay.lastYield=performance.now();
+    }
   }
 }
 async function graphAction(fn) {
@@ -200,10 +211,15 @@ function replayStatus() {
   $('replayStatus').textContent=`${r.playing?'Playing':'Paused'} · ${r.index} / ${r.engine.events.length} changes · `
     +(event?`${event.time} · ${event.table} ${!event.before?'INSERT':!event.after?'DELETE':'UPDATE'}`:'Baseline before the first saved change')
     +(r.delta?.count?` · ${r.delta.changed.size} changed (green) · ${r.delta.removed.size} removed${r.delta.ghostsShown?' (red)':''}`:'')
+    +(r.delta?.count>1?` · ${r.delta.count} saved changes applied in one batch`:'')
+    +(r.desired>r.index?` · ${r.desired-r.index} changes awaiting display`:'')
+    +(r.layoutRunning?' · recalculating layout':'')
     +(r.rendering?' · rendering…':'');
+  $('replayStatus').title=$('replayStatus').textContent;
 }
 function pauseReplay() {
   const r=state.replay;if(!r)return;
+  if(r.playing)r.desired=r.activeTarget ?? Math.max(0,r.index);
   r.playing=false;clearTimeout(r.timer);replayStatus();
 }
 async function renderReplay() {
@@ -215,9 +231,10 @@ async function renderReplay() {
   try {
     await graphAction(async()=>{
       try {
-        while(state.replay===r && !r.exiting && r.index!==r.desired) {
+        if(state.replay===r && !r.exiting && r.index!==r.desired) {
           cy.elements('.replayRemoved').remove();
           const target=r.desired,initial=r.index<0,delta=replayDelta(r.engine,r.index,target);
+          r.activeTarget=target;
           // A large seek must show the actual target graph, not thousands of
           // ghosts from the state being left behind. Ghosts describe one step.
           const ghosts=Math.abs(target-r.index)===1?replayGhosts(delta):[];
@@ -225,6 +242,7 @@ async function renderReplay() {
           await draw(data,initial,'history-replay');
           showReplayDelta(r,delta,ghosts);
           r.index=target;
+          r.activeTarget=null;
           state.snapshot={...r.saved.snapshot,...data,replay:{position:target,total:r.engine.events.length}};
           $('sliceInfo').textContent=`History · ${data.nodes.length} nodes · ${data.edges.length} relationships · ${state.componentCount} components`;
           if(initial) {
@@ -236,31 +254,39 @@ async function renderReplay() {
           }
           replayStatus();
         }
-      } catch(error) {pauseReplay();r.desired=r.index;throw error;}
+      } catch(error) {pauseReplay();r.activeTarget=null;r.desired=r.index;throw error;}
     });
-  } finally {r.rendering=false;replayStatus();scheduleReplay(r);}
+  } finally {
+    r.rendering=false;replayStatus();
+    if(r.playing && r.index>=r.engine.events.length && r.index===r.desired)pauseReplay();
+    if(state.replay===r && !r.exiting && r.index!==r.desired) {
+      clearTimeout(r.renderTimer);r.renderTimer=setTimeout(()=>void renderReplay(),0);
+    }
+  }
 }
 function seekReplay(target) {
   const r=state.replay;if(!r)return;
   r.desired=Math.max(0,Math.min(r.engine.events.length,Math.floor(Number(target)||0)));
   replayStatus();void renderReplay();
 }
-function scheduleReplay(r,delay=600/(Number($('replaySpeed').value)||1)) {
+function scheduleReplay(r,delay=60) {
   if(state.replay!==r || !r.playing || r.exiting)return;
   clearTimeout(r.timer);
   if(!r.rendering && r.index===r.desired && r.index>=r.engine.events.length) {pauseReplay();return;}
   r.timer=setTimeout(()=>{
     if(state.replay!==r || !r.playing || r.exiting)return;
-    // Apply every event in order as soon as rendering allows. Node motion runs
-    // independently and redirects without waiting to reach its previous goal.
-    if(state.busy || r.rendering || r.index!==r.desired) {scheduleReplay(r,60);return;}
-    seekReplay(r.index+1);
+    // The clock keeps advancing during a slow draw or layout. seek() applies
+    // every intervening row delta in order; rendering coalesces only the views.
+    const due=r.clockOrigin+1+Math.floor(Math.max(0,performance.now()-r.clockStarted)*r.clockSpeed/600);
+    if(due>r.desired)seekReplay(due);
+    scheduleReplay(r);
   },delay);
 }
 function playReplay() {
   const r=state.replay;if(!r)return;
   if (r.playing) {pauseReplay();return;}
   if (r.desired>=r.engine.events.length) seekReplay(0);
+  r.clockOrigin=r.desired;r.clockStarted=performance.now();r.clockSpeed=Number($('replaySpeed').value)||1;
   r.playing=true;scheduleReplay(r,0);replayStatus();
 }
 async function openReplay() {
@@ -295,7 +321,7 @@ async function openReplay() {
 }
 async function exitReplay() {
   const r=state.replay;if(!r)return;
-  pauseReplay();r.exiting=true;clearTimeout(r.renderTimer);
+  pauseReplay();r.exiting=true;clearTimeout(r.renderTimer);cancelReplayLayout(r);
   await graphAction(async()=>{
     MemoryGraphLayout.stop(cy);
     cy.elements('.replayRemoved').remove();cy.elements().removeClass('replayChanged');
@@ -306,6 +332,7 @@ async function exitReplay() {
     $('replayOpen').disabled=false;$('replayPlay').disabled=true;
     $('replayExit').disabled=true;$('replayPosition').disabled=true;
     $('replayStatus').textContent='Saved node and relationship changes · whole database';
+    $('replayStatus').title=$('replayStatus').textContent;
     $('replayBoundary').textContent='';
     state.refreshQueued=true;state.resetQueued=true;
   });
@@ -314,12 +341,48 @@ $('replayOpen').onclick=graphControl(openReplay);
 $('replayPlay').onclick=playReplay;
 $('replayPosition').oninput=()=>{
   const target=$('replayPosition').value;
-  pauseReplay();backgroundLayout.cancel();seekReplay(target);
+  pauseReplay();cancelReplayLayout(state.replay);seekReplay(target);
 };
 $('replaySpeed').onchange=()=>{if(state.replay?.playing){pauseReplay();playReplay();}};
 $('replayExit').onclick=guarded(exitReplay);
 
-async function requestedLayout(options={}) {await graphStage('Laying out graph');await layout(options);}
+async function requestedLayout(options={}) {
+  cancelReplayLayout(state.replay);
+  await graphStage('Laying out graph');await layout(options);
+}
+function cancelReplayLayout(r) {
+  if(!r)return;
+  r.layoutEpoch=(r.layoutEpoch || 0)+1;
+  r.layoutPending=null;clearTimeout(r.layoutTimer);r.layoutTimer=null;
+  backgroundLayout.cancel();
+}
+function queueReplayLayout(options) {
+  const r=state.replay;if(!r || r.exiting)return;
+  r.layoutPending=options;
+  startReplayLayout(r);
+}
+function startReplayLayout(r) {
+  if(state.replay!==r || r.exiting || r.layoutRunning || r.layoutTimer!=null || !r.layoutPending)return;
+  r.layoutTimer=setTimeout(()=>void runReplayLayout(r),0);
+}
+async function runReplayLayout(r) {
+  r.layoutTimer=null;
+  if(state.replay!==r || r.exiting || !r.layoutPending)return;
+  if(state.busy){r.layoutTimer=setTimeout(()=>void runReplayLayout(r),16);return;}
+  const options=r.layoutPending,epoch=r.layoutEpoch || 0;
+  r.layoutPending=null;r.layoutRunning=true;
+  replayStatus();
+  const beforeApply=async()=>{
+    while((state.busy || pointerStart) && state.replay===r && !r.exiting && (r.layoutEpoch || 0)===epoch)
+      await graphYield();
+    if(state.replay!==r || r.exiting || (r.layoutEpoch || 0)!==epoch)return false;
+    if(!$('followGraph').checked)options.fit=false;
+    return true;
+  };
+  try {await layout(options,beforeApply);}
+  catch(error){pauseReplay();showError(error,true);}
+  finally {r.layoutRunning=false;replayStatus();startReplayLayout(r);}
+}
 async function drainGraphWork() {
   if (state.refreshQueued) {
     const reset=state.resetQueued;state.refreshQueued=state.resetQueued=false;
@@ -568,17 +631,22 @@ async function decorate() {
   }
   if (values.length > 30) $('legend').append(text('span',`+${values.length-30} categories`));
 }
-async function layout(options = {}) {
+async function layout(options = {},beforeApply=null) {
   const bounds=$('cy').getBoundingClientRect();
   if (bounds.width<1 || bounds.height<1) {state.pendingLayout=true;return;}
   state.pendingLayout=false;
   cy.resize();
   const settings={name:$('layout').value,width:bounds.width,height:bounds.height,
     fit:!state.replay || $('followGraph').checked,...options};
+  const guard=beforeApply?async()=>{
+    const allowed=await beforeApply();
+    if(state.replay && !$('followGraph').checked)settings.fit=false;
+    return allowed;
+  }:null;
   let backgroundError='';
   if(state.workerLayoutEnabled) {
     try {
-      const applied=await backgroundLayout.arrange(cy,settings);
+      const applied=await backgroundLayout.arrange(cy,settings,guard);
       if(applied || state.workerLayoutEnabled)return;
     }
     catch(error) {
@@ -587,6 +655,8 @@ async function layout(options = {}) {
       $('workerStatus').textContent='Background layout failed: '+error.message+'. Background layout disabled; large graphs use a quick grid overview.';
     }
   }
+  if(guard && await guard()===false)return;
+  if(!$('followGraph').checked && state.replay)settings.fit=false;
   // Do not run quadratic force calculations on the UI thread before the user
   // can reach the controls. The complete graph remains available in a linear
   // overview, including after a failed/timed-out experimental worker.
@@ -635,7 +705,6 @@ async function draw(data, resetLayout, key) {
     oldIds.add(el.id());
     if(el.isNode()) {const p=el.position();oldPositions.set(el.id(),{x:p.x,y:p.y});sumX+=p.x;sumY+=p.y;}
   },'Preserving graph positions');
-  const selected = state.selected?.id();
   const ids = new Set(),newIds=new Set();
   const center = oldPositions.size ? {x:sumX/oldPositions.size,y:sumY/oldPositions.size} : {x:0,y:0};
   const neighbors=new Map();
@@ -701,9 +770,13 @@ async function draw(data, resetLayout, key) {
   await decorate();
   if (!state.replay) await applyHighlight();
   if (!state.selectedActivity&&!state.selectedSession) await graphChunks(cy.elements(),el=>{if(state.changes.has(el.id()))el.addClass('changed');},'Marking changes',true);
+  // A click may arrive during cooperative rendering; use the latest selection
+  // rather than the one that existed at the start of this update.
+  const selected=state.selected?.id();
   if (selected && cy.getElementById(selected).length) {
     state.selected = cy.getElementById(selected);
     state.selected.select();
+    if(state.replay && previous?.get(selected)!==next.get(selected))await inspect(state.selected);
   } else {
     state.selected = null;
     $('detail').replaceChildren();
@@ -712,9 +785,11 @@ async function draw(data, resetLayout, key) {
   }
   if (resetLayout || !oldPositions.size || (topologyChanged && (state.replay || $('followGraph').checked))) {
     await graphStage('Laying out graph');
-    await layout({seed:resetLayout || !oldPositions.size,
+    const settings={seed:resetLayout || !oldPositions.size,
       fit:!state.selectedActivity&&!state.selectedSession && (!state.replay || $('followGraph').checked),
-      animate:oldPositions.size>0 && (!state.replay || state.replay.index>=0),newIds});
+      animate:oldPositions.size>0 && (!state.replay || state.replay.index>=0),newIds};
+    if(state.replay?.index>=0)queueReplayLayout(settings);
+    else await layout(settings);
   } else if (added) {
     await graphStage('Positioning new nodes');
     MemoryGraphLayout.transition(cy,()=>MemoryGraphLayout.separate(cy.nodes(),newIds),{newIds});
@@ -1155,7 +1230,7 @@ function openGroup(el) {
   state.offset = 0;
   refresh(true);
 }
-cy.on('tap','node,edge',event => {if(!state.busy)guarded(inspect)(event.target);});
+cy.on('tap','node,edge',event => {if(!event.target.removed())guarded(inspect)(event.target);});
 cy.on('dbltap','node',event => {
   if (state.replay) return;
   if (event.target.data('attributes')._aggregate) return openGroup(event.target);
@@ -1226,13 +1301,19 @@ $('olderChanges').onclick=graphControl(()=>pollEvents(true));
 
 // Pointer interaction opts out of following growth; programmatic fit/layout does not.
 let pointerStart=null;
-$('cy').addEventListener('wheel',()=>{backgroundLayout.cancel();MemoryGraphLayout.stop(cy);$('followGraph').checked=false;},{passive:true});
-$('cy').addEventListener('pointerdown',event=>{backgroundLayout.cancel();MemoryGraphLayout.stop(cy);pointerStart={x:event.clientX,y:event.clientY};});
+$('cy').addEventListener('wheel',()=>{
+  if(!state.replay || state.replay.index<0)backgroundLayout.cancel();
+  MemoryGraphLayout.stop(cy);$('followGraph').checked=false;
+},{passive:true});
+$('cy').addEventListener('pointerdown',event=>{MemoryGraphLayout.stop(cy);pointerStart={x:event.clientX,y:event.clientY};});
 $('cy').addEventListener('pointermove',event=>{
-  if (pointerStart && Math.hypot(event.clientX-pointerStart.x,event.clientY-pointerStart.y)>5) $('followGraph').checked=false;
+  if (pointerStart && !pointerStart.dragging && Math.hypot(event.clientX-pointerStart.x,event.clientY-pointerStart.y)>5) {
+    pointerStart.dragging=true;backgroundLayout.cancel();$('followGraph').checked=false;
+  }
 });
 window.addEventListener('pointerup',()=>{pointerStart=null;});
 window.addEventListener('pointercancel',()=>{pointerStart=null;});
+window.addEventListener('blur',()=>{pointerStart=null;});
 cy.on('mouseover','node,edge',event=>{
   event.target.addClass('hovered');
   $('cy').title=event.target.data('label');

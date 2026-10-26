@@ -70,6 +70,14 @@ async function main() {
       y1:Math.min(...group.map(b=>b.y+b.dy-b.h/2)),y2:Math.max(...group.map(b=>b.y+b.dy+b.h/2))};
     assert.ok(isolated.x+isolated.dx-isolated.w/2>=bounds.x2+80 || isolated.y+isolated.dy-isolated.h/2>=bounds.y2+80,
       'Worker must separate islands and ignore historical removal markers');
+    let releaseApply,enterApply;
+    const applyGate=new Promise(resolve=>releaseApply=resolve),entered=new Promise(resolve=>enterApply=resolve);
+    const guarded=controller.arrange(cy,{name:'circle',width:900,height:600,fit:false},()=>{enterApply();return applyGate;});
+    await entered;
+    const heldPosition={...cy.$id('a').position()};
+    controller.cancel();releaseApply(true);
+    assert.equal(await guarded,false,'Cancelling a ready result must still prevent stale geometry application');
+    assert.deepEqual(cy.$id('a').position(),heldPosition);
     let dead=false;
     const failing=layout.createWorkerLayout(()=>({terminate(){dead=true;},postMessage(){this.onmessage({data:{id:1,error:'synthetic worker failure'}});}}));
     await assert.rejects(failing.arrange(cy,{fit:false}),/synthetic worker failure/);

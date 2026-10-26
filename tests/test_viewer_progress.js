@@ -329,6 +329,38 @@ async function main(){
     assert.equal($(id).disabled,false,id+' must remain usable in Replay');
   for(const id of ['search','wholeGraph','apply','live','refresh','previous','next'])
     assert.equal($(id).disabled,true,id+' must remain locked to the historical dataset');
+  const waitFor=async(condition,message)=>{
+    for(let i=0;i<500;i++){if(condition())return;await new Promise(resolve=>setTimeout(resolve,10));}
+    throw new Error(message);
+  };
+  // Hold a real layout request interface open. Graph data and the inspector
+  // must continue updating, with only the newest follow-up computation queued.
+  const layoutMessages=[];
+  context.Worker=class {
+    terminate(){}
+    postMessage(message){layoutMessages.push({worker:this,message});}
+  };
+  const replyLayout=({worker,message})=>worker.onmessage({data:{id:message.id,layout:message.options.name,
+    positions:message.elements.filter(e=>e.group==='nodes').map(e=>[e.data.id,e.position])}});
+  run('setWorkerLayout(true);seekReplay(2)');await settleReplay();
+  await waitFor(()=>layoutMessages.length===1,'Background layout did not start');
+  assert.equal(run('state.replay.index'),2);
+  assert.equal(run('state.busy'),false,'The logical graph must not wait for layout computation');
+  assert.equal(run('state.replay.layoutRunning'),true);
+  run('seekReplay(3)');await settleReplay();
+  assert.equal(run('cy.$id(\'n:["main","a"]\').data("attributes").title'),'Two');
+  run('seekReplay(4)');await settleReplay();
+  assert.equal(run('state.replay.index'),4);
+  assert.equal(layoutMessages.length,1,'A slow layout must have only one in-flight worker request');
+  assert.ok(run('state.replay.layoutPending'));
+  assert.equal(run('state.graphActions.length'),0);
+  replyLayout(layoutMessages[0]);
+  await waitFor(()=>layoutMessages.length===2,'The latest pending layout was not dispatched');
+  assert.equal(layoutMessages[1].message.elements.filter(e=>e.group==='edges').length,0,'The follow-up job must use the latest graph');
+  replyLayout(layoutMessages[1]);
+  await waitFor(()=>run('!state.replay.layoutRunning && !state.replay.layoutPending && state.replay.layoutTimer==null'),'Layout did not settle');
+  run('setWorkerLayout(false);seekReplay(0)');await settleReplay();
+  delete context.Worker;
   // Exercise the real range-input handler: pausing must not overwrite the
   // value before it is read (the original regression made all scrubbing inert).
   $('replayPosition').value='2';$('replayPosition').oninput();await settleReplay();
@@ -372,9 +404,15 @@ async function main(){
   run('seekReplay(0)');await settleReplay();
   let replayTime=0;context.performance={now:()=>replayTime};$('replaySpeed').value='10';
   run('const playbackSteps=[];const engineSeek=state.replay.engine.seek;state.replay.engine.seek=target=>{playbackSteps.push(target);return engineSeek(target);};let releaseSlowReplay;const slowReplayGate=new Promise(resolve=>releaseSlowReplay=resolve);draw=async(...args)=>{await slowReplayGate;return replayDraw(...args);};playReplay();');
+  await new Promise(resolve=>setTimeout(resolve,20));
+  run('cy.$id(\'n:["main","base"]\').emit("tap")');
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(run('state.selected?.id()'),'n:["main","base"]','Clicking during an update must open the inspector');
+  assert.ok($('detail').children.length>0);
+  assert.match($('selectionHint').textContent,/Historical graph attributes/);
   replayTime=60000;
   await new Promise(resolve=>setTimeout(resolve,200));
-  assert.equal(run('state.replay.desired'),1,'A slow render must not advance the history clock');
+  assert.equal(run('state.replay.desired'),5,'The playback clock must advance independently of a slow renderer');
   assert.equal(run('playbackSteps.join(",")'),'1');
   assert.equal(run('state.graphActions.length'),0);
   run('releaseSlowReplay()');
@@ -382,7 +420,10 @@ async function main(){
   await settleReplay();run('draw=replayDraw');
   assert.equal(run('state.replay.playing'),false);
   assert.equal(run('state.replay.index'),5);
-  assert.equal(run('playbackSteps.join(",")'),'1,2,3,4,5','Playback must render every saved change even after a stall');
+  assert.equal(run('playbackSteps.join(",")'),'1,5','Accrued changes must be rendered as one batch instead of an animation backlog');
+  assert.equal(run('state.replay.delta.count'),4);
+  assert.match($('replayStatus').textContent,/4 saved changes applied in one batch/);
+  assert.equal(run('state.selected?.id()'),'n:["main","base"]','Rendering must preserve the node selected during playback');
   context.performance=performance;
   await run('exitReplay()');await settleReplay();
   assert.equal(run('state.replay'),null);assert.equal($('live').checked,true);
@@ -390,4 +431,4 @@ async function main(){
   run('clearTimeout(showError.timer);cy.destroy()');
   console.log('Viewer lifecycle, component, highlighting, retry and queue regressions passed');
 }
-main().catch(error=>{console.error(error);for(const timer of intervals)clearInterval(timer);run('clearTimeout(showError.timer);cy.destroy()');process.exitCode=1;});
+main().catch(error=>{console.error(error);for(const timer of intervals)clearInterval(timer);run('pauseReplay();cancelReplayLayout(state.replay);clearTimeout(showError.timer);cy.destroy()');process.exitCode=1;});

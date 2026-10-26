@@ -26,7 +26,7 @@ main>*{min-width:0;min-height:0}
 .replay-controls label{display:flex;align-items:center;gap:5px;margin:0}
 .replay-controls select{width:auto;margin:0}
 .replay-controls input[type=range]{flex:1;min-width:100px;width:120px}
-.replay-controls [role=status]{flex-basis:100%;color:#a8bacd}
+.replay-controls [role=status]{flex:0 0 100%;min-width:0;height:1.5em;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;color:#a8bacd}
 .sidebar,.inspector{height:100%;max-height:none;scrollbar-gutter:stable}
 @media(min-width:701px) and (max-width:1100px){
   main{grid-template-rows:minmax(0,3fr) minmax(0,1fr)}

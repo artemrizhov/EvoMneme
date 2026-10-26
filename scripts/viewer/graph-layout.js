@@ -328,7 +328,7 @@
       worker=null;
       if(pending){clearTimeout(pending.timer);pending.resolve(false);pending=null;}
     }
-    async function arrangeAsync(cy,options={}) {
+    async function arrangeAsync(cy,options={},beforeApply=null) {
       // A replacement request cancels outstanding computation rather than
       // building an unbounded queue or applying an obsolete destination.
       if(pending)cancel();
@@ -360,6 +360,8 @@
         } catch(error) {fail(error.message);}
       });
       if(!result || cy.destroyed() || id!==serial)return false;
+      if(beforeApply && await beforeApply()===false)return false;
+      if(cy.destroyed() || id!==serial)return false;
       const positions=new Map(result.positions);
       transition(cy,()=>{
         cy.nodes().positions(n=>positions.get(n.id()) || n.position());
