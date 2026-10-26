@@ -88,24 +88,34 @@ try {
   assert.deepEqual(a.position(),{x:0,y:0},'Destination must not flash before animation');
   assert.equal(animated.zoom(),1);
   assert.equal(Number(b.style('opacity')),0);
-  step(0);step(200);
-  assert.deepEqual(a.position(),{x:100,y:50});
-  assert.equal(animated.zoom(),1.5);
-  assert.deepEqual(animated.pan(),{x:50,y:25});
-  assert.equal(Number(b.style('opacity')),.5);
-  // A new destination starts at the displayed midpoint, cancelling the old one.
-  graphLayout.transition(animated,()=>a.position({x:400,y:50}));
+  let now=0;
+  const advance=ms=>{for(let remaining=ms;remaining>0;){const dt=Math.min(16,remaining);now+=dt;step(now);remaining-=dt;}};
+  step(now);advance(160);
+  assert.ok(a.position('x')>0 && a.position('x')<200);
+  assert.ok(animated.zoom()>1 && animated.zoom()<2);
+  assert.ok(animated.pan('x')>0 && animated.pan('x')<100);
+  assert.ok(Math.abs(Number(b.style('opacity'))-.4)<.001);
+  // Retarget to the displayed position itself: movement can continue only if
+  // the old velocity survives. A fresh easing transition would stop instantly.
+  const current={...a.position()},opacity=Number(b.style('opacity'));
+  graphLayout.transition(animated,()=>a.position(current));
   assert.equal(frames.size,1);
-  assert.deepEqual(a.position(),{x:100,y:50});
+  assert.deepEqual(a.position(),current);
+  assert.equal(Number(b.style('opacity')),opacity,'Retargeting must preserve the ongoing fade');
+  advance(5);
+  assert.ok(a.position('x')>current.x,'Retargeting must retain node momentum');
+  const turning=a.position('x');
+  graphLayout.transition(animated,()=>a.position({x:-300,y:50}));
+  advance(5);
+  assert.ok(a.position('x')>turning,'Direction changes must decelerate before reversing');
+  advance(2000);
+  assert.deepEqual(a.position(),{x:-300,y:50});
   assert.equal(Number(b.style('opacity')),1);
-  step(300);step(500);
-  assert.deepEqual(a.position(),{x:250,y:50});
-  step(700);
-  assert.deepEqual(a.position(),{x:400,y:50});
   assert.equal(frames.size,0);
   graphLayout.transition(animated,()=>a.position({x:800,y:50}));
-  step(800);step(1000);graphLayout.stop(animated);
-  assert.deepEqual(a.position(),{x:600,y:50});
+  step(now);advance(160);graphLayout.stop(animated);
+  const stopped={...a.position()};advance(1000);
+  assert.deepEqual(a.position(),stopped);
   assert.equal(frames.size,0,'Pointer interruption must leave no queued frame');
   reduced=true;
   graphLayout.transition(animated,()=>a.position({x:900,y:50}));
@@ -114,12 +124,42 @@ try {
   reduced=false;
   graphLayout.arrange(animated,{name:'grid',width:900,height:600,fit:false});
   assert.deepEqual(a.position(),{x:900,y:50},'All layout stages must restore the initial frame');
-  step(1100);step(1500);
+  step(now);advance(2000);
   assertSeparated(animated);
   graphLayout.transition(animated,()=>a.position({x:1500,y:200}));
-  step(1600);step(10000);
-  assert.deepEqual(a.position(),{x:1500,y:200},'A stalled renderer skips missed frames and finishes immediately');
-  assert.equal(frames.size,0,'Slow frames must not create an animation backlog');
+  const beforeStall={...a.position()};
+  step(now);now+=10000;step(now);
+  assert.ok(Math.abs(a.position('x')-beforeStall.x)<Math.abs(1500-beforeStall.x)*.1,
+    'A stalled renderer resumes with a bounded physics step instead of teleporting');
+  assert.equal(frames.size,1,'Only one animation loop exists after a stall');
+  for(let i=0;i<100;i++)graphLayout.transition(animated,()=>a.position({x:1600+i,y:200}));
+  assert.equal(frames.size,1,'Rapid retargeting must not queue animation frames');
+  advance(2000);
+  assert.deepEqual(a.position(),{x:1699,y:200});
+  assert.equal(frames.size,0);
 } finally {graphLayout.stop(animated);animated.destroy();}
 
-console.log('Graph layout regressions passed: geometry, animated transitions, interruption and reduced motion.');
+const islands=graph();
+try {
+  islands.add(Array.from({length:7},(_,i)=>({data:{id:'i'+i,label:'Island '+i}})));
+  islands.add([{data:{id:'ia',source:'i0',target:'i1'}},{data:{id:'ib',source:'i1',target:'i2'}},
+    {data:{id:'ic',source:'i3',target:'i4'}},{data:{id:'id',source:'i4',target:'i5'}}]);
+  for(const name of ['grid','circle','concentric','breadthfirst','cose','overview']) {
+    graphLayout.arrange(islands,{name:name==='overview'?'cose':name,overview:name==='overview',width:1200,height:600,fit:false,seed:true});
+    assertSeparated(islands);
+    const groups=[['i0','i1','i2'],['i3','i4','i5'],['i6']].map(ids=>{
+      const boxes=graphLayout.boxes(islands.nodes().filter(n=>ids.includes(n.id())));
+      return {x1:Math.min(...boxes.map(b=>b.x+b.dx-b.w/2)),x2:Math.max(...boxes.map(b=>b.x+b.dx+b.w/2)),
+        y1:Math.min(...boxes.map(b=>b.y+b.dy-b.h/2)),y2:Math.max(...boxes.map(b=>b.y+b.dy+b.h/2))};
+    });
+    for(let i=0;i<groups.length;i++)for(let j=0;j<i;j++) {
+      const a=groups[i],b=groups[j];
+      assert.ok(a.x1>=b.x2+80 || b.x1>=a.x2+80 || a.y1>=b.y2+80 || b.y1>=a.y2+80,
+        name+' must keep disconnected components in separate islands');
+    }
+    assert.equal(islands.edges().length,4);
+    assert.equal(islands.elements().components().length,3);
+  }
+} finally {islands.destroy();}
+
+console.log('Graph layout regressions passed: geometry, inertia, disconnected islands and reduced motion.');

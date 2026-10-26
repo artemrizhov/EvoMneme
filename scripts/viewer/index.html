@@ -12,12 +12,23 @@
 <button id="apply" class="primary">Apply filters</button><button id="clearFilters">Clear filters & focus</button>
 <div class="separator"></div><h2>Visual perspective</h2><label>Color by<select id="perspective"><option value="kind">Entity / relationship type</option><option value="layer">Graph layer</option><option value="validity">Validity</option><option value="confidence">Confidence</option><option value="evidence_count">Supporting evidence count</option><option value="scope_id">Scope / version</option><option value="source_path">Source file</option><option value="components">Connected components</option><option value="degree">Connectivity</option></select></label>
 <label>Layout<select id="layout"><option value="cose">Force directed</option><option value="breadthfirst">Hierarchy</option><option value="concentric">Connectivity rings</option><option value="circle">Circle</option><option value="grid">Grid</option></select></label>
+<label><input id="experimentalAcceleration" type="checkbox" aria-describedby="accelerationStatus"> Experimental GPU rendering</label>
+<p id="accelerationStatus" class="hint" role="status">Off. Enable GPU rendering; relationship styles may differ.</p>
+<label><input id="experimentalWorker" type="checkbox" aria-describedby="workerStatus"> Experimental background layout</label>
+<p id="workerStatus" class="hint" role="status">Off. Calculate layouts in a background thread so animation can continue.</p>
 <label><input id="labels" type="checkbox" checked> Show labels</label><div id="legend"></div>
 <label><input id="edgeLabels" type="checkbox"> Relationship labels</label><label title="Rearrange and fit when the graph grows. Turn off to preserve a manual view."><input id="followGraph" type="checkbox" checked> Follow graph growth</label>
 <p class="hint">Labels appear as you zoom in; hover or select a relationship for its label. Follow graph growth rearranges and fits topology changes. Panning, zooming or dragging turns following off. Components, degree and paths describe the loaded slice.</p>
 </aside>
 <section class="workspace"><nav aria-label="Views"><button class="tab active" data-view="graph">Graph</button><button class="tab" data-view="tables">Tables & schema</button><button class="tab" data-view="query">SQL inspection</button><div class="spacer"></div><button id="relayout">Rearrange</button><button id="fit">Fit graph</button><button id="export">Export JSON</button><button id="png">PNG</button></nav>
 <div id="notice" role="status"></div>
+<div class="replay-controls" aria-label="Saved graph history">
+<button id="replayOpen">Replay graph history</button><button id="replayPlay" disabled>Play</button>
+<label>Speed <select id="replaySpeed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></label>
+<input id="replayPosition" type="range" min="0" max="0" value="0" disabled aria-label="History position">
+<button id="replayExit" disabled>Return to current graph</button><span id="replayStatus" role="status">Saved node and relationship changes · whole database</span>
+<span id="replayBoundary" class="hint"></span>
+</div>
 <div id="graphView" class="view"><div id="cy" aria-label="Interactive knowledge graph"></div><div class="graph-caption"><span id="sliceInfo"></span><span><i class="dot used"></i>Returned to agent <i class="dot changed"></i>Committed change <i class="dot selected"></i>Selected</span></div></div>
 <div id="tablesView" class="view hidden"><div class="view-toolbar"><label>Table<select id="tableSelect"></select></label><button id="tablePrevious">Previous rows</button><button id="tableNext">Next rows</button><span id="tablePage"></span></div><pre id="schemaDetail"></pre><div id="tableData" class="table-scroll"></div></div>
 <div id="queryView" class="view hidden"><p>Inspect any table or evidence with a read-only SELECT. Results are limited to 200 rows and 8 MiB; execution to 5 seconds.</p><textarea id="sql" spellcheck="false" aria-label="Read-only SQL">SELECT name, type, sql FROM sqlite_schema ORDER BY name</textarea><button id="runQuery" class="primary">Run SELECT</button><span id="queryStatus"></span><div id="queryData" class="table-scroll"></div></div>

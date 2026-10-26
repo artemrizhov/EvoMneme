@@ -11,7 +11,7 @@ function element(id='') {
     classList:{add(){},remove(){},toggle(){}},
     set textContent(value) {content=value;if(id==='connection')statuses.push(value);},get textContent(){return content;},
     replaceChildren(...children){this.children=children;},append(...children){this.children.push(...children);},prepend(){},
-    addEventListener(){},setAttribute(){},getBoundingClientRect(){return {width:900,height:600};},
+    listeners:{},addEventListener(type,fn){(this.listeners[type] ||= []).push(fn);},setAttribute(){},getBoundingClientRect(){return {width:900,height:600};},
     focus(){context.document.activeElement=this;},add(value){this.options.push(value);}};
 }
 function $(id){if(!elements.has(id))elements.set(id,element(id));return elements.get(id);}
@@ -201,6 +201,192 @@ async function main(){
   await Promise.all([run("graphAction(async()=>{await graphYield();state.testActions.push('first')})"),run("graphAction(()=>state.testActions.push('second'))")]);
   assert.equal(run('state.testActions.join(",")'),'first,second');
   assert.equal(run('state.busy'),false);assert.equal(intervals.size,0);
+  // Experimental mode is opt-in and reports unavailable WebGL without losing
+  // the graph. Renderer initialization is stubbed: no browser or GPU is opened.
+  assert.equal(run('state.acceleration'),false);
+  const beforeToggle=run('cy.nodes().map(n=>n.id()+":"+n.position("x")).join(",")');
+  run('setAcceleration(true)');
+  assert.equal(run('state.acceleration'),false);
+  assert.equal($('experimentalAcceleration').checked,false);
+  assert.match($('accelerationStatus').textContent,/unavailable/);
+  run('setWorkerLayout(true)');
+  assert.equal(run('state.workerLayoutEnabled'),false);
+  assert.match($('workerStatus').textContent,/unavailable/);
+  $('cy').getBoundingClientRect=()=>({width:900,height:600});
+  run('const realReplaceRenderer=replaceRenderer,rendererInit=cy.initRenderer;const rendererModes=[];cy.initRenderer=options=>rendererInit.call(cy,{...options,name:"null"});replaceRenderer=enabled=>{rendererModes.push(enabled);realReplaceRenderer(enabled);};');
+  const createElement=context.document.createElement;
+  context.document.createElement=()=>({...element(),getContext:()=>({getExtension:()=>({loseContext(){}})})});
+  let workerFailure=false;
+  context.Worker=class {
+    terminate(){}
+    postMessage(message){
+      setTimeout(()=>this.onmessage({data:workerFailure?{id:message.id,error:'synthetic layout failure'}:
+        {id:message.id,layout:message.options.name,positions:message.elements.filter(e=>e.group==='nodes').map(e=>[e.data.id,e.position])}}),0);
+    }
+  };
+  run('setAcceleration(true)');
+  assert.equal(run('state.acceleration'),true);
+  assert.equal($('experimentalAcceleration').checked,true);
+  assert.equal(run('state.workerLayoutEnabled'),false,'GPU rendering must not enable background layouts');
+  assert.equal(run('cy.nodes().map(n=>n.id()+":"+n.position("x")).join(",")'),beforeToggle);
+  run('setWorkerLayout(true)');
+  await run('graphAction(()=>requestedLayout({fit:false}))');
+  assert.equal(run('state.acceleration'),true);
+  workerFailure=true;
+  await run('graphAction(()=>requestedLayout({fit:false}))');
+  assert.equal(run('state.workerLayoutEnabled'),false);
+  assert.equal($('experimentalWorker').checked,false);
+  assert.equal(run('state.acceleration'),true,'A worker failure must not disable GPU rendering');
+  assert.equal($('experimentalAcceleration').checked,true);
+  assert.match($('workerStatus').textContent,/Background layout failed.*quick grid/);
+  run('setAcceleration(false);setWorkerLayout(true);');
+  assert.equal(run('state.acceleration'),false);
+  assert.equal(run('state.workerLayoutEnabled'),true,'Background layout must also work without GPU rendering');
+  run('setWorkerLayout(false);replaceRenderer=realReplaceRenderer;cy.initRenderer=rendererInit;');
+  assert.equal(run('rendererModes.join(",")'),'true,false');
+  delete context.Worker;context.document.createElement=createElement;
+  // A full 4,644-node initial graph must never enter the blocking force layout
+  // before the user has a chance to enable a worker. Keep every node and edge.
+  $('layout').value='cose';
+  $('onlyTouched').checked=false;
+  $('error').textContent='';
+  run('const blockingLayout=cy.layout;cy.layout=()=>{throw new Error("Force layout blocked the UI thread")};');
+  await draw(fixture(Array.from({length:4644},(_,i)=>String(i)),Array.from({length:4643},(_,i)=>['edge'+i,String(i),String(i+1)])));
+  assert.equal(run('cy.nodes().length'),4644);assert.equal(run('cy.edges().length'),4643);
+  assert.equal(run('cy.scratch("memory-layout")'),'grid-overview');
+  assert.equal(run('state.busy'),false);
+  assert.match($('workerStatus').textContent,/Enable background layout/);
+  context.Worker=class {postMessage(){}terminate(){}};
+  run('setWorkerLayout(true)');
+  const pendingLargeLayout=run('graphAction(()=>requestedLayout({fit:false}))');
+  await new Promise(resolve=>setTimeout(resolve,20));
+  run('setWorkerLayout(false)');
+  await pendingLargeLayout;
+  assert.equal(run('state.busy'),false,'Disabling a pending worker must release startup work');
+  assert.equal(run('cy.scratch("memory-layout")'),'grid-overview');
+  delete context.Worker;
+  run('cy.layout=blockingLayout');$('layout').value='grid';
+  // Preferences are restored before startup refresh, independently for each
+  // renderer. Malformed or unavailable storage must not prevent graph loading.
+  let savedPreferences='{"gpu":false,"worker":true}';
+  context.localStorage={getItem:()=>savedPreferences,setItem:(key,value)=>{savedPreferences=value;}};
+  context.Worker=class {};
+  run('restoreVisualPreferences()');
+  assert.equal(run('state.workerLayoutEnabled'),true);assert.equal(run('state.acceleration'),false);
+  run('setWorkerLayout(false)');
+  assert.equal(JSON.parse(savedPreferences).worker,false);
+  savedPreferences='invalid JSON';run('restoreVisualPreferences()');
+  delete context.Worker;delete context.localStorage;
+  // Replay restores deleted entities by reversing the saved deltas; seeking
+  // either direction must preserve pre-recording nodes and scoped identities.
+  const row=(id,title)=>({scope_id:'main',id,title,kind:'item'});
+  const packed=row=>row && Object.fromEntries(Object.entries(row).map(([k,value])=>[k,{type:'text',value,truncated:0}]));
+  const base=row('base','Before recording'),one=row('a','One'),two=row('a','Two');
+  const edge={scope_id:'main',id:'e',source_id:'a',target_id:'base',kind:'link'};
+  const changes=[['nodes',null,one],['edges',null,edge],['nodes',one,two],['edges',edge,null],['nodes',two,null]];
+  context.replayData={nodes:[base],edges:[],journal:{enabled:true},events:changes.map(([table,before,after],i)=>
+    ({change_id:i+1,time:'2026-10-26T12:00:0'+i+'Z',table,before:packed(before),after:packed(after)}))};
+  run('const engine=createReplayEngine(replayData);');
+  assert.equal(run('engine.seek(0).nodes.length'),1);
+  assert.equal(run('engine.seek(2).nodes.find(n=>n.id==="a").label'),'One');
+  assert.equal(run('engine.seek(2).edges.length'),1);
+  assert.equal(run('engine.seek(3).nodes.find(n=>n.id==="a").label'),'Two');
+  assert.equal(run('engine.seek(5).nodes.length'),1);
+  assert.equal(run('engine.seek(2).edges[0].source'),'["main","a"]');
+  context.replaceData={nodes:[two],edges:[],events:[
+    {table:'nodes',time:'2026-10-26T00:00:00Z',before:null,after:packed(one)},
+    {table:'nodes',time:'2026-10-26T00:00:01Z',before:null,after:packed(two)}]};
+  run('const replaceEngine=createReplayEngine(replaceData)');
+  assert.equal(run('replaceEngine.replacements'),1);
+  assert.equal(run('replaceEngine.seek(0).nodes.length'),0);
+  assert.equal(run('replaceEngine.seek(1).nodes[0].label'),'One');
+  assert.equal(run('replaceEngine.seek(2).nodes[0].label'),'Two');
+  assert.equal(run('replaceEngine.seek(1).nodes[0].label'),'One','Undoing a repeated INSERT must restore the earlier node');
+  context.renamedData={nodes:[{...two,id:'renamed'}],edges:[],events:[{table:'nodes',before:packed(two),after:packed({...two,id:'renamed'})}]};
+  assert.equal(run('createReplayEngine(renamedData).seek(0).nodes[0].id'),'a');
+  context.badReplay={nodes:[],edges:[],events:[{table:'nodes',before:null,after:{...packed(one),id:{value:'a',truncated:1}}}]};
+  assert.throws(()=>run('createReplayEngine(badReplay)'),/truncated graph identity/);
+  const settleReplay=async()=>{
+    for(let i=0;i<500;i++) {
+      if(run('!state.busy && (!state.replay || (!state.replay.rendering && state.replay.index===state.replay.desired))'))return;
+      await new Promise(resolve=>setTimeout(resolve,10));
+    }
+    throw new Error('Replay did not settle');
+  };
+  run('api=async route=>route==="replay"?replayData:fixture;');
+  $('live').checked=true;
+  const querySelectorAll=context.document.querySelectorAll;
+  context.document.querySelectorAll=selector=>selector.startsWith('.sidebar input')
+    ?['layout','perspective','labels','edgeLabels','followGraph','experimentalAcceleration','experimentalWorker',
+      'search','wholeGraph','apply','live','refresh','previous','next'].map($):[];
+  await run('graphAction(openReplay)');await settleReplay();
+  context.document.querySelectorAll=querySelectorAll;
+  assert.equal(run('state.replay.index'),0);
+  assert.equal($('live').checked,false);
+  assert.match($('notice').textContent,/whole database/);
+  assert.match($('replayBoundary').textContent,/Baseline: 1 nodes, 0 relationships, 1 components/);
+  for(const id of ['layout','perspective','labels','edgeLabels','followGraph','experimentalAcceleration','experimentalWorker'])
+    assert.equal($(id).disabled,false,id+' must remain usable in Replay');
+  for(const id of ['search','wholeGraph','apply','live','refresh','previous','next'])
+    assert.equal($(id).disabled,true,id+' must remain locked to the historical dataset');
+  // Exercise the real range-input handler: pausing must not overwrite the
+  // value before it is read (the original regression made all scrubbing inert).
+  $('replayPosition').value='2';$('replayPosition').oninput();await settleReplay();
+  assert.equal(run('cy.nodes().length'),2);assert.equal(run('cy.edges().length'),1);
+  assert.equal(run('state.snapshot.replay.position'),2);
+  assert.equal(run('cy.$id(\'n:["main","a"]\').hasClass("replayChanged")'),true);
+  assert.equal(run('cy.$id(\'e:["main","e"]\').hasClass("replayChanged")'),true);
+  $('layout').value='circle';await $('layout').onchange();
+  assert.equal(run('cy.scratch("memory-layout")'),'circle');
+  assert.equal(run('state.replay.index'),2,'Changing layout must retain the historical position');
+  // Scrolling opts out of camera following. Later events and manual layout
+  // changes may move nodes but must retain the user's zoom and pan.
+  for(const listener of $('cy').listeners.wheel || [])listener({});
+  assert.equal($('followGraph').checked,false);
+  run('cy.viewport({zoom:.7,pan:{x:120,y:85}})');
+  run('seekReplay(3)');await settleReplay();
+  assert.equal(run('cy.zoom()'),.7);assert.equal(run('cy.pan().x'),120);assert.equal(run('cy.pan().y'),85);
+  $('layout').value='grid';await $('layout').onchange();
+  assert.equal(run('cy.zoom()'),.7);assert.equal(run('cy.pan().x'),120);
+  $('followGraph').checked=true;await $('followGraph').onchange();
+  assert.notEqual(run('cy.zoom()'),.7,'Follow graph growth must explicitly restore automatic fitting');
+  // Freeze a render, then request many positions. Only the latest is retained.
+  run('const replayDraw=draw;let releaseReplay;const replayGate=new Promise(resolve=>releaseReplay=resolve);draw=async(...args)=>{await replayGate;return replayDraw(...args);};seekReplay(1);');
+  run('seekReplay(2);seekReplay(3);seekReplay(4);seekReplay(5);');
+  assert.equal(run('state.graphActions.length'),0);
+  assert.equal(run('state.replay.desired'),5);
+  run('releaseReplay()');await settleReplay();run('draw=replayDraw');
+  assert.equal(run('cy.nodes().not(".replayRemoved").length'),1);assert.equal(run('cy.edges().not(".replayRemoved").length'),0);
+  assert.equal(run('cy.elements(".replayRemoved").length'),0,'Large seeks must not retain the previous graph as deletion markers');
+  $('replayPosition').value='3';$('replayPosition').oninput();await settleReplay();
+  assert.equal(run('state.replay.index'),3,'The input handler must also support backward scrubbing');
+  assert.equal(run('cy.edges(".replayChanged").length'),1,'Rewinding a deletion highlights the restored relationship');
+  $('replayPosition').value='4';$('replayPosition').oninput();await settleReplay();
+  assert.equal(run('cy.edges(".replayRemoved").length'),1,'Removed relationships must be visible in red');
+  assert.equal(run('state.componentCount'),2,'Removal markers must not join historical components');
+  assert.match($('replayStatus').textContent,/1 removed \(red\)/);
+  await $('layout').onchange();
+  assert.equal(run('state.componentCount'),2);
+  $('replayPosition').value='5';$('replayPosition').oninput();await settleReplay();
+  assert.equal(run('cy.nodes(".replayRemoved").length'),1,'Single-step node deletions must remain visibly marked');
+  run('seekReplay(0)');await settleReplay();
+  let replayTime=0;context.performance={now:()=>replayTime};$('replaySpeed').value='10';
+  run('const playbackSteps=[];const engineSeek=state.replay.engine.seek;state.replay.engine.seek=target=>{playbackSteps.push(target);return engineSeek(target);};let releaseSlowReplay;const slowReplayGate=new Promise(resolve=>releaseSlowReplay=resolve);draw=async(...args)=>{await slowReplayGate;return replayDraw(...args);};playReplay();');
+  replayTime=60000;
+  await new Promise(resolve=>setTimeout(resolve,200));
+  assert.equal(run('state.replay.desired'),1,'A slow render must not advance the history clock');
+  assert.equal(run('playbackSteps.join(",")'),'1');
+  assert.equal(run('state.graphActions.length'),0);
+  run('releaseSlowReplay()');
+  for(let i=0;i<500 && run('state.replay.playing');i++)await new Promise(resolve=>setTimeout(resolve,10));
+  await settleReplay();run('draw=replayDraw');
+  assert.equal(run('state.replay.playing'),false);
+  assert.equal(run('state.replay.index'),5);
+  assert.equal(run('playbackSteps.join(",")'),'1,2,3,4,5','Playback must render every saved change even after a stall');
+  context.performance=performance;
+  await run('exitReplay()');await settleReplay();
+  assert.equal(run('state.replay'),null);assert.equal($('live').checked,true);
+  assert.equal($('replayPlay').disabled,true);assert.equal(run('state.snapshot.replay'),undefined);
   run('clearTimeout(showError.timer);cy.destroy()');
   console.log('Viewer lifecycle, component, highlighting, retry and queue regressions passed');
 }

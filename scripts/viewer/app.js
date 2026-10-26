@@ -9,7 +9,7 @@ const state = { snapshot: null, offset: 0, root: '', selected: null, pathStart: 
   selectedActivity:null,pendingLayout:false,disabledLayers:new Set(),revision:null,refreshQueued:false,resetQueued:false,activitiesReady:false,
   journal:null,changeAfter:null,changeBefore:null,changeOlder:false,changeBusy:false,seenChanges:new Set(),
   activityAfter:null,activityBefore:null,activityOlder:false,seenActivities:new Set(),expandedSessions:new Set(),sessionLimits:new Map(),selectedSession:null,
-  components:new Map(),componentCount:0,graphActions:[],progress:null };
+  components:new Map(),componentCount:0,graphActions:[],progress:null,replay:null,acceleration:false,workerLayoutEnabled:false };
 const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c8d889','#88cdd7','#ccab91','#b0a3d4'];
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
 function setConnectionStatus(value) { const el=$('connection');el.textContent=value;el.title=value; }
@@ -90,7 +90,236 @@ async function graphAction(fn) {
   }
 }
 function graphControl(fn) {return guarded((...args)=>graphAction(()=>fn(...args)));}
-async function requestedLayout(options={}) {await graphStage('Laying out graph');layout(options);}
+
+// Reversible row deltas retain entities deleted since recording began. The
+// baseline and all deltas come from one server-side read transaction.
+function createReplayEngine(data) {
+  const stores={nodes:new Map(),edges:new Map()};
+  let index=data.events.length,truncated=false;
+  const identity=row=>{
+    if (!['string','number'].includes(typeof row.scope_id) || !['string','number'].includes(typeof row.id))
+      throw new Error('History contains an incomplete graph identity; replay cannot reconstruct it.');
+    return JSON.stringify([row.scope_id,row.id]);
+  };
+  const decode=snapshot=>{
+    if (!snapshot) return null;
+    const row={};
+    for (const [key,field] of Object.entries(snapshot)) {
+      if (field.truncated) {
+        truncated=true;
+        if (['scope_id','id','source_id','target_id'].includes(key))
+          throw new Error('History contains a truncated graph identity or endpoint; replay is unavailable.');
+      }
+      row[key]=field.value;
+    }
+    identity(row);
+    return row;
+  };
+  for (const table of ['nodes','edges']) for (const source of data[table]) {
+    const row={...source};
+    for (const [key,field] of Object.entries(row)) if(field && typeof field==='object' && field.truncated) {
+      truncated=true;
+      if (['scope_id','id','source_id','target_id'].includes(key))
+        throw new Error('Current graph contains a truncated identity or endpoint; replay is unavailable.');
+      row[key]=field.preview;
+    }
+    stores[table].set(identity(row),row);
+  }
+  const events=data.events.map(e=>({...e,before:decode(e.before),after:decode(e.after)}));
+  const apply=(event,forward)=>{
+    const remove=forward?event.before:event.after, put=forward?event.after:event.before;
+    const store=stores[event.table];
+    if (remove && (!put || identity(remove)!==identity(put))) store.delete(identity(remove));
+    if (put) store.set(identity(put),put);
+  };
+  // Some writers use INSERT OR REPLACE with SQLite's recursive delete
+  // triggers disabled. Consecutive insert records for an existing identity
+  // still have an exact prior value in earlier history: retain it for undo.
+  for(let i=events.length-1;i>=0;i--)apply(events[i],false);
+  let replacements=0;
+  for(const event of events) {
+    if(!event.before && event.after) {
+      const previous=stores[event.table].get(identity(event.after));
+      if(previous){event.before=previous;replacements++;}
+    }
+    apply(event,true);
+  }
+  return {events,truncated,replacements,seek(target) {
+    target=Math.max(0,Math.min(events.length,Math.floor(target)));
+    while(index>target)apply(events[--index],false);
+    while(index<target)apply(events[index++],true);
+    return {nodes:[...stores.nodes].map(([graph_id,row])=>({...row,graph_id,label:row.title,source_table:'nodes'})),
+      edges:[...stores.edges].map(([graph_id,row])=>({...row,graph_id,
+        source:JSON.stringify([row.scope_id,row.source_id]),target:JSON.stringify([row.scope_id,row.target_id]),source_table:'edges'})),
+      whole_graph:false,graph_available:true};
+  }};
+}
+
+function replayDelta(engine,from,to) {
+  const changed=new Set(),removed=new Set();
+  const id=(table,row)=>(table==='nodes'?'n:':'e:')+JSON.stringify([row.scope_id,row.id]);
+  const forward=to>=from;
+  if(from<0)return {changed,removed,count:0};
+  const events=engine.events.slice(Math.min(from,to),Math.max(from,to));
+  if(!forward)events.reverse();
+  for(const event of events) {
+    const before=forward?event.before:event.after,after=forward?event.after:event.before;
+    if(before && (!after || id(event.table,before)!==id(event.table,after))) {
+      const key=id(event.table,before);removed.add(key);changed.delete(key);
+    }
+    if(after){const key=id(event.table,after);changed.add(key);removed.delete(key);}
+  }
+  return {changed,removed,count:events.length};
+}
+function replayGhosts(delta) {
+  let removed=cy.collection();
+  for(const id of delta.removed) {
+    const element=cy.getElementById(id);
+    removed=removed.union(element);
+    if(element.isNode())removed=removed.union(element.connectedEdges());
+  }
+  return removed.map(el=>({group:el.group(),data:{...el.data()},classes:'replayRemoved',
+    position:el.isNode()?{...el.position()}:undefined,locked:el.isNode()}));
+}
+function showReplayDelta(r,delta,ghosts) {
+  cy.elements().removeClass('replayChanged');
+  for(const id of delta.changed)cy.getElementById(id).addClass('replayChanged');
+  const nodes=ghosts.filter(e=>e.group==='nodes' && !cy.hasElementWithId(e.data.id));
+  if(nodes.length)cy.add(nodes);
+  const edges=ghosts.filter(e=>e.group==='edges' && !cy.hasElementWithId(e.data.id)
+    && cy.hasElementWithId(e.data.source) && cy.hasElementWithId(e.data.target));
+  if(edges.length)cy.add(edges);
+  r.delta={...delta,ghostsShown:nodes.length+edges.length};
+}
+function replayStatus() {
+  const r=state.replay;if(!r)return;
+  $('replayPosition').max=r.engine.events.length;
+  $('replayPosition').value=r.desired;
+  $('replayPlay').textContent=r.playing?'Pause':r.index===r.engine.events.length?'Replay':'Play';
+  const event=r.engine.events[r.index-1];
+  $('replayStatus').textContent=`${r.playing?'Playing':'Paused'} · ${r.index} / ${r.engine.events.length} changes · `
+    +(event?`${event.time} · ${event.table} ${!event.before?'INSERT':!event.after?'DELETE':'UPDATE'}`:'Baseline before the first saved change')
+    +(r.delta?.count?` · ${r.delta.changed.size} changed (green) · ${r.delta.removed.size} removed${r.delta.ghostsShown?' (red)':''}`:'')
+    +(r.rendering?' · rendering…':'');
+}
+function pauseReplay() {
+  const r=state.replay;if(!r)return;
+  r.playing=false;clearTimeout(r.timer);replayStatus();
+}
+async function renderReplay() {
+  const r=state.replay;
+  if (!r || r.rendering || r.exiting) return;
+  clearTimeout(r.renderTimer);
+  if (state.busy) {r.renderTimer=setTimeout(()=>void renderReplay(),60);return;}
+  r.rendering=true;
+  try {
+    await graphAction(async()=>{
+      try {
+        while(state.replay===r && !r.exiting && r.index!==r.desired) {
+          cy.elements('.replayRemoved').remove();
+          const target=r.desired,initial=r.index<0,delta=replayDelta(r.engine,r.index,target);
+          // A large seek must show the actual target graph, not thousands of
+          // ghosts from the state being left behind. Ghosts describe one step.
+          const ghosts=Math.abs(target-r.index)===1?replayGhosts(delta):[];
+          const data=r.engine.seek(target);
+          await draw(data,initial,'history-replay');
+          showReplayDelta(r,delta,ghosts);
+          r.index=target;
+          state.snapshot={...r.saved.snapshot,...data,replay:{position:target,total:r.engine.events.length}};
+          $('sliceInfo').textContent=`History · ${data.nodes.length} nodes · ${data.edges.length} relationships · ${state.componentCount} components`;
+          if(initial) {
+            $('replayBoundary').textContent=`${r.database?'Database: '+r.database+'. ':''}`
+              +`Available row history since ${r.startedAt?new Date(r.startedAt).toLocaleString():'the first saved change'}. `
+              +`Baseline: ${data.nodes.length} nodes, ${data.edges.length} relationships, ${state.componentCount} components. `
+              +(data.nodes.length?'Creation of these baseline nodes predates this row journal. ':'')
+              +(r.engine.replacements?`${r.engine.replacements} repeated inserts are replayed as replacements using earlier saved values.`:'');
+          }
+          replayStatus();
+        }
+      } catch(error) {pauseReplay();r.desired=r.index;throw error;}
+    });
+  } finally {r.rendering=false;replayStatus();scheduleReplay(r);}
+}
+function seekReplay(target) {
+  const r=state.replay;if(!r)return;
+  r.desired=Math.max(0,Math.min(r.engine.events.length,Math.floor(Number(target)||0)));
+  replayStatus();void renderReplay();
+}
+function scheduleReplay(r,delay=600/(Number($('replaySpeed').value)||1)) {
+  if(state.replay!==r || !r.playing || r.exiting)return;
+  clearTimeout(r.timer);
+  if(!r.rendering && r.index===r.desired && r.index>=r.engine.events.length) {pauseReplay();return;}
+  r.timer=setTimeout(()=>{
+    if(state.replay!==r || !r.playing || r.exiting)return;
+    // Apply every event in order as soon as rendering allows. Node motion runs
+    // independently and redirects without waiting to reach its previous goal.
+    if(state.busy || r.rendering || r.index!==r.desired) {scheduleReplay(r,60);return;}
+    seekReplay(r.index+1);
+  },delay);
+}
+function playReplay() {
+  const r=state.replay;if(!r)return;
+  if (r.playing) {pauseReplay();return;}
+  if (r.desired>=r.engine.events.length) seekReplay(0);
+  r.playing=true;scheduleReplay(r,0);replayStatus();
+}
+async function openReplay() {
+  if(state.replay)return;
+  await graphStage('Loading saved graph history');
+  const data=await api('replay'),engine=createReplayEngine(data);
+  if(!engine.events.length)throw new Error('No saved node or relationship changes are available yet.');
+  const saved={live:$('live').checked,follow:$('followGraph').checked,snapshot:state.snapshot,activity:state.selectedActivity,session:state.selectedSession};
+  const visualControls=new Set(['perspective','layout','labels','edgeLabels','followGraph',
+    'experimentalAcceleration','experimentalWorker']);
+  const disabled=[...document.querySelectorAll('.sidebar input,.sidebar select,.sidebar button,#activityPanel input,#activityPanel select,#activityPanel button,#live,#refresh,#previous,#next')]
+    .filter(el=>!visualControls.has(el.id))
+    .map(el=>[el,el.disabled]);
+  disabled.forEach(([el])=>{el.disabled=true;});
+  state.replay={engine,saved,disabled,index:-1,desired:0,playing:false,rendering:false,exiting:false,
+    database:data.database,startedAt:data.journal.started_at || engine.events[0]?.time};
+  MemoryGraphLayout.stop(cy);
+  $('live').checked=false;$('followGraph').checked=true;state.refreshQueued=state.resetQueued=false;
+  state.selectedActivity=state.selectedSession=null;
+  state.previous=null;state.filterKey='';
+  cy.elements().removeClass('hidden touched recordedChange path replayChanged');
+  $('notice').textContent='History replay · whole database; graph and activity filters are suspended. '
+    +'Layouts are recalculated. Evidence and detail tables are not reconstructed. '
+    +(engine.truncated?'Some saved text values are truncated. ':'')
+    +(!data.journal.enabled || data.journal.untracked_tables?.length?'Recording has gaps or is suspended; reconstruction may be incomplete. ':'')
+    +'Only changes since history recording began are available.';
+  $('replayOpen').disabled=true;$('replayPlay').disabled=false;
+  $('replayExit').disabled=false;$('replayPosition').disabled=false;
+  // graphAction finishes loading before the coalescing renderer takes over.
+  state.replay.renderTimer=setTimeout(()=>void renderReplay(),0);
+  replayStatus();
+}
+async function exitReplay() {
+  const r=state.replay;if(!r)return;
+  pauseReplay();r.exiting=true;clearTimeout(r.renderTimer);
+  await graphAction(async()=>{
+    MemoryGraphLayout.stop(cy);
+    cy.elements('.replayRemoved').remove();cy.elements().removeClass('replayChanged');
+    r.disabled.forEach(([el,disabled])=>{el.disabled=disabled;});
+    $('live').checked=r.saved.live;$('followGraph').checked=r.saved.follow;state.snapshot=r.saved.snapshot;
+    state.selectedActivity=r.saved.activity;state.selectedSession=r.saved.session;
+    state.replay=null;state.previous=null;state.revision=null;state.filterKey='';
+    $('replayOpen').disabled=false;$('replayPlay').disabled=true;
+    $('replayExit').disabled=true;$('replayPosition').disabled=true;
+    $('replayStatus').textContent='Saved node and relationship changes · whole database';
+    $('replayBoundary').textContent='';
+    state.refreshQueued=true;state.resetQueued=true;
+  });
+}
+$('replayOpen').onclick=graphControl(openReplay);
+$('replayPlay').onclick=playReplay;
+$('replayPosition').oninput=()=>{
+  const target=$('replayPosition').value;
+  pauseReplay();backgroundLayout.cancel();seekReplay(target);
+};
+$('replaySpeed').onchange=()=>{if(state.replay?.playing){pauseReplay();playReplay();}};
+$('replayExit').onclick=guarded(exitReplay);
+
+async function requestedLayout(options={}) {await graphStage('Laying out graph');await layout(options);}
 async function drainGraphWork() {
   if (state.refreshQueued) {
     const reset=state.resetQueued;state.refreshQueued=state.resetQueued=false;
@@ -137,8 +366,83 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
     {selector:'.path',style:{'border-color':'#f0a0ff','border-width':5,'line-color':'#f0a0ff','target-arrow-color':'#f0a0ff',width:4,opacity:1}},
     {selector:'node.path',style:{width:'data(size)',height:'data(size)'}},
     {selector:'.hidden',style:{display:'none'}},
-    {selector:'edge:selected, edge:active, edge.hovered',style:{label:'data(label)','min-zoomed-font-size':0}}
+    {selector:'edge:selected, edge:active, edge.hovered',style:{label:'data(label)','min-zoomed-font-size':0}},
+    {selector:'node.replayChanged',style:{'background-color':'#5ee6a8','border-width':6,'border-color':'#d7ffe8'}},
+    {selector:'edge.replayChanged',style:{width:5,'line-color':'#5ee6a8','target-arrow-color':'#5ee6a8',opacity:1}},
+    {selector:'.replayRemoved',style:{'border-color':'#ff7b87','line-color':'#ff7b87','target-arrow-color':'#ff7b87',opacity:.7,'border-width':5}},
+    {selector:'edge.replayRemoved',style:{width:4}},
+    {selector:'node.replayRemoved',style:{'background-color':'#8f3544'}}
   ]});
+const backgroundLayout=MemoryGraphLayout.createWorkerLayout(()=>new Worker('layout-worker.js'));
+function replaceRenderer(accelerated) {
+  // Cytoscape's experimental renderer reads the inline background colour when
+  // blending textures; its default white would leave fringes on our dark view.
+  $('cy').style.backgroundColor='#0e1623';
+  cy.stopAnimationLoop();
+  cy.destroyRenderer();
+  cy.initRenderer({name:'canvas',webgl:accelerated,hideEdgesOnViewport:!accelerated,
+    textureOnViewport:!accelerated});
+  cy.startAnimationLoop();cy.style().update();cy.resize();
+}
+function saveVisualPreferences() {
+  try {localStorage.setItem('evomneme-viewer-visual-preferences',JSON.stringify({gpu:state.acceleration,worker:state.workerLayoutEnabled}));}
+  catch {} // Storage can be blocked; the controls still work for this page.
+}
+function restoreVisualPreferences() {
+  try {
+    const saved=JSON.parse(localStorage.getItem('evomneme-viewer-visual-preferences') || 'null');
+    if(saved?.gpu===true)setAcceleration(true);
+    if(saved?.worker===true)setWorkerLayout(true);
+  } catch {}
+}
+function setAcceleration(enabled) {
+  try {
+    if(enabled) {
+      const probe=document.createElement('canvas'),gl=probe.getContext?.('webgl2');
+      if(!gl)throw new Error('WebGL 2 is unavailable or disabled in this browser');
+      gl.getExtension('WEBGL_lose_context')?.loseContext();
+    }
+    replaceRenderer(enabled);
+    state.acceleration=enabled;$('experimentalAcceleration').checked=enabled;
+    $('accelerationStatus').textContent=enabled
+      ?'On · GPU rendering. Experimental relationship rendering.'
+      :'Off · standard rendering.';
+  } catch(error) {
+    // Keep the same graph instance, positions, selection and event handlers.
+    // Restore ordinary drawing if experimental initialization fails partway.
+    if(state.acceleration || !cy.renderer() || cy.renderer().webgl)replaceRenderer(false);
+    state.acceleration=false;$('experimentalAcceleration').checked=false;
+    $('accelerationStatus').textContent='Experimental acceleration unavailable: '+error.message+'. Standard rendering is active.';
+  }
+  saveVisualPreferences();
+}
+function setWorkerLayout(enabled) {
+  backgroundLayout.cancel();
+  if(enabled && typeof Worker!=='function') {
+    state.workerLayoutEnabled=false;$('experimentalWorker').checked=false;
+    $('workerStatus').textContent='Background workers are unavailable. Layout runs on the main thread.';
+    saveVisualPreferences();
+    return;
+  }
+  state.workerLayoutEnabled=enabled;$('experimentalWorker').checked=enabled;
+  $('workerStatus').textContent=enabled
+    ?'On · layout runs in a background thread; animation can continue during calculation.'
+    :'Off · layout runs on the main thread.';
+  saveVisualPreferences();
+}
+$('experimentalAcceleration').onchange=graphControl(()=>setAcceleration($('experimentalAcceleration').checked));
+$('experimentalWorker').onchange=guarded(()=>{
+  setWorkerLayout($('experimentalWorker').checked);
+  if(state.workerLayoutEnabled && !state.busy)return graphAction(()=>requestedLayout({seed:true}));
+});
+$('cy').addEventListener('webglcontextlost',event=>{
+  if(!state.acceleration)return;
+  event.preventDefault();backgroundLayout.cancel();
+  void graphAction(()=>{
+    setAcceleration(false);
+    $('accelerationStatus').textContent='GPU context was lost. Experimental acceleration was disabled; standard rendering is active.';
+  });
+},true);
 function filters() {
   const result = {limit:Number($('limit').value), offset:state.offset, root:state.root,
     depth:Number($('depth').value), search:$('search').value.trim(), focus:$('focus').value, aggregate:$('aggregate').value,
@@ -264,12 +568,34 @@ async function decorate() {
   }
   if (values.length > 30) $('legend').append(text('span',`+${values.length-30} categories`));
 }
-function layout(options = {}) {
+async function layout(options = {}) {
   const bounds=$('cy').getBoundingClientRect();
   if (bounds.width<1 || bounds.height<1) {state.pendingLayout=true;return;}
   state.pendingLayout=false;
   cy.resize();
-  MemoryGraphLayout.arrange(cy,{name:$('layout').value,width:bounds.width,height:bounds.height,...options});
+  const settings={name:$('layout').value,width:bounds.width,height:bounds.height,
+    fit:!state.replay || $('followGraph').checked,...options};
+  let backgroundError='';
+  if(state.workerLayoutEnabled) {
+    try {
+      const applied=await backgroundLayout.arrange(cy,settings);
+      if(applied || state.workerLayoutEnabled)return;
+    }
+    catch(error) {
+      backgroundError=error.message;
+      setWorkerLayout(false);
+      $('workerStatus').textContent='Background layout failed: '+error.message+'. Background layout disabled; large graphs use a quick grid overview.';
+    }
+  }
+  // Do not run quadratic force calculations on the UI thread before the user
+  // can reach the controls. The complete graph remains available in a linear
+  // overview, including after a failed/timed-out experimental worker.
+  if(cy.nodes().length>800 && settings.name==='cose') {
+    settings.overview=true;
+    $('workerStatus').textContent=(backgroundError?'Background layout failed: '+backgroundError+'. ':'')
+      +'Large graph: quick grid overview keeps controls responsive. Enable background layout for force-directed positioning.';
+  }
+  MemoryGraphLayout.arrange(cy,settings);
 }
 async function signatureMap(data) {
   // Complete snapshots already fingerprint all omitted details on the server.
@@ -295,7 +621,7 @@ async function draw(data, resetLayout, key) {
     },'Comparing graph');
     const removed = [...state.previous.keys()].filter(id => !next.has(id));
     if (changed.length || removed.length) {
-      if (!state.journal?.enabled) await ingest([{source:'snapshot',time:Date.now()/1000, read:[], write:[],
+      if (!state.replay && !state.journal?.enabled) await ingest([{source:'snapshot',time:Date.now()/1000, read:[], write:[],
         references:[], changed, removed, ok:true, elapsed_ms:0, returned_rows:0}],false);
     } else if (!resetLayout) {
       // Preserve a user's layout, selection and path while the database is unchanged.
@@ -303,7 +629,6 @@ async function draw(data, resetLayout, key) {
       return;
     }
   }
-  MemoryGraphLayout.stop(cy);
   const oldPositions = new Map(),oldIds=new Set();
   let sumX=0,sumY=0;
   await graphChunks(cy.elements(),el=>{
@@ -359,6 +684,7 @@ async function draw(data, resetLayout, key) {
         let existing=cy.getElementById(element.data.id);
         if (existing.length && existing.isEdge() &&
             (existing.data('source')!==element.data.source || existing.data('target')!==element.data.target)) {
+          topologyChanged=true;
           existing.remove();
           existing=cy.collection();
         }
@@ -373,7 +699,7 @@ async function draw(data, resetLayout, key) {
   } finally {await graphStage('Finalizing graph elements');cy.endBatch();}
   await countComponents();
   await decorate();
-  await applyHighlight();
+  if (!state.replay) await applyHighlight();
   if (!state.selectedActivity&&!state.selectedSession) await graphChunks(cy.elements(),el=>{if(state.changes.has(el.id()))el.addClass('changed');},'Marking changes',true);
   if (selected && cy.getElementById(selected).length) {
     state.selected = cy.getElementById(selected);
@@ -384,10 +710,11 @@ async function draw(data, resetLayout, key) {
     $('selectionActions').classList.add('hidden');
     $('openGroup').classList.add('hidden');
   }
-  if (resetLayout || !oldPositions.size || (topologyChanged && $('followGraph').checked)) {
+  if (resetLayout || !oldPositions.size || (topologyChanged && (state.replay || $('followGraph').checked))) {
     await graphStage('Laying out graph');
-    layout({seed:resetLayout || !oldPositions.size,fit:!state.selectedActivity&&!state.selectedSession,
-      animate:oldPositions.size>0,newIds});
+    await layout({seed:resetLayout || !oldPositions.size,
+      fit:!state.selectedActivity&&!state.selectedSession && (!state.replay || $('followGraph').checked),
+      animate:oldPositions.size>0 && (!state.replay || state.replay.index>=0),newIds});
   } else if (added) {
     await graphStage('Positioning new nodes');
     MemoryGraphLayout.transition(cy,()=>MemoryGraphLayout.separate(cy.nodes(),newIds),{newIds});
@@ -396,6 +723,7 @@ async function draw(data, resetLayout, key) {
   await graphStage('Rendering graph');
 }
 async function refresh(resetLayout=false) {
+  if (state.replay) return;
   if (state.busy) {state.refreshQueued=true;state.resetQueued ||= resetLayout;return;}
   state.busy = true;
   progressStart();
@@ -438,6 +766,7 @@ async function refresh(resetLayout=false) {
     if (data.aggregate) notices.push(`Whole filtered database grouped by ${data.aggregate}: ${data.grouped_members} members. Drill into groups for individual elements and session highlights.`);
     if (data.reference_total) notices.push(`${data.reference_total} reference targets are represented explicitly as unresolved/ambiguous nodes.`);
     if (cy.scratch('memory-layout')==='grid-large') notices.push('Large graph: grid overview keeps all selected nodes and links available. Zoom in, filter, or group by layer/type to inspect structure.');
+    if (cy.scratch('memory-layout')==='grid-overview') notices.push('Quick grid overview: all selected nodes and links are loaded. Enable Experimental background layout for force-directed positioning.');
     notices.push(...(data.projection_warnings || []));
     $('notice').textContent = notices.join(' ') || 'Showing the complete graph for this selection. Select elements to inspect evidence and stored claims.';
     renderTables(data.tables);
@@ -770,6 +1099,12 @@ async function inspect(el) {
   const attrs = el.data('attributes');
   const container = $('detail');
   $('openGroup').classList.add('hidden');
+  if (state.replay) {
+    container.replaceChildren();attributes(container,attrs);
+    $('selectionHint').textContent='Historical graph attributes. Evidence and detail tables are not reconstructed.';
+    $('selectionActions').classList.add('hidden');
+    return;
+  }
   if (attrs._aggregate) {
     container.replaceChildren();
     attributes(container,attrs);
@@ -822,6 +1157,7 @@ function openGroup(el) {
 }
 cy.on('tap','node,edge',event => {if(!state.busy)guarded(inspect)(event.target);});
 cy.on('dbltap','node',event => {
+  if (state.replay) return;
   if (event.target.data('attributes')._aggregate) return openGroup(event.target);
   state.root = event.target.data('attributes').graph_id;
   state.offset = 0;
@@ -890,8 +1226,8 @@ $('olderChanges').onclick=graphControl(()=>pollEvents(true));
 
 // Pointer interaction opts out of following growth; programmatic fit/layout does not.
 let pointerStart=null;
-$('cy').addEventListener('wheel',()=>{MemoryGraphLayout.stop(cy);$('followGraph').checked=false;},{passive:true});
-$('cy').addEventListener('pointerdown',event=>{MemoryGraphLayout.stop(cy);pointerStart={x:event.clientX,y:event.clientY};});
+$('cy').addEventListener('wheel',()=>{backgroundLayout.cancel();MemoryGraphLayout.stop(cy);$('followGraph').checked=false;},{passive:true});
+$('cy').addEventListener('pointerdown',event=>{backgroundLayout.cancel();MemoryGraphLayout.stop(cy);pointerStart={x:event.clientX,y:event.clientY};});
 $('cy').addEventListener('pointermove',event=>{
   if (pointerStart && Math.hypot(event.clientX-pointerStart.x,event.clientY-pointerStart.y)>5) $('followGraph').checked=false;
 });
@@ -962,4 +1298,5 @@ async function exportPng() {
 }
 $('png').onclick=graphControl(exportPng);
 if(!token)showError(new Error('Open the complete viewer URL printed by the server, including its token.'));
+restoreVisualPreferences();
 refresh(true);setInterval(()=>{if($('live').checked && !state.busy)refresh();},2000);

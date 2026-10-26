@@ -22,6 +22,11 @@ main>*{min-width:0;min-height:0}
 .workspace>.activity{flex:2 1 0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
 .activity #timeline{max-height:none;overflow:visible}
 .activity .table-scroll{max-height:none}
+.replay-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 12px;flex-shrink:0;border-bottom:1px solid #29384b;font-size:12px}
+.replay-controls label{display:flex;align-items:center;gap:5px;margin:0}
+.replay-controls select{width:auto;margin:0}
+.replay-controls input[type=range]{flex:1;min-width:100px;width:120px}
+.replay-controls [role=status]{flex-basis:100%;color:#a8bacd}
 .sidebar,.inspector{height:100%;max-height:none;scrollbar-gutter:stable}
 @media(min-width:701px) and (max-width:1100px){
   main{grid-template-rows:minmax(0,3fr) minmax(0,1fr)}

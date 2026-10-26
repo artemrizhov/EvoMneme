@@ -11,19 +11,18 @@
     const active=transitions.get(cy);
     if (!active) return;
     active.cancel();
-    active.fading.removeStyle('opacity');
+    for (const item of active.items.values()) if(item.opacity<1)item.node.removeStyle('opacity');
     transitions.delete(cy);
   }
 
   // Compute the entire destination synchronously in one batch, then restore the
   // displayed geometry before the renderer paints. All layout stages share one
-  // interpolation, including collision correction and viewport fitting.
+  // spring motion, including collision correction and viewport fitting.
   function transition(cy, update, options = {}) {
-    stop(cy);
     const win=cy.window();
     if (options.animate===false || !win?.requestAnimationFrame ||
         win.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      update();
+      stop(cy);update();
       return;
     }
     const nodes=cy.nodes();
@@ -38,26 +37,60 @@
       nodes.positions(n=>from.get(n.id()));
       cy.viewport(viewport);
     } finally {cy.endBatch();}
-    const fading=nodes.filter(n=>options.newIds?.has(n.id()));
-    fading.style('opacity',0);
-    let frame, started;
-    const duration=options.duration || 400;
-    const mix=(a,b,t)=>a+(b-a)*t;
-    const point=(a,b,t)=>({x:mix(a.x,b.x,t),y:mix(a.y,b.y,t)});
+    let active=transitions.get(cy);
+    const items=new Map(nodes.map(node=>{
+      const old=active?.items.get(node.id());
+      const item=old?.node===node ? old : {node,vx:0,vy:0,opacity:options.newIds?.has(node.id())?0:1};
+      item.target=targets.get(node.id());
+      if(item.opacity<1)node.style('opacity',item.opacity);
+      return [node.id(),item];
+    }));
+    if (active) {active.items=items;active.destination=destination;return;}
+    active={items,destination,velocity:{zoom:0,x:0,y:0},last:undefined};
+    let frame;
+    // Exact critically damped spring integration. Cap simulation time per
+    // renderer frame so a stalled tab resumes slowly without a catch-up jump.
+    const spring=(value,target,velocity,dt,tolerance=.1)=>{
+      const omega=12, offset=value-target, c=velocity+omega*offset, decay=Math.exp(-omega*dt);
+      const position=target+(offset+c*dt)*decay;
+      const speed=(velocity-omega*c*dt)*decay;
+      const settled=Math.abs(position-target)<tolerance && Math.abs(speed)<tolerance*5;
+      return settled?[target,0,true]:[position,speed,false];
+    };
     const tick=now=>{
       if (cy.destroyed()) {stop(cy);return;}
-      if (started===undefined) started=now;
-      const progress=Math.min(1,(now-started)/duration);
-      const t=progress*progress*(3-2*progress);
+      const dt=active.last===undefined?0:Math.min(32,Math.max(0,now-active.last))/1000;
+      active.last=now;
+      let settled=true;
       cy.batch(()=>{
-        nodes.positions(n=>point(from.get(n.id()),targets.get(n.id()),t));
-        cy.viewport({zoom:mix(viewport.zoom,destination.zoom,t),pan:point(viewport.pan,destination.pan,t)});
-        fading.style('opacity',t);
+        for (const item of active.items.values()) {
+          const node=item.node;
+          if(node.removed())continue;
+          if(!node.locked()) {
+            const p=node.position();
+            const [x,vx,sx]=spring(p.x,item.target.x,item.vx,dt);
+            const [y,vy,sy]=spring(p.y,item.target.y,item.vy,dt);
+            item.vx=vx;item.vy=vy;node.position({x,y});
+            settled &&= sx && sy;
+          } else {item.vx=item.vy=0;}
+          if(item.opacity<1) {
+            item.opacity=Math.min(1,item.opacity+dt/.4);
+            if(item.opacity===1)node.removeStyle('opacity');
+            else {node.style('opacity',item.opacity);settled=false;}
+          }
+        }
+        const pan=cy.pan(),velocity=active.velocity,target=active.destination;
+        const [zoom,vz,sz]=spring(cy.zoom(),target.zoom,velocity.zoom,dt,.00001);
+        const [x,vx,sx]=spring(pan.x,target.pan.x,velocity.x,dt);
+        const [y,vy,sy]=spring(pan.y,target.pan.y,velocity.y,dt);
+        active.velocity={zoom:vz,x:vx,y:vy};
+        cy.viewport({zoom,pan:{x,y}});settled &&= sz && sx && sy;
       });
-      if (progress<1) frame=win.requestAnimationFrame(tick);
-      else {fading.removeStyle('opacity');transitions.delete(cy);}
+      if (!settled) frame=win.requestAnimationFrame(tick);
+      else transitions.delete(cy);
     };
-    transitions.set(cy,{cancel:()=>win.cancelAnimationFrame(frame),fading});
+    active.cancel=()=>win.cancelAnimationFrame(frame);
+    transitions.set(cy,active);
     frame=win.requestAnimationFrame(tick);
   }
 
@@ -186,35 +219,100 @@
     if (cy.zoom()>1) {cy.zoom(1);cy.center(elements);}
   }
 
+  function connectedGroups(elements) {
+    // Cytoscape's general components() repeatedly filters collections. Use
+    // union-find to keep thousands of isolated islands linear as well.
+    const parents=new Map(),sizes=new Map();
+    for(const node of elements.nodes()){parents.set(node.id(),node.id());sizes.set(node.id(),1);}
+    const root=id=>{
+      while(parents.get(id)!==id){parents.set(id,parents.get(parents.get(id)));id=parents.get(id);}
+      return id;
+    };
+    for(const edge of elements.edges()) {
+      const source=edge.data('source'),target=edge.data('target');
+      if(!parents.has(source)||!parents.has(target))continue;
+      let a=root(source),b=root(target);
+      if(a===b)continue;
+      if(sizes.get(a)<sizes.get(b))[a,b]=[b,a];
+      parents.set(b,a);sizes.set(a,sizes.get(a)+sizes.get(b));
+    }
+    const groups=new Map();
+    for(const node of elements.nodes()) {
+      const id=root(node.id());
+      if(!groups.has(id))groups.set(id,[]);
+      groups.get(id).push(node);
+    }
+    for(const edge of elements.edges()) {
+      const source=edge.data('source'),target=edge.data('target');
+      if(parents.has(source)&&parents.has(target))groups.get(root(source)).push(edge);
+    }
+    return [...groups.values()].map(group=>elements.cy().collection(group));
+  }
+
+  function packComponents(groups,width,height,gap=90) {
+    if(groups.length<2)return;
+    const items=groups.map(group=>{
+      const nodes=group.nodes(),bounds=boxes(nodes);
+      const x1=Math.min(...bounds.map(b=>b.x+b.dx-b.w/2)),y1=Math.min(...bounds.map(b=>b.y+b.dy-b.h/2));
+      const x2=Math.max(...bounds.map(b=>b.x+b.dx+b.w/2)),y2=Math.max(...bounds.map(b=>b.y+b.dy+b.h/2));
+      return {nodes,x1,y1,w:x2-x1,h:y2-y1};
+    });
+    const area=items.reduce((sum,b)=>sum+(b.w+gap)*(b.h+gap),0);
+    const rowWidth=Math.max(...items.map(b=>b.w),Math.sqrt(area*width/height));
+    let x=0,y=0,rowHeight=0;
+    for(const item of items) {
+      if(x && x+item.w>rowWidth){x=0;y+=rowHeight+gap;rowHeight=0;}
+      const dx=x-item.x1,dy=y-item.y1;
+      item.nodes.positions(node=>{const p=node.position();return {x:p.x+dx,y:p.y+dy};});
+      x+=item.w+gap;rowHeight=Math.max(rowHeight,item.h);
+    }
+  }
+
   function arrangeNow(cy, options = {}) {
-    const elements=cy.elements(':visible'), nodes=elements.nodes();
+    const elements=cy.elements(':visible').not('.replayRemoved'), nodes=elements.nodes();
     if (!nodes.length) return;
     const width=Math.max(100,options.width || cy.width());
     const height=Math.max(100,options.height || cy.height());
-    if (nodes.length>10000) {
+    // Layout disconnected graphs independently. A global circle/grid scatters
+    // the members of each component among unrelated nodes and hides islands.
+    const groups=nodes.some(n=>n.locked())?[elements]:connectedGroups(elements);
+    if (options.overview || nodes.length>10000) {
       // Full stores can contain tens of thousands of symbols. Keep this overview
       // linear rather than running an O(n²) force simulation or collision pass.
-      const cols=Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height*110/180)));
-      nodes.positions((node,i)=>({x:(i%cols)*180,y:Math.floor(i/cols)*110}));
-      cy.scratch('memory-layout','grid-large');
+      for(const group of groups) {
+        const members=group.nodes();
+        const cols=Math.max(1,Math.ceil(Math.sqrt(members.length*width/height*110/180)));
+        members.positions((node,i)=>({x:(i%cols)*180,y:Math.floor(i/cols)*110}));
+      }
+      packComponents(groups,width,height);
+      cy.scratch('memory-layout',options.overview?'grid-overview':'grid-large');
       if (options.fit!==false) fit(cy,elements);
       return;
     }
     cy.scratch('memory-layout',options.name || 'cose');
-    if (options.runLayout!==false) {
-      const common={eles:elements,animate:false,fit:false,padding:36,
-        nodeDimensionsIncludeLabels:true,avoidOverlap:true};
-      if (options.seed) {
-        cy.layout({...common,name:'grid',cols:Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height))),
-          avoidOverlapPadding:28,condense:true}).run();
+    for(const group of groups) {
+      const members=group.nodes();
+      const localWidth=groups.length>1?Math.min(width,Math.max(180,Math.sqrt(members.length*width/height)*140)):width;
+      const localHeight=groups.length>1?Math.min(height,Math.max(150,Math.sqrt(members.length*height/width)*140)):height;
+      if (options.runLayout!==false) {
+        const common={eles:group,animate:false,fit:false,padding:36,boundingBox:{x1:0,y1:0,w:localWidth,h:localHeight},
+          nodeDimensionsIncludeLabels:true,avoidOverlap:true};
+        if (options.seed) {
+          cy.layout({...common,name:'grid',cols:Math.max(1,Math.ceil(Math.sqrt(members.length*localWidth/localHeight))),
+            avoidOverlapPadding:28,condense:true}).run();
+        }
+        cy.layout({...common,name:options.name || 'cose',randomize:false,
+          nodeRepulsion:()=>6500,nodeOverlap:24,idealEdgeLength:()=>120,
+          componentSpacing:100,gravity:.2,numIter:members.length>800?120:members.length>250?350:800,minNodeSpacing:28,
+          // Cytoscape's spacing transform expects a layout position for every
+          // node; locked nodes have none in grid layouts and can produce NaNs.
+          spacingFactor:members.some(n=>n.locked())?1:1.25,
+          cols:Math.max(1,Math.ceil(Math.sqrt(members.length*localWidth/localHeight)))}).run();
       }
-      cy.layout({...common,name:options.name || 'cose',randomize:false,
-        nodeRepulsion:()=>6500,nodeOverlap:24,idealEdgeLength:()=>120,
-        componentSpacing:100,gravity:.2,numIter:nodes.length>800?120:nodes.length>250?350:800,minNodeSpacing:28,
-        spacingFactor:1.25,cols:Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height)))}).run();
+      orient(members,Math.max(1,localWidth-72),Math.max(1,localHeight-72));
+      separate(members);
     }
-    orient(nodes,Math.max(1,width-72),Math.max(1,height-72));
-    separate(nodes);
+    packComponents(groups,width,height);
     if (options.fit!==false) fit(cy,elements);
   }
 
@@ -222,5 +320,56 @@
     transition(cy,()=>arrangeNow(cy,options),options);
   }
 
-  return {arrange,fit,separate,boxes,transition,stop};
+  function createWorkerLayout(createWorker, timeout=45000) {
+    let worker,pending,serial=0;
+    function cancel() {
+      serial++;
+      if(worker)worker.terminate();
+      worker=null;
+      if(pending){clearTimeout(pending.timer);pending.resolve(false);pending=null;}
+    }
+    async function arrangeAsync(cy,options={}) {
+      // A replacement request cancels outstanding computation rather than
+      // building an unbounded queue or applying an obsolete destination.
+      if(pending)cancel();
+      if(!worker)worker=createWorker();
+      const id=++serial,elements=cy.elements(':visible').not('.replayRemoved').map(el=>{
+        if(el.isEdge())return {group:'edges',data:{id:el.id(),source:el.data('source'),target:el.data('target')}};
+        const style={};
+        for(const key of ['width','height','border-width','padding','label','font-size','text-valign',
+          'text-halign','text-margin-x','text-margin-y','text-max-width','text-wrap'])style[key]=el.style(key);
+        return {group:'nodes',data:{id:el.id()},position:{...el.position()},locked:el.locked(),style};
+      });
+      const result=await new Promise((resolve,reject)=>{
+        const fail=message=>{
+          if(!pending || pending.id!==id)return;
+          clearTimeout(pending.timer);pending=null;worker.terminate();worker=null;
+          reject(new Error(message));
+        };
+        pending={id,resolve,timer:setTimeout(()=>fail('Background layout timed out'),timeout)};
+        worker.onmessage=event=>{
+          if(!pending || event.data.id!==pending.id)return;
+          if(event.data.error){fail(event.data.error);return;}
+          clearTimeout(pending.timer);pending=null;resolve(event.data);
+        };
+        worker.onerror=event=>{event.preventDefault?.();fail(event.message || 'Background layout worker failed');};
+        worker.onmessageerror=()=>fail('Background layout response could not be decoded');
+        try {
+          const {newIds,...settings}=options;
+          worker.postMessage({id,elements,options:settings});
+        } catch(error) {fail(error.message);}
+      });
+      if(!result || cy.destroyed() || id!==serial)return false;
+      const positions=new Map(result.positions);
+      transition(cy,()=>{
+        cy.nodes().positions(n=>positions.get(n.id()) || n.position());
+        cy.scratch('memory-layout',result.layout);
+        if(options.fit!==false)fit(cy,cy.elements(':visible').not('.replayRemoved'));
+      },options);
+      return true;
+    }
+    return {arrange:arrangeAsync,cancel};
+  }
+
+  return {arrange,fit,separate,boxes,transition,stop,createWorkerLayout};
 });

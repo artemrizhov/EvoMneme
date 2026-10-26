@@ -73,6 +73,11 @@ class ViewerTests(unittest.TestCase):
         result = subprocess.run([shutil.which('node'),str(ROOT/'tests/test_viewer_layout.js')],capture_output=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr.decode('utf-8','replace'))
 
+    @unittest.skipUnless(shutil.which('node'), 'Background layout regression needs an existing Node.js')
+    def test_background_layout_worker(self):
+        result = subprocess.run([shutil.which('node'),str(ROOT/'tests/test_viewer_worker.js')],capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr.decode('utf-8','replace'))
+
     def setUp(self):
         area = ROOT / '.evomneme-tests'
         area.mkdir(exist_ok=True)
@@ -83,6 +88,90 @@ class ViewerTests(unittest.TestCase):
         fixture(self.path)
         self.explorer = Explorer(self.path)
         self.addCleanup(self.explorer.close)
+
+    def test_replay_snapshot_is_consistent_and_read_only(self):
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            db.execute('PRAGMA journal_mode=WAL')
+            db.execute("UPDATE nodes SET title='Recorded title' WHERE scope_id='main' AND id='0'")
+            db.commit()
+        original_rows = self.explorer.rows
+        wrote = False
+
+        def rows(db, sql, **kwargs):
+            nonlocal wrote
+            result = original_rows(db, sql, **kwargs)
+            if not wrote:
+                wrote = True
+                with contextlib.closing(sqlite3.connect(self.path)) as writer:
+                    writer.execute("UPDATE nodes SET title='Concurrent title' WHERE scope_id='main' AND id='0'")
+                    writer.commit()
+            return result
+
+        with patch.object(self.explorer, 'rows', side_effect=rows):
+            replay = self.explorer.replay({})
+        node = next(n for n in replay['nodes'] if n['scope_id']=='main' and n['id']=='0')
+        self.assertEqual(node['title'], 'Recorded title')
+        self.assertEqual(len(replay['events']), 1)
+        self.assertEqual(replay['events'][0]['before']['title']['value'], 'main node 0')
+        self.assertEqual(replay['events'][0]['after']['title']['value'], 'Recorded title')
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            before = list(db.iterdump())
+        self.assertEqual(len(self.explorer.replay({})['events']), 2)
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(before, list(db.iterdump()), 'Replay must not mutate the database or journal')
+        custom = Explorer(self.path, {'nodes':'SELECT 1', 'edges':'SELECT 1'})
+        try:
+            with self.assertRaisesRegex(ValueError, 'standard'):
+                custom.replay({})
+        finally:
+            custom.close()
+
+    def test_replay_bounds_fail_instead_of_returning_partial_history(self):
+        with patch('evomneme_viewer.MAX_GRAPH_NODES', 1):
+            with self.assertRaisesRegex(ValueError, 'too large'):
+                self.explorer.replay({})
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            db.execute("UPDATE nodes SET title='Changed' WHERE scope_id='main' AND id='0'")
+            db.commit()
+        with patch('evomneme_viewer.MAX_GRAPH_RESPONSE', 1):
+            with self.assertRaisesRegex(ValueError, 'byte budget|replay budget'):
+                self.explorer.replay({})
+
+    def test_http_replay_over_eight_mib_uses_its_full_budget(self):
+        # A real journal, rather than a mocked response, exercises collection,
+        # UTF-8 budgeting, HTTP routing and gzip delivery together.
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            db.executemany("UPDATE nodes SET summary=? WHERE scope_id='main' AND id='0'",
+                           ((str(i) + ' ' + '\u044f' * 2500,) for i in range(1100)))
+            db.commit()
+        server, token = make_server(self.explorer)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        conn = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=30)
+        self.addCleanup(conn.close)
+        conn.request('POST', '/api/replay', body='{}',
+                     headers={'X-Viewer-Token':token,'Accept-Encoding':'gzip'})
+        response = conn.getresponse()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader('Content-Encoding'), 'gzip')
+        body = gzip.decompress(response.read())
+        self.assertGreater(len(body), 8 * 1024 * 1024)
+        replay = json.loads(body)
+        self.assertEqual(len(replay['events']), 1100)
+        self.assertIn('\u044f', replay['events'][-1]['after']['summary']['value'])
+        self.assertIn('\u044f'.encode(), body, 'HTTP must use the same UTF-8 representation as budget accounting')
+        with patch('evomneme_viewer.MAX_RESPONSE', 128):
+            # Replay gets its own limit; ordinary query limits stay in effect.
+            conn.request('POST', '/api/replay', body='{}', headers={'X-Viewer-Token':token,'Accept-Encoding':'gzip'})
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            response.read()
+            conn.request('POST', '/api/query', body=json.dumps({'sql':"SELECT printf('%1000s','x') AS content"}),
+                         headers={'X-Viewer-Token':token})
+            response = conn.getresponse()
+            self.assertEqual(response.status, 413)
+            response.read()
 
     def test_whole_database_scope_keys_filter_page_boundary_and_neighborhood(self):
         whole = self.explorer.snapshot({})
@@ -317,6 +406,16 @@ class ViewerTests(unittest.TestCase):
         response=conn.getresponse()
         self.assertEqual(response.status,200)
         self.assertEqual(json.loads(response.read())['totals']['nodes'],8)
+        conn.request('POST','/api/replay',body='{}')
+        response = conn.getresponse()
+        self.assertEqual(response.status,403)
+        response.read()
+        conn.request('POST','/api/replay',body='{}',headers={'X-Viewer-Token':token})
+        response = conn.getresponse()
+        self.assertEqual(response.status,200)
+        replay = json.loads(response.read())
+        self.assertEqual(len(replay['nodes']),8)
+        self.assertIn('events',replay)
 
     def test_whole_database_grouping_uses_all_members_not_browser_page(self):
         overview = self.explorer.snapshot({'aggregate':'kind','limit':2})
@@ -463,7 +562,7 @@ class ViewerTests(unittest.TestCase):
         response = conn.getresponse()
         self.assertEqual(response.status,200)
         self.assertEqual(json.loads(response.read())['totals']['nodes'],8)
-        for path in ('/','/app.js','/graph-layout.js','/style.css','/cytoscape.min.js'):
+        for path in ('/','/app.js','/graph-layout.js','/layout-worker.js','/style.css','/cytoscape.min.js'):
             conn.request('GET',path)
             response=conn.getresponse()
             self.assertEqual(response.status,200)

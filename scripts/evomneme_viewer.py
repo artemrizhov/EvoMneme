@@ -92,6 +92,34 @@ class Explorer:
         with self.connect() as db:
             return read_changes(db, values)
 
+    def replay(self, values):
+        """Read the graph and its journal in the same SQLite snapshot."""
+        if self.mapping:
+            raise ValueError('History replay requires the standard EvoMneme graph mapping')
+        with self.connect(GRAPH_SECONDS) as db:
+            info = journal_status(db)
+            if not info.get('version'):
+                raise ValueError('No saved row history is available')
+            result = {'journal': info, 'events': [], 'database': str(self.path)}
+            for table, limit in (('nodes', MAX_GRAPH_NODES), ('edges', MAX_GRAPH_EDGES)):
+                result[table], more = self.rows(db, 'SELECT * FROM ' + table, limit=limit, max_bytes=MAX_GRAPH_RESPONSE)
+                if more:
+                    raise ValueError('Graph is too large for history replay')
+            used = len(json_bytes(result))
+            if used > MAX_GRAPH_RESPONSE:
+                raise ValueError('Current graph exceeds the 128 MiB replay budget')
+            for number, occurred, table, old, new in db.execute(
+                    'SELECT id,occurred_at,table_name,before_json,after_json FROM ' + quote(LOG)
+                    + " WHERE table_name IN ('nodes','edges') ORDER BY id"):
+                event = {'change_id': number, 'time': occurred, 'table': table,
+                         'before': json.loads(old) if old else None,
+                         'after': json.loads(new) if new else None}
+                used += len(json_bytes(event)) + bool(result['events'])
+                if len(result['events']) >= 100000 or used > MAX_GRAPH_RESPONSE:
+                    raise ValueError('Saved history exceeds the replay budget (100,000 graph changes / 128 MiB)')
+                result['events'].append(event)
+            return result
+
     def close(self):
         with self.watch_lock:
             if self.watch:
@@ -493,10 +521,15 @@ def make_server(explorer, port=0):
 
         def respond(self, code, data, mime='application/json; charset=utf-8'):
             whole = isinstance(data, dict) and data.get('whole_graph') is True
+            replay = self.path == '/api/replay' and code == 200
             if not isinstance(data, bytes):
-                data = json.dumps(data, ensure_ascii=True, allow_nan=False).encode('utf-8')
-            if len(data) > (MAX_GRAPH_RESPONSE if whole else MAX_RESPONSE):
-                code, data = 413, b'{"error":"Response exceeds the graph output budget; narrow the layers or selection"}'
+                # Match the compact UTF-8 encoding used by the budget checks;
+                # ASCII escaping could otherwise multiply non-Latin history.
+                data = json_bytes(data)
+            if len(data) > (MAX_GRAPH_RESPONSE if whole or replay else MAX_RESPONSE):
+                message = ('Replay response exceeds its history output budget' if replay else
+                           'Response exceeds the graph output budget; narrow the layers or selection')
+                code, data = 413, json_bytes({'error': message})
             compressed = 'gzip' in self.headers.get('Accept-Encoding', '') and len(data) > 262144 and mime.startswith('application/json')
             if compressed:
                 data = gzip.compress(data, compresslevel=3)
@@ -523,6 +556,7 @@ def make_server(explorer, port=0):
             assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                       '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                       '/graph-layout.js': ('graph-layout.js', 'text/javascript; charset=utf-8'),
+                      '/layout-worker.js': ('layout-worker.js', 'text/javascript; charset=utf-8'),
                       '/style.css': ('style.css', 'text/css; charset=utf-8'),
                       '/cytoscape.min.js': ('vendor/cytoscape.min.js', 'text/javascript; charset=utf-8')}
             if path == '/favicon.ico':
@@ -544,7 +578,7 @@ def make_server(explorer, port=0):
                     raise ValueError('Expected object')
                 routes = {'/api/snapshot': explorer.snapshot, '/api/query': explorer.query,
                           '/api/detail': explorer.detail, '/api/events': explorer.events,
-                          '/api/changes': explorer.changes}
+                          '/api/changes': explorer.changes, '/api/replay': explorer.replay}
                 if self.path not in routes:
                     return self.respond(404, {'error': 'Not found'})
                 self.respond(200, routes[self.path](values))
