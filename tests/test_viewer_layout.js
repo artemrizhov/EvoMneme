@@ -294,6 +294,37 @@ try {
   assertSeparated(spiralOutside);
 } finally {spiralOutside.destroy();}
 
+const bulk=graph();
+try {
+  bulk.add(Array.from({length:100},(_,i)=>({data:{id:'bulk'+i,label:'X'},position:{x:0,y:0}})));
+  graphLayout.separate(bulk.nodes());
+  const onAxis=bulk.nodes().filter(n=>Math.abs(n.position('x'))<1e-6 || Math.abs(n.position('y'))<1e-6).length;
+  assert.ok(onAxis<10,'A coincident bulk insertion must not eject nodes along four compass directions');
+  assertSeparated(bulk);
+} finally {bulk.destroy();}
+
+const bulkRegions=graph();
+try {
+  bulkRegions.add([{data:{id:'obstacle-left',label:'X'},position:{x:-600,y:0}},
+    {data:{id:'obstacle-right',label:'X'},position:{x:600,y:0}},
+    {data:{id:'obstacle-edge',source:'obstacle-left',target:'obstacle-right'}}]);
+  const affected=[];
+  for(let i=0;i<20;i++) {
+    const a='group'+i+'-a',b='group'+i+'-b';affected.push(a,b);
+    bulkRegions.add([{data:{id:a,label:'X'},position:{x:-40,y:0}},
+      {data:{id:b,label:'X'},position:{x:40,y:0}},
+      {data:{id:'group-edge'+i,source:a,target:b}}]);
+  }
+  graphLayout.arrange(bulkRegions,{name:'cose',incremental:true,affected,placementOrigin:{x:0,y:0},fit:false});
+  let axis=0;
+  for(let i=0;i<20;i++) {
+    const a=bulkRegions.$id('group'+i+'-a').position(),b=bulkRegions.$id('group'+i+'-b').position();
+    if(Math.abs(a.x+b.x)<1e-6 || Math.abs(a.y+b.y)<1e-6)axis++;
+  }
+  assert.ok(axis<4,'A large seek must not send entire connected groups along four compass directions');
+  assertSeparated(bulkRegions);
+} finally {bulkRegions.destroy();}
+
 const vacancies=graph();
 try {
   vacancies.add([{data:{id:'moving',label:'X'},position:{x:1000,y:1000}},

@@ -7,6 +7,13 @@
 
   const transitions = new WeakMap();
 
+  function directionFor(key) {
+    let hash=2166136261;
+    for(let i=0;i<key.length;i++)hash=Math.imul(hash^key.charCodeAt(i),16777619);
+    const angle=(hash>>>0)/4294967296*Math.PI*2;
+    return {x:Math.cos(angle),y:Math.sin(angle)};
+  }
+
   function targetPositions(cy) {
     const active=transitions.get(cy);
     return new Map(cy.nodes().map(node=>{
@@ -187,15 +194,16 @@
             if (!moveA && !moveB) continue;
             collisions++;
             const share = moveA && moveB ? .5 : 1;
-            if (overlapX<overlapY) {
-              const step=(dx<0?-1:1)*(overlapX+.5)*share;
-              if (moveA) a.x+=step;
-              if (moveB) b.x-=step;
-            } else {
-              const step=(dy<0?-1:1)*(overlapY+.5)*share;
-              if (moveA) a.y+=step;
-              if (moveB) b.y-=step;
-            }
+            const length=Math.hypot(dx,dy);
+            const direction=length>1e-6?{x:dx/length,y:dy/length}
+              :directionFor(a.node.id()+'|'+b.node.id());
+            // Escape along the line between centers. Coincident nodes get a
+            // stable direction derived from their identities, rather than all
+            // choosing the same vertical or horizontal axis.
+            const distance=(Math.min(overlapX/Math.max(Math.abs(direction.x),1e-12),
+              overlapY/Math.max(Math.abs(direction.y),1e-12))+.5)*share;
+            if(moveA){a.x+=direction.x*distance;a.y+=direction.y*distance;}
+            if(moveB){b.x-=direction.x*distance;b.y-=direction.y*distance;}
           }
         }
         const key=Math.floor((a.x+a.dx)/cellSize)+','+Math.floor((a.y+a.dy)/cellSize);
@@ -228,14 +236,11 @@
     for (const b of items.filter(canMove)) {
       if (!free(b)) {
         const origin={x:b.x,y:b.y};
-        let placed=false;
-        for (let ring=1;ring<=items.length && !placed;ring++) {
-          for (let x=-ring;x<=ring && !placed;x++) for (let y=-ring;y<=ring && !placed;y++) {
-            if (Math.abs(x)!==ring && Math.abs(y)!==ring) continue;
-            b.x=origin.x+x*(b.w+gap+1);
-            b.y=origin.y+y*(b.h+gap+1);
-            placed=free(b);
-          }
+        const direction=directionFor(b.node.id()),phase=Math.atan2(direction.y,direction.x);
+        for(let index=1;!free(b);index++) {
+          const radius=Math.max(32,Math.min(b.w,b.h)+gap)*Math.sqrt(index);
+          const angle=phase+index*2.399963229728653;
+          b.x=origin.x+Math.cos(angle)*radius;b.y=origin.y+Math.sin(angle)*radius;
         }
       }
       insert(b);
@@ -369,6 +374,13 @@
     const spiralCursors=new Map();
     for(const item of moving) {
       const origin={x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2};
+      const center=placementOrigin || {x:0,y:0};
+      const centroid=item.members.reduce((s,n)=>{
+        const p=n.position();return {x:s.x+p.x/item.members.length,y:s.y+p.y/item.members.length};
+      },{x:0,y:0});
+      const radial={x:centroid.x-center.x,y:centroid.y-center.y};
+      const length=Math.hypot(radial.x,radial.y);
+      const direction=length>1e-6?{x:radial.x/length,y:radial.y/length}:directionFor(item.members[0].id());
       let blocked=null,collisions;
       if(item.members.length===1 && overlaps(item).length) {
         const p=item.members[0].position(),center=placementOrigin || p;
@@ -394,9 +406,11 @@
           blocked=blocked?{x1:Math.min(blocked.x1,b.x1),y1:Math.min(blocked.y1,b.y1),
             x2:Math.max(blocked.x2,b.x2),y2:Math.max(blocked.y2,b.y2)}:b;
         }
-        const candidates=[{x:blocked.x1-origin.x2-1,y:0},{x:blocked.x2-origin.x1+1,y:0},
-          {x:0,y:blocked.y1-origin.y2-1},{x:0,y:blocked.y2-origin.y1+1}];
-        const move=candidates.sort((a,b)=>a.x*a.x+a.y*a.y-b.x*b.x-b.y*b.y)[0];
+        const tx=Math.abs(direction.x)<1e-12?Infinity:(direction.x>0
+          ?blocked.x2-origin.x1+1:blocked.x1-origin.x2-1)/direction.x;
+        const ty=Math.abs(direction.y)<1e-12?Infinity:(direction.y>0
+          ?blocked.y2-origin.y1+1:blocked.y1-origin.y2-1)/direction.y;
+        const distance=Math.min(tx,ty),move={x:direction.x*distance,y:direction.y*distance};
         item.x1=origin.x1+move.x;item.x2=origin.x2+move.x;
         item.y1=origin.y1+move.y;item.y2=origin.y2+move.y;
       }
