@@ -1,12 +1,12 @@
 # Persistent database change and activity history · format 2
 
-Managed EvoMneme v3 databases retain row changes and SQL-call activities automatically in the same SQLite file. The viewer and Python/CLI/MCP executor install/maintain a published versioned extension when a compatible store is recognized. No recording flag, trace directory or session setup is required. Generic or not-yet-initialized SQLite databases keep the native SQL contract without automatic history installation. The base graph schema remains v3.
+Managed EvoMneme v3 databases retain row changes and SQL-call activities automatically in the same SQLite file. The viewer and Python/CLI executor install/maintain a published versioned extension when a compatible store is recognized. No recording flag, trace directory or session setup is required. Generic or not-yet-initialized SQLite databases keep the native SQL contract without automatic history installation. The base graph schema remains v3.
 
 ```powershell
 python scripts/evomneme_viewer.py --database "C:/path/to/host/.evomneme/knowledge.sqlite3"
 ```
 
-Restart the viewer and existing MCP processes and reload the browser after updating the tool. Setup opens a short read/write connection; graph, SQL and history inspection remains read-only. The extension upgrades format 1 transactionally while preserving existing history and the base `user_version`. Old records do not acquire an author retroactively. No external package or MCP configuration change is needed.
+Restart the viewer and existing executor processes and reload the browser after updating the tool. Setup opens a short read/write connection; graph, SQL and history inspection remains read-only. The extension upgrades format 1 transactionally while preserving existing history and the base `user_version`. Old records do not acquire an author retroactively. No external package is needed.
 
 `--no-history` (or `history=False` for an executor/viewer) disables that process's automatic history setup/maintenance and database SQL-call recording. The viewer retains access to saved history. This does not erase existing records or remove persistent row triggers installed earlier. The old `--record-changes` flag remains compatible but is unnecessary. Explicit legacy JSONL tracing/export is independent and remains available for existing workflows, including when database history is disabled; its compatibility flags are the `--trace-directory` / `--session-id` pair.
 
@@ -21,7 +21,7 @@ SQLite AFTER triggers run inside the writer's transaction. Rollback/savepoint ro
 
 Instrumented executor connections attach their own activity ID and known identity metadata to their row changes. Connection-local attribution avoids assigning concurrent external writes to the last caller. Ordinary external SQLite clients still work without Python UDFs, including writes while the viewer is closed; their reads and identity cannot be inferred. No attribution is guessed from timestamps or neighboring IDs. Linking a change to a call does not make attempted/rolled-back effects durable. A process crash or call-log write failure can leave a committed attributed change without a completed call record; no missing call outcome is invented.
 
-Callers should supply known `activity_context` chat/session/agent IDs and titles. MCP initialization also contributes client name/version. A fallback session stays stable for an executor process, while unknown chats/agents remain unknown. Actual names, Codex chat ancestry and earlier missing metadata cannot be reconstructed automatically. Restarting a process creates a new fallback session unless the caller supplies a stable session ID.
+Callers should supply known `activity_context` chat/session/agent IDs and titles. A fallback session stays stable for an executor process, while unknown chats/agents remain unknown. Actual names, Codex chat ancestry and earlier missing metadata cannot be reconstructed automatically. Restarting a process creates a new fallback session unless the caller supplies a stable session ID.
 
 Values preserve SQLite storage type; blobs are hexadecimal, nulls explicit. Text/blob fields have bounded previews (roughly 32 KiB of preview content per row, at most 16 KiB per field, with additional JSON/type metadata); lengths and truncation are marked. This is an investigation record, not a complete backup of long values. All source tables may contain private content, and the journal retains deleted content. Export and protect the database accordingly. History has no automatic disk pruning; it increases database size and write work. Back up and prune deliberately if needed. Deleting log rows also cleans their element links even when foreign-key enforcement is off.
 

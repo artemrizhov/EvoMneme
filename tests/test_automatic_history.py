@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'scripts'))
 from evomneme import Executor
 from evomneme_journal import CALLS, LOG, META, install, read, read_calls
-from evomneme_mcp import Server
 from evomneme_trace import configure_trace
 from evomneme_viewer import Explorer
 
@@ -280,32 +279,26 @@ class AutomaticHistoryTests(unittest.TestCase):
         self.assertEqual(len(changes), 1)
         self.assertIsNotNone(changes[0]['activity_id'])
 
-    def test_cli_mcp_defaults_and_client_metadata(self):
+    def test_cli_python_defaults_and_client_metadata(self):
         cli = subprocess.run([sys.executable, str(ROOT/'scripts/evomneme.py'), '--database', str(self.path), '--sql', 'SELECT 1'], capture_output=True)
         self.assertEqual(cli.returncode, 0, cli.stderr)
-        server = Server(self.executor())
-        server.handle({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'Synthetic client','version':'1'}}})
-        server.handle({'jsonrpc':'2.0','method':'notifications/initialized'})
-        result = server.handle({'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'execute_sql','arguments':{'sql':'SELECT 2'}}})
-        self.assertFalse(result['result']['isError'])
+        executor = self.executor()
+        result = executor.execute_sql(sql='SELECT 2')
+        self.assertTrue(result['ok'], result)
         events = self.viewer().events({})['events']
-        self.assertEqual({event['client']['name'] for event in events}, {'EvoMneme CLI','Synthetic client'})
-        messages = [{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'Wire fixture'}}},
-                    {'jsonrpc':'2.0','method':'notifications/initialized'},
-                    {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'execute_sql','arguments':{'sql':'SELECT 3'}}}]
-        wire = subprocess.run([sys.executable, str(ROOT/'scripts/evomneme_mcp.py'), '--database', str(self.path)],
-            input=b''.join(json.dumps(message).encode()+b'\n' for message in messages), capture_output=True)
-        self.assertEqual(wire.returncode, 0, wire.stderr)
-        self.assertEqual(self.viewer().events({})['events'][-1]['client']['name'], 'Wire fixture')
+        self.assertEqual({event['client']['name'] for event in events}, {'EvoMneme CLI','EvoMneme Python'})
+        executor.client = {'name':'Synthetic client', 'version':'1'}
+        self.assertTrue(executor.execute_sql(sql='SELECT 3')['ok'])
+        self.assertEqual(self.viewer().events({})['events'][-1]['client'], executor.client)
 
-    def test_cli_mcp_no_history_flags_preserve_pristine_database(self):
+    def test_cli_python_no_history_options_preserve_pristine_database(self):
         before = self.path.read_bytes()
         cli = subprocess.run([sys.executable, str(ROOT/'scripts/evomneme.py'), '--database', str(self.path),
             '--no-history', '--sql', 'SELECT 1'], capture_output=True)
         self.assertEqual(cli.returncode, 0, cli.stderr)
-        wire = subprocess.run([sys.executable, str(ROOT/'scripts/evomneme_mcp.py'), '--database', str(self.path),
-            '--no-history'], input=b'', capture_output=True)
-        self.assertEqual(wire.returncode, 0, wire.stderr)
+        executor = self.executor(history=False)
+        self.assertTrue(executor.execute_sql(sql='SELECT 2')['ok'])
+        executor.close()
         self.assertEqual(self.path.read_bytes(), before)
 
     def test_incompatible_reserved_history_is_preserved_and_failure_is_honest(self):

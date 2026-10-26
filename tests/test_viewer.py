@@ -522,24 +522,24 @@ class ViewerTests(unittest.TestCase):
         self.assertTrue(explorer.query({'sql':'SELECT * FROM many'})['has_more'])
         self.assertTrue(explorer.query({'sql':'SELECT * FROM large'})['rows'][0]['value']['truncated'])
 
-    def test_cli_and_mcp_context_trace_contract(self):
+    def test_cli_and_python_context_trace_contract(self):
         args = {'sql':'SELECT scope_id,id FROM nodes LIMIT 1','activity_context':{
             'chat_id':'parent','session_id':'s','agent_id':'a',
             'chat_title':'Memory explorer work','session_title':'Investigating graph activity','agent_name':'Main agent'}}
         trace = self.directory / 'activity'
         cli = subprocess.run([sys.executable,str(ROOT/'scripts/evomneme.py'),'--database',str(self.path),'--trace-directory',str(trace),'--session-id','fallback','--input','-'],input=json.dumps(args).encode(),capture_output=True)
         self.assertEqual(cli.returncode,0,cli.stderr)
-        messages = [{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'Codex-test','version':'fixture'}}},{'jsonrpc':'2.0','method':'notifications/initialized'}, {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'execute_sql','arguments':args}}]
-        wire = subprocess.run([sys.executable,str(ROOT/'scripts/evomneme_mcp.py'),'--database',str(self.path),'--trace-directory',str(trace),'--session-id','fallback'],input=b''.join(json.dumps(m).encode()+b'\n' for m in messages),capture_output=True)
-        self.assertEqual(wire.returncode,0,wire.stderr)
-        response = json.loads(wire.stdout.splitlines()[-1])['result']['structuredContent']
+        executor = Executor(self.path)
+        self.addCleanup(executor.close)
+        configure_trace(executor, trace, 'fallback')
+        response = executor.execute_sql(**args)
         self.assertEqual(response,json.loads(cli.stdout))
         events = Explorer(self.path,trace_directory=trace).events({})['events']
         self.assertEqual({e['chat'] for e in events},{'parent'})
         self.assertEqual({e['chat_title'] for e in events},{'Memory explorer work'})
         self.assertEqual({e['session_title'] for e in events},{'Investigating graph activity'})
         self.assertEqual({e['agent_name'] for e in events},{'Main agent'})
-        self.assertEqual({e['client']['name'] for e in events},{'EvoMneme CLI','Codex-test'})
+        self.assertEqual({e['client']['name'] for e in events},{'EvoMneme CLI','EvoMneme Python'})
         self.assertTrue(all(e['identity']['chat'] and e['identity']['agent'] for e in events))
 
     def test_http_token_origin_assets_and_post_queries(self):

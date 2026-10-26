@@ -1,4 +1,4 @@
-"""Isolated contract tests for native SQL over Python, CLI and stdio MCP."""
+"""Isolated contract tests for native SQL over Python and CLI."""
 
 import base64
 import concurrent.futures
@@ -17,7 +17,6 @@ from unittest.mock import patch
 REPOSITORY = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPOSITORY / 'scripts'))
 SCRIPT = REPOSITORY / 'scripts' / 'evomneme.py'
-MCP_SCRIPT = REPOSITORY / 'scripts' / 'evomneme_mcp.py'
 SPEC = importlib.util.spec_from_file_location('evomneme_sql_test', SCRIPT)
 runtime = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(runtime)
@@ -38,7 +37,7 @@ class ExecutorTests(unittest.TestCase):
         self.addCleanup(self.executor.close)
 
     def execute(self, sql, **kwargs):
-        """Use the same named entry point exposed by both transports."""
+        """Use the native Python entry point."""
         return self.executor.execute_sql(sql=sql, **kwargs)
 
     def rows(self, sql):
@@ -51,28 +50,6 @@ class ExecutorTests(unittest.TestCase):
         """Run the real UTF-8 CLI without shell interpolation."""
         return subprocess.run([sys.executable, str(SCRIPT), '--database', str(database or self.database), *args],
                               input=input_bytes, capture_output=True)
-
-    def handshake(self, version='2025-11-25'):
-        """Initialize the wire session before tool use."""
-        return [{'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
-            'protocolVersion': version, 'capabilities': {}, 'clientInfo': {'name': 'isolated-test', 'version': '1'}}},
-            {'jsonrpc': '2.0', 'method': 'notifications/initialized'}]
-
-    def wire(self, messages, database=None, create=False):
-        """Exercise a real synchronous MCP process through clean EOF."""
-        data = b''.join((item if isinstance(item, bytes) else runtime.json_bytes(item)) + b'\n' for item in messages)
-        command = [sys.executable, str(MCP_SCRIPT), '--database', str(database or self.database)]
-        if create:
-            command.append('--create')
-        process = subprocess.run(command, input=data, capture_output=True, timeout=10)
-        self.assertEqual(process.returncode, 0, process.stderr.decode('utf-8', 'replace'))
-        self.assertEqual(process.stderr, b'')
-        return [json.loads(line) for line in process.stdout.decode('utf-8').splitlines()]
-
-    def call(self, arguments, number=2):
-        """Construct a protocol request independently of executor implementation."""
-        return {'jsonrpc': '2.0', 'id': number, 'method': 'tools/call',
-                'params': {'name': 'execute_sql', 'arguments': arguments}}
 
     def test_explicit_binding_creation_and_database_separation(self):
         """No schema, missing-file creation, relative path or implicit project sharing."""
@@ -89,8 +66,8 @@ class ExecutorTests(unittest.TestCase):
         self.assertEqual(second.execute_sql(sql="SELECT name FROM sqlite_master WHERE type='table'")['results'][0]['rows'], [])
         self.assertFalse((REPOSITORY / '.evomneme').exists())
 
-    def test_single_and_batch_results_are_identical_on_python_cli_and_wire(self):
-        """One named API, defaults and result format span all three entry points."""
+    def test_single_and_batch_results_are_identical_on_python_and_cli(self):
+        """One named API, defaults and result format span both entry points."""
         for sql, params in (('SELECT ? AS value', ["O'Reilly 世界"]),
                             ([{'sql': 'SELECT ? AS value', 'params': ["O'Reilly 世界"]},
                               {'sql': 'SELECT :number AS number', 'params': {'number': 7}}], None)):
@@ -100,38 +77,29 @@ class ExecutorTests(unittest.TestCase):
             direct = self.executor.execute_sql(**arguments)
             cli = self.cli('--input', '-', input_bytes=runtime.json_bytes(arguments))
             self.assertEqual(cli.returncode, 0, cli.stderr)
-            wire = self.wire(self.handshake() + [self.call(arguments)])
             self.assertEqual(json.loads(cli.stdout), direct)
-            self.assertEqual(wire[1]['result']['structuredContent'], direct)
-            self.assertEqual(json.loads(wire[1]['result']['content'][0]['text']), direct)
 
-    def test_mutating_batch_with_per_statement_parameters_matches_all_transports(self):
+    def test_mutating_batch_with_per_statement_parameters_matches_python_and_cli(self):
         """Explicit arrays preserve bindings and effects on independent empty stores."""
         arguments = {'sql': [{'sql': 'CREATE TABLE value(text)'}, {'sql': 'INSERT INTO value VALUES(?)', 'params': ['quoted; 世界']},
                              {'sql': 'SELECT text FROM value'}]}
         direct = self.executor.execute_sql(**arguments)
-        cli_path, mcp_path = self.area / 'cli.sqlite3', self.area / 'mcp.sqlite3'
+        cli_path = self.area / 'cli.sqlite3'
         cli = self.cli('--create', '--input', '-', database=cli_path, input_bytes=runtime.json_bytes(arguments))
-        wire = self.wire(self.handshake() + [self.call(arguments)], database=mcp_path, create=True)
         self.assertEqual(json.loads(cli.stdout), direct)
-        self.assertEqual(wire[1]['result']['structuredContent'], direct)
         self.assertTrue(direct['autocommit_effects_possible'])
         self.assertEqual(direct['completed_statements'], 3)
 
-    def test_shared_schema_defaults_bounds_and_validation(self):
-        """MCP discovery derives limits from the same source as Python and CLI."""
-        wire = self.wire(self.handshake() + [{'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list'}])
-        schema = wire[1]['result']['tools'][0]['inputSchema']
-        self.assertEqual(schema, runtime.INPUT_SCHEMA)
+    def test_shared_defaults_bounds_and_validation(self):
+        """Python and CLI enforce the shared execution limits."""
         for key, (default, lower, upper) in runtime.LIMITS.items():
-            self.assertEqual(schema['properties'][key], {'type': 'integer', 'default': default, 'minimum': lower, 'maximum': upper})
-            args = {'sql': 'SELECT 1', key: upper + 1}
-            direct = self.executor.execute_sql(**args)
-            cli = self.cli('--input', '-', input_bytes=runtime.json_bytes(args))
-            wire = self.wire(self.handshake() + [self.call(args)])
-            self.assertFalse(direct['ok'])
-            self.assertEqual(json.loads(cli.stdout), direct)
-            self.assertEqual(wire[1]['result']['structuredContent'], direct)
+            for value in (default, lower, upper, lower - 1, upper + 1):
+                with self.subTest(limit=key, value=value):
+                    args = {'sql': 'SELECT 1', key: value}
+                    direct = self.executor.execute_sql(**args)
+                    cli = self.cli('--input', '-', input_bytes=runtime.json_bytes(args))
+                    self.assertEqual(direct['ok'], lower <= value <= upper)
+                    self.assertEqual(json.loads(cli.stdout), direct)
         self.assertFalse(self.execute([{'sql': 'SELECT 1'}], params=[])['ok'])
         self.assertFalse(self.execute([{'sql': 'SELECT 1', 'unexpected': 2}])['ok'])
 
@@ -378,49 +346,33 @@ class ExecutorTests(unittest.TestCase):
         result = self.cli('--sql-file', str(sql_file))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['results'][0]['rows'], [['Привет; 世界']])
-        invalid = []
         for constant in ('NaN', 'Infinity', '-Infinity'):
-            malformed = ('{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute_sql",'
-                         '"arguments":{"sql":"CREATE TABLE forbidden(value)"}},"unused":' + constant + '}').encode()
-            invalid.append(malformed)
             cli = self.cli('--input', '-', input_bytes=('{"sql":"CREATE TABLE forbidden(value)","unused":' + constant + '}').encode())
             self.assertNotEqual(cli.returncode, 0)
             self.assertIn('Nonstandard JSON', json.loads(cli.stdout)['error']['message'])
-        responses = self.wire(self.handshake() + invalid + [self.call({'sql': 'SELECT 1'}, 9)])
-        self.assertEqual([item['error']['code'] for item in responses[1:4]], [-32700] * 3)
-        self.assertTrue(responses[4]['result']['structuredContent']['ok'])
+        self.assertTrue(json.loads(self.cli('--sql', 'SELECT 1').stdout)['ok'])
         self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='forbidden'"), [])
 
-    def test_wire_protocol_notifications_errors_and_limits_have_no_write_side_effects(self):
-        """Malformed/notification requests are never executed and valid framing recovers."""
-        write = self.call({'sql': 'CREATE TABLE forbidden(value)'})
-        notification = {key: value for key, value in write.items() if key != 'id'}
-        responses = self.wire([b'not JSON', write, *self.handshake('2025-06-18'), notification,
-                               b'x' * (runtime.MAX_INPUT_BYTES + 1),
-                               self.call({'sql': 'SELECT * FROM missing'}, 9),
-                               {'jsonrpc': '2.0', 'id': 10, 'method': 'ping'}])
-        self.assertEqual(responses[0]['error']['code'], -32700)
-        self.assertEqual(responses[1]['error']['code'], -32000)
-        self.assertEqual(responses[2]['result']['protocolVersion'], '2025-06-18')
-        self.assertEqual(responses[3]['error']['code'], -32600)
-        self.assertTrue(responses[4]['result']['isError'])
-        self.assertEqual(responses[5]['result'], {})
+    def test_cli_malformed_and_oversized_inputs_have_no_write_side_effects(self):
+        """Invalid JSON and oversized requests fail before SQL executes."""
+        for raw in (b'not JSON', b'{"sql":"CREATE TABLE forbidden(value)","params":[',
+                    runtime.json_bytes({'sql': 'CREATE TABLE forbidden(value)',
+                                        'params': ['x' * runtime.MAX_INPUT_BYTES]})):
+            cli = self.cli('--input', '-', input_bytes=raw)
+            self.assertNotEqual(cli.returncode, 0)
+            self.assertFalse(json.loads(cli.stdout)['ok'])
+        missing = self.cli('--sql', 'SELECT * FROM missing')
+        self.assertFalse(json.loads(missing.stdout)['ok'])
+        self.assertTrue(json.loads(self.cli('--sql', 'SELECT 1').stdout)['ok'])
         self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='forbidden'"), [])
 
-    def test_deep_json_rejection_recovers_wire_cli_and_python_without_writes(self):
-        """A small but excessively nested input fails before SQL and keeps MCP alive."""
+    def test_deep_json_rejection_recovers_cli_and_python_without_writes(self):
+        """A small but excessively nested input fails before SQL."""
         self.assertTrue(self.execute('CREATE TABLE protected(value)')['ok'])
         nested_json = ('[' * 10000) + '0' + (']' * 10000)
-        raw = ('{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute_sql",'
-               '"arguments":{"sql":"INSERT INTO protected VALUES(1)","params":' + nested_json + '}}}').encode()
+        raw = ('{"sql":"INSERT INTO protected VALUES(1)","params":' + nested_json + '}').encode()
         self.assertLess(len(raw), runtime.MAX_INPUT_BYTES)
-        responses = self.wire(self.handshake() + [raw, {'jsonrpc': '2.0', 'id': 3, 'method': 'ping'},
-                              self.call({'sql': 'SELECT count(*) FROM protected'}, 4)])
-        self.assertEqual(responses[1]['error']['code'], -32700)
-        self.assertEqual(responses[2]['result'], {})
-        self.assertEqual(responses[3]['result']['structuredContent']['results'][0]['rows'], [[0]])
-        cli = self.cli('--input', '-', input_bytes=(
-            '{"sql":"INSERT INTO protected VALUES(1)","params":' + nested_json + '}').encode())
+        cli = self.cli('--input', '-', input_bytes=raw)
         self.assertNotEqual(cli.returncode, 0)
         self.assertIn('nesting', json.loads(cli.stdout)['error']['message'])
         nested = 0
@@ -435,21 +387,14 @@ class ExecutorTests(unittest.TestCase):
     def test_unencodable_unicode_and_invalid_utf8_fail_before_dispatch_and_recover(self):
         """Lone surrogates fail while valid supplementary characters still round-trip."""
         self.assertTrue(self.execute('CREATE TABLE protected(value)')['ok'])
-        lone_id = b'{"jsonrpc":"2.0","id":"\\ud800","method":"ping"}'
-        lone_write = (b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute_sql",'
-                      b'"arguments":{"sql":"INSERT INTO protected VALUES(1)"}},"unused":"\\udfff"}')
-        invalid_utf8 = b'{"jsonrpc":"2.0","id":"\xff","method":"ping"}'
-        pair_id = b'{"jsonrpc":"2.0","id":"\\ud83d\\ude00","method":"ping"}'
-        pair_parameter = (b'{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"execute_sql",'
-                          b'"arguments":{"sql":"SELECT ?","params":["\\ud83d\\ude00"]}}}')
-        notification = b'{"jsonrpc":"2.0","method":"ping","params":{"unused":"valid"}}'
-        responses = self.wire(self.handshake() + [lone_id, lone_write, invalid_utf8, notification, pair_id, pair_parameter,
-                              self.call({'sql': 'SELECT count(*) FROM protected'}, 5)])
-        self.assertEqual([item['error']['code'] for item in responses[1:4]], [-32700] * 3)
-        self.assertTrue(all(item['id'] is None for item in responses[1:4]))
-        self.assertEqual(responses[4], {'jsonrpc': '2.0', 'id': '\U0001f600', 'result': {}})
-        self.assertEqual(responses[5]['result']['structuredContent']['results'][0]['rows'], [['\U0001f600']])
-        self.assertEqual(responses[6]['result']['structuredContent']['results'][0]['rows'], [[0]])
+        invalid_utf8 = b'{"sql":"INSERT INTO protected VALUES(?)","params":["\xff"]}'
+        invalid = self.cli('--input', '-', input_bytes=invalid_utf8)
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertFalse(json.loads(invalid.stdout)['ok'])
+        pair_parameter = b'{"sql":"SELECT ?","params":["\\ud83d\\ude00"]}'
+        pair = self.cli('--input', '-', input_bytes=pair_parameter)
+        self.assertEqual(pair.returncode, 0, pair.stderr)
+        self.assertEqual(json.loads(pair.stdout)['results'][0]['rows'], [['\U0001f600']])
         cli = self.cli('--input', '-', input_bytes=b'{"sql":"INSERT INTO protected VALUES(1)","unused":"\\ud800"}')
         self.assertNotEqual(cli.returncode, 0)
         self.assertIn('Unicode', json.loads(cli.stdout)['error']['message'])
@@ -458,8 +403,8 @@ class ExecutorTests(unittest.TestCase):
         self.assertEqual(direct['error']['kind'], 'request')
         self.assertEqual(self.rows('SELECT count(*) FROM protected'), [[0]])
 
-    def test_self_keyword_uses_shared_validation_and_wire_recovers_without_writes(self):
-        """A JSON argument cannot collide with the bound method receiver or stop MCP."""
+    def test_self_keyword_uses_shared_validation_without_writes(self):
+        """A JSON argument cannot collide with the bound method receiver."""
         self.assertTrue(self.execute('CREATE TABLE protected(value)')['ok'])
         arguments = {'sql': 'INSERT INTO protected VALUES(1)', 'self': None}
         direct = self.executor.execute_sql(**arguments)
@@ -467,13 +412,7 @@ class ExecutorTests(unittest.TestCase):
         self.assertIn('self', direct['error']['message'])
         cli = self.cli('--input', '-', input_bytes=runtime.json_bytes(arguments))
         self.assertEqual(json.loads(cli.stdout), direct)
-        responses = self.wire(self.handshake() + [self.call(arguments),
-                              {'jsonrpc': '2.0', 'id': 3, 'method': 'ping'},
-                              self.call({'sql': 'SELECT count(*) FROM protected'}, 4)])
-        self.assertTrue(responses[1]['result']['isError'])
-        self.assertEqual(responses[1]['result']['structuredContent'], direct)
-        self.assertEqual(responses[2]['result'], {})
-        self.assertEqual(responses[3]['result']['structuredContent']['results'][0]['rows'], [[0]])
+        self.assertEqual(self.rows('SELECT count(*) FROM protected'), [[0]])
 
 
 if __name__ == '__main__':

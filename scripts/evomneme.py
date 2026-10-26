@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Thin native-SQL execution shared by Python, CLI and stdio MCP."""
+"""Thin native-SQL execution shared by Python and CLI."""
 
 import argparse
 import base64
@@ -26,26 +26,6 @@ LIMITS = {
     'max_output_bytes': (16384, 1024, 1048576),
     'timeout_ms': (5000, 1, 60000),
 }
-PARAMS_SCHEMA = {'anyOf': [{'type': 'array'}, {'type': 'object'}]}
-INPUT_SCHEMA = {
-    'type': 'object', 'required': ['sql'], 'additionalProperties': False,
-    'description': 'Calls are recorded automatically in recognized v3 databases. Include known activity_context IDs and human-readable titles. Reuse the main chat identity across its subagents. Omit unknown fields.',
-    'properties': {
-        'sql': {'anyOf': [
-            {'type': 'string'},
-            {'type': 'array', 'minItems': 1, 'maxItems': MAX_STATEMENTS,
-             'items': {'type': 'object', 'required': ['sql'], 'additionalProperties': False,
-                       'properties': {'sql': {'type': 'string'}, 'params': PARAMS_SCHEMA}}},
-        ]},
-        'params': PARAMS_SCHEMA,
-        'activity_context': {'type': 'object', 'additionalProperties': False,
-                             'description': 'Optional explicit main chat, work session and agent identities for database activity history. Never inferred from MCP. Does not change SQL results.',
-                             'properties': {key: {'type': 'string', 'minLength': 1, 'maxLength': 200}
-                                            for key in ('chat_id', 'session_id', 'agent_id', 'chat_title', 'session_title', 'agent_name')}},
-        **{key: {'type': 'integer', 'default': bounds[0], 'minimum': bounds[1], 'maximum': bounds[2]}
-           for key, bounds in LIMITS.items()},
-    },
-}
 
 
 class RequestError(ValueError):
@@ -65,7 +45,7 @@ def json_loads(value):
     try:
         decoded = json.loads(value, parse_constant=reject_constant)
         # Escaped surrogate pairs decode to valid Unicode; lone surrogates must
-        # fail here before an echoed request id or diagnostic reaches UTF-8 output.
+        # fail here before a diagnostic or result reaches UTF-8 output.
         json_bytes(decoded)
     except RecursionError as exc:
         raise RequestError('JSON nesting exceeds the supported depth') from exc
@@ -131,7 +111,7 @@ def commands(sql, params, limits, unknown):
 
 
 def empty_result():
-    """Keep result shape identical on direct, CLI and MCP execution errors."""
+    """Keep result shape identical on direct and CLI execution errors."""
     return {'ok': True, 'results': [], 'completed_statements': 0,
             'transaction_rolled_back': False, 'autocommit_effects_possible': False}
 
@@ -210,7 +190,7 @@ class Executor:
             raise RequestError('Bound database path was replaced or retargeted; restart with the intended database')
 
     def close(self):
-        """Close the one connection on CLI exit or MCP EOF."""
+        """Close the executor connection, including on CLI exit."""
         if not self.closed:
             self.connection.close()
             self.closed = True

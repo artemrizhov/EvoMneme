@@ -32,7 +32,7 @@ This is semantic selection **by the agent from bounded architectural context**, 
 
 ### Executable recipes
 
-Read a recipe once and send its complete text as the `sql` string to the configured `execute_sql`, with the documented bound parameters. For CLI, `--sql-file` accepts that same one-statement file with `--params` JSON; prefer a request file if shell quoting is cumbersome. MCP cannot open a query path on the caller's behalf. These are editable agent-authored SQL recipes, not new executor commands. The existing [SQL contract](mcp.md#shared-sql-contract) governs all results and budgets.
+Read a recipe once and send its complete text as the `sql` string to the selected Python `Executor.execute_sql`, with the documented bound parameters. For CLI, `--sql-file` accepts that same one-statement file with `--params` JSON; prefer a request file if shell quoting is cumbersome. These are editable agent-authored SQL recipes, not new executor commands. The existing [SQL contract](sql.md#shared-sql-contract) governs all results and budgets.
 
 | Recipe | Bound parameters | Use |
 | --- | --- | --- |

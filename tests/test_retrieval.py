@@ -112,7 +112,7 @@ def comparison(executor):
             'equal_sufficiency_time_measured': False,
             'interpretation': 'Exact lexical and anchors share seeds here; predicate precision removes substring noise. '
                               'Edges add stored dependencies at extra cost; missing edges remain missing.',
-            'byte_metric': 'UTF-8 compact shared result objects including all new calls; excludes requests and MCP duplication',
+            'byte_metric': 'UTF-8 compact shared result objects including all new calls; excludes requests',
             'scenarios': reports}
 
 

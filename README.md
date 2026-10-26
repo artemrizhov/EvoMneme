@@ -22,7 +22,7 @@ flowchart TB
     Agent <-->|"Record and reconcile via SQL<br/>Retrieve compact context"| Memory[(Local SQLite knowledge)]
 ```
 
-The agent drives this loop during active development sessions. SQLite stores knowledge; optional MCP carries SQL calls and results. Neither independently interprets code or maintains the graph.
+The agent drives this loop during active development sessions. SQLite stores knowledge; bound graph commands and the SQL executor carry operations and results. The agent interprets code and maintains the graph.
 
 During ordinary development, agents maintain a compact graph from code they actually read and understand. Code nodes are files, modules, classes, methods, functions, fields, constants and globals; internal function implementation is omitted unless an entity escapes to another consumer. Tests stop at test cases, and external code at directly used boundaries. Only meaningful, evidenced direct relationships are stored, with immediate containment instead of redundant symbol-to-file links. Uncertainty and inspection work stay in node/file attributes, not service nodes. An explicit full-build/rebuild request starts sequential, resumable source reading under these same rules; grep or static-analysis output must not populate the graph. [Selection and maintenance](references/code-graph.md) define the boundaries and completion checks. Record counts are not a quality or completeness target.
 
@@ -32,7 +32,6 @@ For an explicitly requested full build, follow [initial population](references/i
 
 - [SKILL.md](SKILL.md): one live portable instruction set for authorized host projects, connected through their agent's native instruction mechanism.
 - [scripts/evomneme.py](scripts/evomneme.py): an optional Python standard-library SQL executor with the shared `Executor.execute_sql` API, per-command parameters, explicit native transactions, and bounded column/row results.
-- [scripts/evomneme_mcp.py](scripts/evomneme_mcp.py): an optional stdio MCP adapter exposing the same `execute_sql` operation, bound to one explicit database at startup. Agents can call it without constructing outer shell commands.
 - [schema.sql](schema.sql): the controlled version-3 starting schema for new host stores, applied deliberately. Existing databases use compatible published migrations. Its multi-statement form requires a native script facility, rather than `--sql-file`.
 - [queries/neighborhood.sql](queries/neighborhood.sql): cross-type graph retrieval with depth, direction, and separate traversal/result filters.
 - [Graph navigation](references/navigation.md): `nodes`/`links`, a real project root, meaningful names, exact relationship counts and explicit complete-output handling, with one-time launcher/connection setup.
@@ -44,11 +43,11 @@ For an explicitly requested full build, follow [initial population](references/i
 
 Authorize your agent, for example:
 
-> Connect EvoMneme from this trusted checkout to my project at `<host-project>`. Keep its database local and excluded from Git. Load the live instructions in every project session and verify fresh-session loading and instruction update/reload. Use the released schema and compatible viewer. Maintain meaningful code entities, direct relationships and useful project knowledge from source reading during ordinary development; perform a complete sequential source review only when I explicitly request a full build or rebuild. Use the SQL CLI or optional project-local MCP transport already supported by my environment.
+> Connect EvoMneme from this trusted checkout to my project at `<host-project>`. Keep its database local and excluded from Git. Load the live instructions in every project session and verify fresh-session loading and instruction update/reload. Use the released schema and compatible viewer. Maintain meaningful code entities, direct relationships and useful project knowledge from source reading during ordinary development; perform a complete sequential source review only when I explicitly request a full build or rebuild. Use the bound graph CLI for ordinary navigation and maintenance, and the Python API or SQL CLI for advanced queries.
 
-Finding this README or a skill in a catalog does not grant integration permission. Once authorized, follow [connection and verification](references/integration.md), [SQL/storage practice](references/storage.md), and [optional MCP setup](references/mcp.md). A skill catalog entry, running MCP process, or written instruction pointer alone does not prove that every session loads the instructions. Unsupported activation or self-update verification remains an explicit incomplete setup.
+Finding this README or a skill in a catalog does not grant integration permission. Once authorized, follow [connection and verification](references/integration.md) and [SQL/storage practice](references/storage.md). A skill catalog entry or written instruction pointer alone does not prove that every session loads the instructions. Unsupported activation or self-update verification remains an explicit incomplete setup.
 
-These usage references are the public interface: they explain Python import/create/close, CLI/MCP startup, schema setup, and the [shared request/result/error contract and limits](references/mcp.md#shared-sql-contract). Agents need not inspect the scripts to use them.
+These usage references are the public interface: they explain Python import/create/close, SQL CLI startup, schema setup, and the [shared request/result/error contract and limits](references/sql.md#shared-sql-contract). Agents need not inspect the scripts to use them.
 
 After one-time [launcher and connection setup](references/navigation.md#bootstrap-and-integration), normal graph exploration is:
 
@@ -67,13 +66,13 @@ python <tool>/scripts/evomneme.py --database <absolute-host-db> --input <host-lo
 {"sql":"SELECT id,title,summary FROM nodes WHERE scope_id=:scope AND validity='current' LIMIT 8","params":{"scope":"verified-scope-id"},"max_rows":8}
 ```
 
-This query uses schema v3. The executor remains generic SQL transport; schema governance is part of the agent's instructions. Each SQL string is one native SQLite statement; use a `sql` array of `{sql,params}` commands for batches, with explicit `BEGIN`/`COMMIT` when atomicity is needed. Ordinary SELECTs return a bounded prefix and `has_more`, without scanning omitted rows just to count them. Creation is explicit with `--create`, which creates an empty file only. Inspect existing schemas before changes and use the [published migration procedure](references/schema.md#initialization-and-compatibility). Prefer configured host-bound MCP, then a direct Python call without shell wrapping, then CLI JSON input. Native SQLite remains appropriate when deliberately selected or Python is unavailable. This ranking does not authorize switching after a configured integration fails.
+This query uses schema v3. The executor remains generic SQL transport; schema governance is part of the agent's instructions. Each SQL string is one native SQLite statement; use a `sql` array of `{sql,params}` commands for batches, with explicit `BEGIN`/`COMMIT` when atomicity is needed. Ordinary SELECTs return a bounded prefix and `has_more`, without scanning omitted rows just to count them. Creation is explicit with `--create`, which creates an empty file only. Inspect existing schemas before changes and use the [published migration procedure](references/schema.md#initialization-and-compatibility). For advanced SQL, prefer a direct Python call without shell wrapping, then SQL CLI JSON input. Native SQLite remains appropriate when deliberately selected or Python is unavailable. This ranking does not authorize switching after a configured integration fails.
 
 ## Autonomy and limits
 
 The agent consults knowledge when useful, records meaningful discoveries and decisions during exploration/coding/review/debugging, and updates stale claims and dependents as sources change. Subagents can handle substantial maintenance when supported and beneficial. Retrieval failures and repeated discovery should lead to measured schema/query/instruction improvements. Nothing runs continuously after the agent's sessions end.
 
-The primary focus is software development across languages and frameworks; other project types may use the same mechanism. No external analyzer, service, agent framework, additional skill, or installed dependency beyond SQLite and its libraries is required. MCP is optional and does not load the skill by itself.
+The primary focus is software development across languages and frameworks; other project types may use the same mechanism. No external analyzer, service, agent framework, additional skill, or installed dependency beyond SQLite and its libraries is required. The optional Python executor does not load the skill by itself.
 
 This is an evolving project, not a guarantee of complete code understanding, correct dependency detection, automatic source invalidation, or proven efficiency gains. SQL execution success proves neither a fact's truth nor a host's identity: the agent is responsible for schema integrity, version filters, source validation, and maintenance. Native SQLite transactions and bounded output support that work; a command batch is atomic only when it explicitly begins and commits a transaction. Actual every-session activation and self-update must be verified in each host environment. See [EVOLUTION.md](EVOLUTION.md) for observed results and design changes.
 

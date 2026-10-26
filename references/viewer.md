@@ -68,13 +68,13 @@ Nodes require unique **text** `graph_id` and `label`. Edges require unique **tex
 
 Row changes and SQL-call activities persist automatically in the same managed database. Each changed row has its own change ID, bounded typed before/after values and supported graph references. SQL calls retain known caller metadata and returned IDs without SQL text, parameters or result contents. The latest saved events load on opening the page; older history retrieves earlier calls and changes. See [persistent change history](change-history.md) for the versioned tables, compatibility, suspension, storage and recording limits. Changes predating recording cannot be reconstructed.
 
-Start SQL/MCP normally; history requires no extra flags:
+Use the SQL CLI normally; history requires no extra flags:
 
 ```powershell
-python scripts/evomneme_mcp.py --database "C:/path/to/host/.evomneme/knowledge.sqlite3"
+python scripts/evomneme.py --database "C:/path/to/host/.evomneme/knowledge.sqlite3" --sql "SELECT 1"
 ```
 
-Python, CLI and MCP use the same default managed-store recording. Restart existing MCP/CLI processes after updating the tool. The optional legacy `--trace-directory` path is only for a secondary JSONL export or reading existing log files; it is not needed to populate the activity panel. A process/session fallback keeps unidentified calls together without inventing a chat name. Per-call metadata supplies the actual identity when available.
+Python and CLI use the same default managed-store recording. Restart existing executor processes after updating the tool. The optional legacy `--trace-directory` path is only for a secondary JSONL export or reading existing log files; it is not needed to populate the activity panel. A process/session fallback keeps unidentified calls together without inventing a chat name. Per-call metadata supplies the actual identity when available.
 
 Each `execute_sql` call may identify the main chat, work session and agent:
 
@@ -93,7 +93,7 @@ Each `execute_sql` call may identify the main chat, work session and agent:
 }
 ```
 
-All fields are optional nonempty strings of at most 200 characters. IDs provide stable grouping; `chat_title`, `session_title`, `agent_name` provide readable labels, with IDs still visible to distinguish identical names. Main agents and subagents supply the same `chat_id` and `chat_title` to group work by parent chat. The MCP tool description asks callers to include known identities and titles; callers must omit unknown values, never invent a UI title or identity. MCP initialization supplies a client name/version, which is recorded when present. It does not supply chat ancestry or titles. Without per-call values the viewer identifies only a fallback process/session, not a known chat or agent. **SQLite/MCP cannot discover Codex chat ancestry automatically.** Developing this viewer does not change any real host's MCP configuration. Restart existing MCP processes to load the updated tool schema and reconnect their clients; reload the viewer to load updated UI code. Historical events cannot acquire missing caller metadata retroactively.
+All fields are optional nonempty strings of at most 200 characters. IDs provide stable grouping; `chat_title`, `session_title`, `agent_name` provide readable labels, with IDs still visible to distinguish identical names. Main agents and subagents supply the same `chat_id` and `chat_title` to group work by parent chat. Callers must include only known identities and titles, never invent a UI title or identity. Without per-call values the viewer identifies only a fallback process/session, not a known chat or agent. **SQLite and the executor cannot discover Codex chat ancestry automatically.** Restart existing executor processes after updating the tool; reload the viewer to load updated UI code. Historical events cannot acquire missing caller metadata retroactively.
 
 Tracing preserves SQL result objects. Events record time, identities, table access, duration, result bounds and transaction outcome. They omit SQL, parameters and row contents except node/edge identifiers:
 
