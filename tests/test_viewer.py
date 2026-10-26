@@ -63,6 +63,11 @@ def code_fixture(path):
 
 
 class ViewerTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Optional viewer regression needs an existing Node.js')
+    def test_graph_progress_lifecycle_components_and_retry(self):
+        result = subprocess.run([shutil.which('node'),str(ROOT/'tests/test_viewer_progress.js')],capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr.decode('utf-8','replace'))
+
     @unittest.skipUnless(shutil.which('node'), 'Optional layout regression needs an existing Node.js')
     def test_graph_layout_growth_spacing_and_orientation(self):
         result = subprocess.run([shutil.which('node'),str(ROOT/'tests/test_viewer_layout.js')],capture_output=True,timeout=30)
@@ -273,6 +278,45 @@ class ViewerTests(unittest.TestCase):
         with self.explorer.connect() as db:
             with self.assertRaisesRegex(ValueError,'byte budget'):
                 self.explorer.rows(db,"SELECT printf('%1000s','x') AS value",max_bytes=100)
+
+    def test_full_graph_budgets_overview_not_omitted_details(self):
+        with contextlib.closing(sqlite3.connect(self.path)) as writer:
+            writer.execute('UPDATE nodes SET summary=?', ['x'*100000])
+            writer.execute('UPDATE edges SET summary=?', ['y'*100000])
+            writer.commit()
+        with patch('evomneme_viewer.MAX_GRAPH_RESPONSE',20*1024):
+            graph=self.explorer.snapshot({'whole_graph':True})
+        self.assertEqual(len(graph['nodes']),8)
+        self.assertEqual(len(graph['edges']),4)
+        self.assertTrue(all('summary' not in row for row in graph['nodes']+graph['edges']))
+        fingerprint=graph['nodes'][0]['fingerprint']
+        with contextlib.closing(sqlite3.connect(self.path)) as writer:
+            writer.execute('UPDATE nodes SET summary=?',['z'*100000])
+            writer.commit()
+        updated=self.explorer.snapshot({'whole_graph':True})
+        self.assertNotEqual(updated['nodes'][0]['fingerprint'],fingerprint)
+        detail=self.explorer.detail({'type':'nodes','id':graph['nodes'][0]['graph_id']})
+        self.assertTrue(detail['rows'][0]['summary']['truncated'])
+
+    def test_timeout_has_actionable_http_error_and_server_remains_usable(self):
+        server, token=make_server(self.explorer)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        conn=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=5)
+        self.addCleanup(conn.close)
+        sql='WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000) SELECT sum(x) FROM n'
+        with patch('evomneme_viewer.QUERY_SECONDS',0):
+            conn.request('POST','/api/query',body=json.dumps({'sql':sql}),headers={'X-Viewer-Token':token})
+            response=conn.getresponse()
+            self.assertEqual(response.status,400)
+            message=json.loads(response.read())['error']
+        self.assertIn('time limit',message)
+        self.assertNotIn('interrupted',message)
+        conn.request('POST','/api/snapshot',body='{}',headers={'X-Viewer-Token':token})
+        response=conn.getresponse()
+        self.assertEqual(response.status,200)
+        self.assertEqual(json.loads(response.read())['totals']['nodes'],8)
 
     def test_whole_database_grouping_uses_all_members_not_browser_page(self):
         overview = self.explorer.snapshot({'aggregate':'kind','limit':2})

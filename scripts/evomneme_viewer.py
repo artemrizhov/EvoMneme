@@ -21,9 +21,13 @@ from evomneme_journal import install as install_journal, read as read_changes, s
 ASSETS = Path(__file__).parent / 'viewer'
 MAX_ROWS = 2000
 MAX_RESPONSE = 8 * 1024 * 1024
-MAX_GRAPH_RESPONSE = 64 * 1024 * 1024
+MAX_GRAPH_RESPONSE = 128 * 1024 * 1024
 MAX_GRAPH_NODES = 100000
 MAX_GRAPH_EDGES = 200000
+QUERY_SECONDS = 5
+GRAPH_SECONDS = 30
+OVERVIEW_NODE_FIELDS = {'graph_id', 'label', 'scope_id', 'id', 'kind', 'confidence', 'validity', 'source_path', 'source_table', 'evidence_count', 'layer', 'fingerprint'}
+OVERVIEW_EDGE_FIELDS = {'graph_id', 'source', 'target', 'scope_id', 'id', 'kind', 'confidence', 'validity', 'resolution', 'source_table', 'layer', 'fingerprint'}
 
 
 def read_authorizer(action, first, second, database, trigger):
@@ -108,11 +112,12 @@ class Explorer:
         return info.st_dev, info.st_ino
 
     @contextmanager
-    def connect(self):
+    def connect(self, seconds=None):
         if self.requested.resolve(strict=True) != self.path or self.file_identity() != self.identity:
             raise ValueError('Database replaced or retargeted; restart the viewer')
         db = sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True, timeout=1)
-        deadline = time.monotonic() + 5
+        seconds = QUERY_SECONDS if seconds is None else seconds
+        deadline = time.monotonic() + seconds
         try:
             db.execute('PRAGMA query_only=ON')
             db.execute('PRAGMA temp_store=MEMORY')
@@ -127,6 +132,10 @@ class Explorer:
             db.set_authorizer(read_authorizer)
             validate_schema(db)
             yield db
+        except sqlite3.OperationalError as exc:
+            if getattr(exc, 'sqlite_errorcode', None) == sqlite3.SQLITE_INTERRUPT and time.monotonic() >= deadline:
+                raise ValueError(f'Read exceeded the {seconds:g}-second time limit. Narrow graph layers/filters or use a grouped view.') from exc
+            raise
         finally:
             db.close()
 
@@ -222,7 +231,7 @@ class Explorer:
             return {'unchanged': True, 'revision': revision}
         limit = MAX_GRAPH_NODES if whole else max(1, min(int(values.get('limit', 500)), MAX_ROWS))
         offset = 0 if whole else max(0, min(int(values.get('offset', 0)), 100000000))
-        with self.connect() as db:
+        with self.connect(GRAPH_SECONDS) as db:
             tables = self.schema(db)
             mapping = self.projections(db)
             result = {'tables': tables, 'bytes': db.execute('PRAGMA page_count').fetchone()[0] * db.execute('PRAGMA page_size').fetchone()[0],
@@ -281,7 +290,12 @@ class Explorer:
                     nodes_sql = ('WITH RECURSIVE reach(id,depth) AS (SELECT ?,0 UNION SELECT CASE WHEN e.source=r.id THEN e.target ELSE e.source END,r.depth+1 FROM reach r JOIN (' + edges_sql + ') e ON e.source=r.id OR e.target=r.id WHERE r.depth<?) SELECT n.* FROM (' + nodes_sql + ') n WHERE n.graph_id IN (SELECT id FROM reach)')
                     params = [values['root']] + edge_params + [depth] + params
                 result['matched_nodes'] = db.execute('SELECT count(*) FROM (' + nodes_sql + ')', params).fetchone()[0]
-                result['nodes'], result['node_has_more'] = self.rows(db, nodes_sql + ' ORDER BY graph_id LIMIT ? OFFSET ?', params + [limit + 1, offset], limit, MAX_GRAPH_RESPONSE if whole else MAX_RESPONSE)
+                # Omit large detail columns before Python serialization/budget checks.
+                # The built-in fingerprint already covers them; custom mappings need
+                # their full rows below to compute equivalent fingerprints.
+                node_output = ','.join(quote(c) for c in columns if c in OVERVIEW_NODE_FIELDS) if whole and not self.mapping else '*'
+                node_query = 'SELECT ' + node_output + ' FROM (' + nodes_sql + ') ORDER BY graph_id LIMIT ? OFFSET ?'
+                result['nodes'], result['node_has_more'] = self.rows(db, node_query, params + [limit + 1, offset], limit, MAX_GRAPH_RESPONSE if whole else MAX_RESPONSE)
                 if whole and result['node_has_more']:
                     raise ValueError('Whole graph exceeds 100,000 nodes; use layers, filters, or an aggregate view')
                 ids = [n['graph_id'] for n in result['nodes']]
@@ -289,8 +303,11 @@ class Explorer:
                     raise ValueError('graph_id must be unique text; use composite keys across scopes')
                 if ids:
                     if whole:
-                        prefix = 'WITH selected AS MATERIALIZED (' + nodes_sql + ') '
-                        query = prefix + 'SELECT e.* FROM (' + edges_sql + ') e JOIN selected s ON s.graph_id=e.source JOIN selected t ON t.graph_id=e.target ORDER BY e.graph_id'
+                        # Joins need identities only, not copies of every summary,
+                        # locator and fingerprint for each selected node.
+                        prefix = 'WITH selected AS MATERIALIZED (SELECT graph_id FROM (' + nodes_sql + ')) '
+                        edge_output = ','.join('e.' + quote(c) for c in edge_columns if c in OVERVIEW_EDGE_FIELDS) if not self.mapping else 'e.*'
+                        query = prefix + 'SELECT ' + edge_output + ' FROM (' + edges_sql + ') e JOIN selected s ON s.graph_id=e.source JOIN selected t ON t.graph_id=e.target ORDER BY e.graph_id'
                         result['edges'], result['edge_has_more'] = self.rows(db, query, params + edge_params, MAX_GRAPH_EDGES, MAX_GRAPH_RESPONSE)
                         if result['edge_has_more']:
                             raise ValueError('Whole graph exceeds 200,000 relationships; use layers, filters, or an aggregate view')
@@ -304,13 +321,11 @@ class Explorer:
                 if any(not isinstance(i, str) for i in edge_ids) or len(set(edge_ids)) != len(edge_ids):
                     raise ValueError('Edge graph_id must be unique text')
                 if whole:
-                    keep_nodes = {'graph_id', 'label', 'scope_id', 'id', 'kind', 'confidence', 'validity', 'source_path', 'source_table', 'evidence_count', 'layer', 'fingerprint'}
-                    keep_edges = {'graph_id', 'source', 'target', 'scope_id', 'id', 'kind', 'confidence', 'validity', 'resolution', 'source_table', 'layer', 'fingerprint'}
                     if self.mapping:
                         for row in result['nodes'] + result['edges']:
                             row['fingerprint'] = hashlib.sha256(json_bytes(row)).hexdigest()
-                    result['nodes'] = [{k: v for k, v in row.items() if k in keep_nodes} for row in result['nodes']]
-                    result['edges'] = [{k: v for k, v in row.items() if k in keep_edges} for row in result['edges']]
+                    result['nodes'] = [{k: v for k, v in row.items() if k in OVERVIEW_NODE_FIELDS} for row in result['nodes']]
+                    result['edges'] = [{k: v for k, v in row.items() if k in OVERVIEW_EDGE_FIELDS} for row in result['edges']]
             result['elapsed_ms'] = round((time.monotonic() - started) * 1000, 1)
             if whole:
                 self.snapshot_key = snapshot_key
