@@ -135,7 +135,7 @@
     if (!nodes.length) return;
     const width=Math.max(100,options.width || cy.width());
     const height=Math.max(100,options.height || cy.height());
-    if (nodes.length>1000) {
+    if (nodes.length>10000) {
       // Full stores can contain tens of thousands of symbols. Keep this overview
       // linear rather than running an O(n²) force simulation or collision pass.
       const cols=Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height*110/180)));

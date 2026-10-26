@@ -15,6 +15,12 @@ body>header,body>#overview{flex-shrink:0}
 main{flex:1;min-height:0;overflow:hidden;grid-template-rows:minmax(0,1fr)}
 main>*{min-width:0;min-height:0}
 .sidebar,.workspace,.inspector{overflow:auto;overscroll-behavior:contain}
+.workspace{overflow:hidden}
+.workspace>nav,.workspace>#notice,.workspace>footer{flex-shrink:0}
+.workspace>.view{flex:3 1 0;min-height:120px;height:auto}
+.workspace>.activity{flex:2 1 0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.activity #timeline{max-height:none;overflow:visible}
+.activity .table-scroll{max-height:none}
 .sidebar,.inspector{height:100%;max-height:none;scrollbar-gutter:stable}
 @media(min-width:701px) and (max-width:1100px){
   main{grid-template-rows:minmax(0,3fr) minmax(0,1fr)}

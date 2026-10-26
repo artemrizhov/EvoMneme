@@ -328,7 +328,7 @@ async function draw(data, resetLayout, key) {
     if (ids.has('n:'+e.source)&&ids.has('n:'+e.target)) {
       ids.add('e:'+e.graph_id);
       elements.push({group:'edges',data:{id:'e:'+e.graph_id,source:'n:'+e.source,target:'n:'+e.target,
-        label:e._aggregate?`${e.member_count} links`:String(e.kind||''),displayLabel:'',attributes:e,color:'#506984',curve:data.nodes.length>1000?'straight':'bezier'}});
+        label:e._aggregate?`${e.member_count} links`:String(e.kind||''),displayLabel:'',attributes:e,color:'#506984',curve:data.nodes.length>10000?'straight':'bezier'}});
     }
   },'Preparing relationships');
   let topologyChanged=oldIds.size!==ids.size;
