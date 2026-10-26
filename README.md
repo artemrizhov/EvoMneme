@@ -26,6 +26,8 @@ The agent drives this loop during active development sessions. SQLite stores kno
 
 During ordinary development, agents maintain a compact graph from code they actually read and understand. Code nodes are files, modules, classes, methods, functions, fields, constants and globals; internal function implementation is omitted unless an entity escapes to another consumer. Tests stop at test cases, and external code at directly used boundaries. Only meaningful, evidenced direct relationships are stored, with immediate containment instead of redundant symbol-to-file links. Uncertainty and inspection work stay in node/file attributes, not service nodes. An explicit full-build/rebuild request starts sequential, resumable source reading under these same rules; grep or static-analysis output must not populate the graph. [Selection and maintenance](references/code-graph.md) define the boundaries and completion checks. Record counts are not a quality or completeness target.
 
+For an explicitly requested full build, follow [initial population](references/initial-population.md) from readiness checks through resumable reading to ordinary maintenance. The [architecture guide](references/architecture-graph.md) covers responsibilities, component boundaries, flows, external contracts and decisions in the same graph, with evidence and links to implementation. Both initial population and later maintenance use the same identity, vocabulary and description conventions; documented intent remains distinguishable from implemented behavior.
+
 ## What is included
 
 - [SKILL.md](SKILL.md): one live portable instruction set for authorized host projects, connected through their agent's native instruction mechanism.

@@ -2,6 +2,17 @@
 
 The graph is a navigable account of code the agent has understood, not an index of every token or declaration. Apply these rules within an authorized host using the [controlled schema](schema.md). Do not activate EvoMneme in its own repository. No scanner, separate indexing pipeline or new schema is required.
 
+## Shared representation across population and maintenance
+
+Initial population and ordinary maintenance use the same selection, identity, description and evidence rules. The [initial population procedure](initial-population.md) changes the reading scope and order, not the shape of the resulting records. Use [architecture construction and maintenance](architecture-graph.md) for responsibilities, system boundaries, flows and decisions beyond individual code entities; it uses the same store and conventions.
+
+- Before adding records, consult the private connection receipt and inspect relevant existing records in the verified scope. Reuse compatible entity IDs, source-path conventions, type/relationship names and meanings. For code entities, stable identities include the source and immediate owner; architectural concepts use their responsibility/boundary. Line numbers are only locators. Match the actual entity before reusing an ID, and reconcile it instead of creating a second population-specific copy. Historical records require source verification before reuse in a current scope.
+- Use concise summaries of responsibility, important behavior/contracts, limitations and consequential uncertainty. Keep source locators, evidence, signatures and inspection state in their supported fields, rather than copying source bodies or introducing a second representation in prose.
+- Follow explicit host rules for the language of descriptions and terminology, then compatible existing records. For a new empty store without such rules, use the user's language. Preserve actual program identifiers and API names. Reuse established type/relationship values rather than translating them with each session. If existing conventions conflict, record the selected convention for new and touched records; do not silently rewrite the rest of the store.
+- Keep a short record of the chosen ID/path conventions, vocabulary and description language in the existing private connection receipt. Consult it during both initial population and maintenance. It records host choices, not a copied rulebook or permission to override the released schema and selection rules.
+
+Existing records that violate these rules are not templates to reproduce. Preserve useful knowledge and report incompatible conventions or oversized legacy areas; bulk cleanup is separate work. A record's representation must not depend on whether it was discovered during a full build or a later task.
+
 ## Choose the reading scope
 
 **Ordinary development:** add and reconcile knowledge from sources actually read while solving the task. Follow relevant dependencies when needed to understand them. Do not inventory or populate the entire repository merely because the skill is active, and do not resume unrelated full-build work during a small task.
