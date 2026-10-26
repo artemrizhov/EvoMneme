@@ -135,6 +135,18 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(rows(anchor(self.executor, '')), [])
         self.assertEqual(rows(anchor(self.executor, 'billing', mode='invented')), [])
 
+    def test_physical_path_selects_file_boundary_not_every_symbol(self):
+        db = self.executor.connection
+        db.execute("UPDATE nodes SET layer='knowledge' WHERE scope_id='main'")
+        db.execute('''INSERT INTO nodes(scope_id,id,kind,title,summary,confidence,validity,source_path,updated_at,layer)
+            VALUES('main','file-boundary','file','core module','Synthetic file','confirmed','current','src/core.py','now','code')''')
+        db.execute("UPDATE nodes SET layer='code' WHERE scope_id='main' AND id='z-billing'")
+        self.assertEqual([r['id'] for r in rows(anchor(self.executor, 'src/core.py'))], ['file-boundary'])
+        self.assertEqual([r['id'] for r in rows(anchor(self.executor, 'z-billing'))], ['z-billing'])
+        self.assertEqual([r['id'] for r in rows(anchor(self.executor, 'billing'))], ['z-billing'])
+        declarations = execute(self.executor, 'declarations', source_path='src/core.py', kind=None)
+        self.assertEqual([r['id'] for r in rows(declarations)], ['file-boundary', 'z-billing'])
+
     def test_deterministic_keyset_and_lookahead(self):
         first = anchor(self.executor, 'tied', limit=1)
         self.assertTrue(first['results'][0]['has_more'])

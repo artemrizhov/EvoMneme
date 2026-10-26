@@ -35,7 +35,7 @@ For an explicitly requested full build, follow [initial population](references/i
 - [scripts/evomneme_mcp.py](scripts/evomneme_mcp.py): an optional stdio MCP adapter exposing the same `execute_sql` operation, bound to one explicit database at startup. Agents can call it without constructing outer shell commands.
 - [schema.sql](schema.sql): the controlled version-3 starting schema for new host stores, applied deliberately. Existing databases use compatible published migrations. Its multi-statement form requires a native script facility, rather than `--sql-file`.
 - [queries/neighborhood.sql](queries/neighborhood.sql): cross-type graph retrieval with depth, direction, and separate traversal/result filters.
-- [Task retrieval and handoff](references/retrieval.md): executable SQL for literal anchors, explained direct neighbors and selected evidence, plus compact subagent context and measured synthetic limitations.
+- [Task retrieval and handoff](references/retrieval.md): a compact architecture catalog for unfamiliar tasks, precise source anchors, explained neighbors and selected evidence, with reusable subagent context and measured limits.
 
 **Each host project has its own local SQLite file. This repository is not its knowledge store.** Linked worktrees explicitly share one canonical host database; independent clones/projects use separate files. Keep knowledge and associated local state excluded from Git. Never activate EvoMneme in its own repository, forks, or worktrees; isolated development fixtures are allowed.
 

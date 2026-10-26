@@ -6,7 +6,8 @@ FROM nodes
 WHERE scope_id=:scope AND validity='current' AND :query<>'' AND :limit>0
   AND (:after_id IS NULL OR id>:after_id)
   AND (:path_prefix IS NULL OR substr(source_path,1,length(:path_prefix))=:path_prefix)
-  AND ((:mode='exact' AND (id=:query OR title=:query OR source_path=:query))
+  AND ((:mode='exact' AND (id=:query OR title=:query
+                          OR (kind IN ('file','module') AND source_path=:query)))
        OR (:mode='prefix' AND substr(title,1,length(:query))=:query))
 ORDER BY id
 LIMIT max(0,:limit)+1;
