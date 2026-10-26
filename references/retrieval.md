@@ -1,6 +1,6 @@
 # Task retrieval and context handoff
 
-Use in an authorized host, never as a live knowledge workflow for EvoMneme itself. The goal is enough verified context to make a change safely. For initial orientation in an unfamiliar task spanning subsystems, start with architectural responsibilities, then follow their mechanisms and constraints into implementation. A known method or small local task can use direct source inspection or precise anchors. These recipes use the released v3 graph and the existing SQL transport; they add no schema, retrieval service or automatic ranking model.
+Use in an authorized host, never as a live knowledge workflow for EvoMneme itself. The goal is enough verified context to make a change safely. Ordinary graph exploration uses the [name-based navigation CLI](navigation.md): `nodes root` → `links root` → selected `nodes`/`links` → source evidence. The real root supplies project context and cards show exact link counts without expanding neighbors. A known method or small local task can use direct source inspection. The SQL recipes below remain an advanced or deliberately chosen SQL route and document the underlying v3 graph; they are not necessary for ordinary CLI navigation and must not silently bypass a failed configured integration.
 
 ## Establish context once
 

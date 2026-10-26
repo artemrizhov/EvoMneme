@@ -1,5 +1,7 @@
 # Host knowledge through SQL
 
+For ordinary read-only exploration, use [graph navigation](navigation.md): the connected `evomneme nodes` / `evomneme links` commands handle names, source scope, active joins and complete output. This reference covers SQL maintenance and advanced access; the generic executor's request/transaction behavior is unchanged.
+
 For visual investigation, graph slices, provenance detail and session/agent activity highlighting, see the optional [local memory explorer](viewer.md). It requires the controlled v3 schema and supports custom projections within that schema. Managed-store history is installed automatically; inspection queries remain read-only and the base graph schema is never migrated automatically.
 
 The agent maintains knowledge within the [controlled schema contract](schema.md); the tool executes SQL and retains automatic history for recognized managed v3 stores. It accepts reads, writes, DDL, and agent-authored migrations against an explicitly bound SQLite file. It has no knowledge-specific commands, automatic base-graph schema creation, source scanner, Git integration, loader installer, or automatic knowledge reconciliation. History setup can be disabled with `--no-history`; this does not erase saved history or remove triggers installed earlier. Use it only for an authorized host; never create a live host store for EvoMneme itself, its forks, or worktrees.

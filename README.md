@@ -14,7 +14,7 @@ New sessions and limited working context can leave an agent rediscovering projec
 
 ## An agent-maintained knowledge graph
 
-The tool is deliberately thin: **receive SQL → execute it in SQLite → return a compact result**. The agent writes SQL, checks source/version provenance, and reconciles knowledge within a [shared, versioned schema](references/schema.md). All graph entities use `nodes`, all relationships use `edges`; type-specific attributes live in supported detail tables. New types are field values. Schema changes are public EvoMneme architecture changes with matching viewer support, migrations and tests, rather than a model reinvented for each host. No domain-specific indexing API or automatic code analyzer stands between the agent and SQLite.
+Ordinary graph exploration uses [name-based shell commands](references/navigation.md): `evomneme nodes root`, `evomneme links root`, then selected nodes and relationships. Cards show exact link counts without expanding neighbors. The separate SQL executor remains deliberately thin: **receive SQL → execute it in SQLite → return a compact result**. Agents use it for maintenance and advanced queries, checking source/version provenance within a [shared, versioned schema](references/schema.md). All graph entities use `nodes`, all relationships use `edges`; type-specific attributes live in supported detail tables. New types are field values. Schema changes are public EvoMneme architecture changes with matching viewer support, migrations and tests. No automatic code analyzer populates or validates knowledge on the agent's behalf.
 
 ```mermaid
 flowchart TB
@@ -35,7 +35,8 @@ For an explicitly requested full build, follow [initial population](references/i
 - [scripts/evomneme_mcp.py](scripts/evomneme_mcp.py): an optional stdio MCP adapter exposing the same `execute_sql` operation, bound to one explicit database at startup. Agents can call it without constructing outer shell commands.
 - [schema.sql](schema.sql): the controlled version-3 starting schema for new host stores, applied deliberately. Existing databases use compatible published migrations. Its multi-statement form requires a native script facility, rather than `--sql-file`.
 - [queries/neighborhood.sql](queries/neighborhood.sql): cross-type graph retrieval with depth, direction, and separate traversal/result filters.
-- [Task retrieval and handoff](references/retrieval.md): a compact architecture catalog for unfamiliar tasks, precise source anchors, explained neighbors and selected evidence, with reusable subagent context and measured limits.
+- [Graph navigation](references/navigation.md): `nodes`/`links`, a real project root, meaningful names, exact relationship counts and explicit complete-output handling, with one-time launcher/connection setup.
+- [Task retrieval and handoff](references/retrieval.md): source verification and reusable subagent context, with published SQL recipes for advanced access and measured limits.
 
 **Each host project has its own local SQLite file. This repository is not its knowledge store.** Linked worktrees explicitly share one canonical host database; independent clones/projects use separate files. Keep knowledge and associated local state excluded from Git. Never activate EvoMneme in its own repository, forks, or worktrees; isolated development fixtures are allowed.
 
@@ -49,7 +50,14 @@ Finding this README or a skill in a catalog does not grant integration permissio
 
 These usage references are the public interface: they explain Python import/create/close, CLI/MCP startup, schema setup, and the [shared request/result/error contract and limits](references/mcp.md#shared-sql-contract). Agents need not inspect the scripts to use them.
 
-The optional CLI uses an existing Python 3.11+ runtime and SQLite support; it installs no SDK or third-party package. With a previously selected, excluded host database and reviewed query file:
+After one-time [launcher and connection setup](references/navigation.md#bootstrap-and-integration), normal graph exploration is:
+
+```text
+evomneme nodes root
+evomneme links root
+```
+
+For SQL maintenance and advanced queries, the existing optional SQL CLI uses Python 3.11+ and SQLite support; it installs no SDK or third-party package. With a previously selected, excluded host database and reviewed query file:
 
 ```text
 python <tool>/scripts/evomneme.py --database <absolute-host-db> --input <host-local>/query.json
