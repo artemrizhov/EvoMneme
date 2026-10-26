@@ -66,6 +66,26 @@ Report the inspected scope/version, remaining reading point and consequential un
 
 During ordinary work, recheck the applicability of knowledge you use. Reconcile changed eligible entities, immediate ownership, meaningful edges and evidence; follow affected callers/contracts as needed. For moves or deletions, update identities/locators and remove or invalidate obsolete current relationships. Retain useful version-scoped history. Mark affected dependents stale when they cannot yet be verified; do not create a service node for each pending check.
 
+### File-wide locator reconciliation
+
+A file edit can move declarations and relationship evidence that were not changed semantically and are unrelated to the task. For each changed file, review **all existing references to that file in the applicable current source scope**, not just records for the edited method. Include `nodes` and `edges` source paths/line ranges, `evidence` source paths and descriptions containing line citations, and other explicit line citations in the relevant stored summaries. Incoming/cross-file relationships can cite this file even when their owners are elsewhere. Use the established normalized path convention; for renames/deletions include the old path. Do not rewrite historical scopes to the current checkout's line numbers.
+
+Locate records by their stored source references, then re-anchor against the current file using identity, owner/signature and surrounding source. A diff can confirm a purely positional change without reanalyzing an unchanged body. Keep entity identities stable when only lines move. Do not add one offset blindly across a file with multiple insertions/deletions, infer a new location from an ambiguous name match, or update a whole file's record hashes as a substitute for checking their claims. Reconcile new/deleted entities and material behavior/relationship changes separately from positional changes.
+
+Update confirmed locators and supporting evidence together with inspection state in one transaction after rechecking the source identity. If a location cannot be re-established, clear its unsupported `line_start`/`line_end` (or remove the unsupported textual line citation) and record the locator uncertainty on the existing entity/file. Keep a claim current only if its meaning remains verified; otherwise mark the affected claim/edge/evidence stale. The schema has no independent locator-validity field: do not invent one. Retain sufficient original provenance for later verification; do not present an old hash as verification of the new file. Mark file inspection partial/stale as appropriate and record remaining work in `file_details`, rather than asserting a complete sweep when some references remain unresolved.
+
+This is reconciliation of the changed file's existing references, not permission to populate unrelated code or reread the whole project. A tiny insertion still requires checking displaced references in that file; it need not trigger semantic reindexing of unchanged declarations. If the inspection cannot be completed within authorized work, make the unresolved area explicit before relying on or transferring its knowledge.
+
+### Write checkpoints
+
+Use bounded coherent batches rather than a write for every keystroke. The mandatory checkpoints are:
+
+1. **After a coherent edit batch, before the next use or handoff of affected stored context:** reconcile file-wide locators and changed claims, or invalidate/clear unsupported information and record what remains. Do not continue consuming known outdated memory until task end.
+2. **At the next coherent checkpoint after a material discovery or decision:** persist verified contracts, reasons and consequential uncertainty, even if no code changed. Do not wait solely for a commit or an explicit maintenance request. A checkpoint is the end of a completed inspection/change unit before moving to another unit or transferring context; it is not an indefinite postponement.
+3. **Before handing affected context/work to another agent, a planned context handover, and before the final task response:** persist material discoveries and reconcile outstanding changes. Include the verified source state and any unresolved/pending updates in the packet. A handoff during active overlapping edits must explicitly identify the dirty area; it cannot certify that area as current.
+
+These checkpoints apply within host authorization and do not override a read-only request, a frozen store, or a failed configured integration. If writing is forbidden or blocked, pass the affected paths/records, last verified state and pending maintenance to the recipient or final report; do not claim that memory was updated. Continue only independent authorized work. No background maintenance or automatic change detector is implied.
+
 Commit coherent graph/evidence/inspection updates in an explicit transaction after rechecking source identity. Concurrent agents must coordinate overlapping source areas; database locks do not reconcile conflicting interpretations. These selection rules do not automatically clean an existing oversized store: plan destructive cleanup separately within host authorization.
 
 ## Selection examples

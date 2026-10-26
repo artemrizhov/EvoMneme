@@ -71,7 +71,9 @@ Supply only what a recipient needs for its assignment. A useful packet contains:
 - Remaining questions, missing edges, stale observations and material external guarantees requiring verification; separate facts from proposed explanations.
 - File ownership, permitted maintenance and the changed-source delta. Reuse discovered columns and query parameters instead of forwarding whole DDL, SQL transcripts or repeated file dumps.
 
-This packet does not replace loading the live skill or authorize a new integration. When the recipient discovers a mismatch, reverify only the affected context. For substantial maintenance, send changed files/entities and the observed semantic changes, not the whole exploration history. Reconcile changed declarations, direct relationships, contracts and evidence together; a small patch can alter a class's behavior without changing its declaration line. Record unfinished analysis on the existing owner/file. Do not spend more on routine graph bookkeeping than the task warrants.
+Before handing off affected context, apply the [write checkpoints and file-wide locator reconciliation](code-graph.md#file-wide-locator-reconciliation): a line insertion can displace unrelated entities in the same file. Persist discoveries and reconcile changes first, or explicitly identify dirty/unverified references and pending maintenance when work is incomplete or writes are blocked. Never pass knowingly outdated line numbers as current.
+
+This packet does not replace loading the live skill or authorize a new integration. When the recipient discovers a mismatch, reverify the affected context, including displaced references in changed files. For substantial maintenance, send changed files/entities and the observed semantic changes, not the whole exploration history. Reconcile changed declarations, direct relationships, contracts and evidence together; a small patch can alter a class's behavior without changing its declaration line. Record unfinished analysis on the existing owner/file. Do not spend more on routine graph bookkeeping than the task warrants.
 
 ## Check usefulness without assuming it
 
