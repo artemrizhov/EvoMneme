@@ -72,6 +72,26 @@ async function main() {
     for(const [id,p] of oldPositions)assert.deepEqual(cy.$id(id).position(),p,
       'A worker update must not reshuffle existing nodes when an isolated node appears');
     cy.$id('new-first').remove();
+    cy.$id('a').position({x:-600,y:0});cy.$id('b').position({x:600,y:0});cy.$id('c').position({x:0,y:0});
+    const spiralOrigin={x:35,y:20};
+    assert.equal(await controller.arrange(cy,{name:'cose',incremental:true,affected:['c'],newNodes:['c'],
+      placementOrigin:spiralOrigin,fit:false}),true);
+    const slot=cy.$id('c').position(),sx=slot.x-spiralOrigin.x,sy=slot.y-spiralOrigin.y;
+    const slotIndex=Math.round((sx*sx+sy*sy)/(70*70)),slotRadius=70*Math.sqrt(slotIndex),slotAngle=slotIndex*2.399963229728653;
+    assert.ok(Math.hypot(sx-slotRadius*Math.cos(slotAngle),sy-slotRadius*Math.sin(slotAngle))<1e-6,
+      'The actual worker must preserve spiral placement when avoiding component envelopes');
+    // A changed connected region must get room around an unrelated island,
+    // including when the calculation runs in the actual background worker.
+    cy.$id('c').position({...cy.$id('a').position()});
+    const island={...cy.$id('c').position()};
+    assert.equal(await controller.arrange(cy,{name:'cose',incremental:true,affected:['a','b'],fit:false}),true);
+    assert.deepEqual(cy.$id('c').position(),island,'An unrelated island must remain anchored');
+    const settledBoxes=layout.boxes(cy.nodes());
+    for(let i=0;i<settledBoxes.length;i++)for(let j=0;j<i;j++) {
+      const a=settledBoxes[i],b=settledBoxes[j];
+      assert.ok(Math.abs(a.x+a.dx-b.x-b.dx)>=(a.w+b.w)/2 || Math.abs(a.y+a.dy-b.y-b.dy)>=(a.h+b.h)/2,
+        'A background layout must separate changed groups from unrelated islands');
+    }
     let releaseApply,enterApply;
     const applyGate=new Promise(resolve=>releaseApply=resolve),entered=new Promise(resolve=>enterApply=resolve);
     const guarded=controller.arrange(cy,{name:'circle',width:900,height:600,fit:false},()=>{enterApply();return applyGate;});

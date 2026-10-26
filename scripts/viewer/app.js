@@ -874,7 +874,7 @@ async function draw(data, resetLayout, key) {
     const settings={seed:resetLayout || !oldPositions.size,
       fit:!state.selectedActivity&&!state.selectedSession && (!state.replay || $('followGraph').checked),
       animate:oldPositions.size>0 && (!state.replay || state.replay.index>=0),newIds,
-      incremental:!resetLayout && oldPositions.size>0,affected:[...affected],newNodes:[...newIds]};
+      incremental:!resetLayout && oldPositions.size>0,affected:[...affected],newNodes:[...newIds],placementOrigin:spawn.origin};
     if(state.replay?.index>=0)queueReplayLayout(settings);
     else await layout(settings);
   } else if (added) {

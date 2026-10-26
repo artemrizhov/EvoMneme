@@ -237,7 +237,62 @@ try {
     const a=e.source().position(),b=e.target().position();return s+Math.hypot(a.x-b.x,a.y-b.y)/16;
   },0);
   assert.ok(mean<600,'New links must actually gather dispersed nodes into a connected structure');
+  assertSeparated(star);
 } finally {star.destroy();}
+
+const expanding=graph();
+try {
+  expanding.add([{data:{id:'a',label:'Group A'},position:{x:-60,y:0}},
+    {data:{id:'b',label:'Group A child'},position:{x:60,y:0}},
+    {data:{id:'c',label:'Group B'},position:{x:-60,y:0}},
+    {data:{id:'d',label:'Group B child'},position:{x:60,y:0}},
+    {data:{id:'ab',source:'a',target:'b'}},{data:{id:'cd',source:'c',target:'d'}}]);
+  const fixed=new Map(['c','d'].map(id=>[id,{...expanding.$id(id).position()}]));
+  graphLayout.arrange(expanding,{name:'cose',incremental:true,affected:['a','b'],fit:false});
+  for(const [id,p] of fixed)assert.deepEqual(expanding.$id(id).position(),p,'Unchanged disconnected regions must retain their positions');
+  assertSeparated(expanding);
+  expanding.add([{data:{id:'growing',label:'A long label on a newly added group member'},position:{x:0,y:0}},
+    {data:{id:'bg',source:'b',target:'growing'}}]);
+  graphLayout.arrange(expanding,{name:'cose',incremental:true,affected:['b','growing'],newNodes:['growing'],fit:false});
+  for(const [id,p] of fixed)assert.deepEqual(expanding.$id(id).position(),p,'Growth must make room without moving an unrelated group');
+  assertSeparated(expanding);
+  const settled=new Map(expanding.nodes().map(n=>[n.id(),{...n.position()}]));
+  graphLayout.arrange(expanding,{name:'cose',incremental:true,affected:[],fit:false});
+  for(const [id,p] of settled)assert.deepEqual(expanding.$id(id).position(),p,'Settled groups must not be repacked on later unchanged updates');
+} finally {expanding.destroy();}
+
+const split=graph();
+try {
+  split.add([{data:{id:'left',label:'Left'},position:{x:0,y:0}},
+    {data:{id:'right',label:'Right'},position:{x:10,y:0}},
+    {data:{id:'bridge',source:'left',target:'right'}}]);
+  split.$id('bridge').remove();
+  graphLayout.arrange(split,{name:'cose',incremental:true,affected:['left','right'],fit:false});
+  assertSeparated(split);
+} finally {split.destroy();}
+
+const spiralOutside=graph();
+try {
+  // A wide existing component occupies the center. New isolated nodes must
+  // continue searching spiral slots rather than being pushed to its top edge.
+  spiralOutside.add([{data:{id:'wide-left',label:'X'},position:{x:-600,y:0}},
+    {data:{id:'wide-right',label:'X'},position:{x:600,y:0}},
+    {data:{id:'wide-link',source:'wide-left',target:'wide-right'}}]);
+  const added=[];
+  for(let i=0;i<12;i++) {
+    const id='free'+i;added.push(id);
+    spiralOutside.add({data:{id,label:'X'},position:{x:0,y:0}});
+  }
+  graphLayout.arrange(spiralOutside,{name:'cose',incremental:true,newNodes:added,affected:added,
+    placementOrigin:{x:0,y:0},fit:false});
+  for(const id of added) {
+    const p=spiralOutside.$id(id).position(),index=Math.round((p.x*p.x+p.y*p.y)/(70*70));
+    const radius=70*Math.sqrt(index),angle=index*2.399963229728653;
+    assert.ok(Math.hypot(p.x-Math.cos(angle)*radius,p.y-Math.sin(angle)*radius)<1e-6,
+      'Component avoidance must retain spiral placement for new isolated nodes');
+  }
+  assertSeparated(spiralOutside);
+} finally {spiralOutside.destroy();}
 
 const vacancies=graph();
 try {

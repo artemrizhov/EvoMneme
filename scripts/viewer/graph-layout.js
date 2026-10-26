@@ -308,9 +308,9 @@
     },options);
   }
 
-  // Traverse only connected regions touched by a topology change. Each is
-  // solved natively; there is no shelf packing or rotation of other regions.
-  function changedRegions(elements,changed) {
+  // Native solvers handle the interiors; component bounds are used only to
+  // make room for changed regions without repacking unaffected regions.
+  function connectedRegions(elements) {
     const nodes=new Map(elements.nodes().map(n=>[n.id(),n]));
     const adjacent=new Map([...nodes.keys()].map(id=>[id,[]]));
     for(const edge of elements.edges()) {
@@ -319,7 +319,7 @@
       adjacent.get(a).push([b,edge]);adjacent.get(b).push([a,edge]);
     }
     const seen=new Set(),regions=[];
-    for(const id of changed) {
+    for(const id of nodes.keys()) {
       if(seen.has(id) || !nodes.has(id))continue;
       const stack=[id],members=[],edges=new Map();seen.add(id);
       while(stack.length) {
@@ -329,9 +329,81 @@
           if(!seen.has(other)){seen.add(other);stack.push(other);}
         }
       }
-      if(edges.size)regions.push(elements.cy().collection([...members,...edges.values()]));
+      regions.push(elements.cy().collection([...members,...edges.values()]));
     }
     return regions;
+  }
+
+  function separateRegions(regions,changed,placementOrigin) {
+    const items=regions.map(region=>{
+      const members=region.nodes(),bounds=boxes(members);
+      const x1=Math.min(...bounds.map(b=>b.x+b.dx-b.w/2)),y1=Math.min(...bounds.map(b=>b.y+b.dy-b.h/2));
+      const x2=Math.max(...bounds.map(b=>b.x+b.dx+b.w/2)),y2=Math.max(...bounds.map(b=>b.y+b.dy+b.h/2));
+      return {members,x1,y1,x2,y2,movable:members.some(n=>changed.has(n.id())) && !members.some(n=>n.locked())};
+    });
+    const placed=[],large=[],grid=new Map(),cellSize=256;
+    const cells=b=>({x1:Math.floor(b.x1/cellSize),x2:Math.floor(b.x2/cellSize),
+      y1:Math.floor(b.y1/cellSize),y2:Math.floor(b.y2/cellSize)});
+    const tooLarge=r=>(r.x2-r.x1+1)*(r.y2-r.y1+1)>4096;
+    const insert=b=>{
+      placed.push(b);const r=cells(b);
+      if(tooLarge(r)){large.push(b);return;}
+      for(let x=r.x1;x<=r.x2;x++)for(let y=r.y1;y<=r.y2;y++) {
+        const key=x+','+y;
+        if(!grid.has(key))grid.set(key,[]);
+        grid.get(key).push(b);
+      }
+    };
+    const overlaps=b=>{
+      const r=cells({x1:b.x1-70,y1:b.y1-70,x2:b.x2+70,y2:b.y2+70});
+      const candidates=new Set(tooLarge(r)?placed:large);
+      if(!tooLarge(r))for(let x=r.x1;x<=r.x2;x++)for(let y=r.y1;y<=r.y2;y++)
+        for(const a of grid.get(x+','+y) || [])candidates.add(a);
+      return [...candidates].filter(a=>{
+        const gap=a.members.length>1 || b.members.length>1?70:16;
+        return a.x1-gap<b.x2 && a.x2+gap>b.x1 && a.y1-gap<b.y2 && a.y2+gap>b.y1;
+      });
+    };
+    items.filter(b=>!b.movable).forEach(insert);
+    const moving=items.filter(b=>b.movable).sort((a,b)=>(b.x2-b.x1)*(b.y2-b.y1)-(a.x2-a.x1)*(a.y2-a.y1));
+    const spiralCursors=new Map();
+    for(const item of moving) {
+      const origin={x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2};
+      let blocked=null,collisions;
+      if(item.members.length===1 && overlaps(item).length) {
+        const p=item.members[0].position(),center=placementOrigin || p;
+        const shape=[origin.x2-origin.x1,origin.y2-origin.y1,origin.x1-p.x,origin.y1-p.y,center.x,center.y].join(',');
+        let index=spiralCursors.get(shape) || 0;
+        // Avoid group envelopes using the same central spiral as initial
+        // placement. Axis-only escape would turn a batch into a vertical queue.
+        do {
+          const radius=70*Math.sqrt(index),angle=index*2.399963229728653;
+          const dx=center.x+Math.cos(angle)*radius-p.x,dy=center.y+Math.sin(angle)*radius-p.y;
+          item.x1=origin.x1+dx;item.x2=origin.x2+dx;
+          item.y1=origin.y1+dy;item.y2=origin.y2+dy;
+          index++;
+        } while(overlaps(item).length);
+        spiralCursors.set(shape,index);
+      }
+      // Grow the obstacle envelope on each collision. Every candidate lies
+      // outside all obstacles seen so far, so this cannot bounce indefinitely.
+      while((collisions=overlaps(item)).length) {
+        for(const a of collisions) {
+          const gap=a.members.length>1 || item.members.length>1?70:16;
+          const b={x1:a.x1-gap,y1:a.y1-gap,x2:a.x2+gap,y2:a.y2+gap};
+          blocked=blocked?{x1:Math.min(blocked.x1,b.x1),y1:Math.min(blocked.y1,b.y1),
+            x2:Math.max(blocked.x2,b.x2),y2:Math.max(blocked.y2,b.y2)}:b;
+        }
+        const candidates=[{x:blocked.x1-origin.x2-1,y:0},{x:blocked.x2-origin.x1+1,y:0},
+          {x:0,y:blocked.y1-origin.y2-1},{x:0,y:blocked.y2-origin.y1+1}];
+        const move=candidates.sort((a,b)=>a.x*a.x+a.y*a.y-b.x*b.x-b.y*b.y)[0];
+        item.x1=origin.x1+move.x;item.x2=origin.x2+move.x;
+        item.y1=origin.y1+move.y;item.y2=origin.y2+move.y;
+      }
+      const dx=item.x1-origin.x1,dy=item.y1-origin.y1;
+      if(dx || dy)item.members.positions(n=>{const p=n.position();return {x:p.x+dx,y:p.y+dy};});
+      insert(item);
+    }
   }
 
   function arrangeIncremental(cy,elements,options) {
@@ -340,7 +412,8 @@
     const changed=new Set([...(options.affected || []),...newNodes]);
     const name=options.name || 'cose';
     if(name==='cose' && !options.overview) {
-      for(const region of changedRegions(elements,changed)) {
+      const regions=connectedRegions(elements);
+      for(const region of regions.filter(r=>r.edges().length && r.nodes().some(n=>changed.has(n.id())))) {
         const members=region.nodes();
         const anchors=members.filter(n=>!newNodes.has(n.id()));
         const reference=anchors.length?anchors:members;
@@ -354,6 +427,8 @@
           nodeDimensionsIncludeLabels:true,nodeRepulsion:()=>6500,nodeOverlap:24,
           idealEdgeLength:()=>120,componentSpacing:100,gravity:.2,
           numIter:members.length>800?120:350,initialTemp:200,minTemp:1,coolingFactor:.99}).run();
+        // Existing members need room too when a component grows or reconnects.
+        separate(members);
         if(!members.some(n=>n.locked())) {
           const destination=reference.reduce((s,n)=>{
             const p=n.position();return {x:s.x+p.x/reference.length,y:s.y+p.y/reference.length};
@@ -363,6 +438,7 @@
             x:p.x+center.x-destination.x,y:p.y+center.y-destination.y};});
         }
       }
+      separateRegions(regions,changed,options.placementOrigin);
     }
     // Discrete layouts retain their slots on automatic updates. Only new
     // nodes need a vacant position; explicit Relayout still runs the full solver.
