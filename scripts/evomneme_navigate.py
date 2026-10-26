@@ -1,12 +1,10 @@
 """Read-only, snapshot-consistent navigation of a bound v3 knowledge graph."""
 import json
-from pathlib import Path
 import shlex
 import sqlite3
 import time
 from urllib.parse import quote, unquote
 
-from evomneme_graph import validate_schema
 
 OUTPUT_BYTES = 64 * 1024
 TIMEOUT_SECONDS = 5.0
@@ -34,31 +32,60 @@ def compact(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
 
+def text_lines(value):
+    """Keep newlines readable while neutralizing terminal and line controls."""
+    text = str(value)
+    text = ''.join(char if char == '\n' or (char.isprintable() and char not in '\u2028\u2029')
+                   else '\\u' + format(ord(char), '04x') for char in text)
+    return text.split('\n')
+
+
+def fields(value, indent=0):
+    """Plain-text fields; only the caller may emit an empty card separator."""
+    prefix = ' ' * indent
+    for key, item in value.items():
+        if isinstance(item, dict):
+            yield prefix + key + ':'
+            yield from fields(item, indent + 2)
+        elif isinstance(item, list):
+            yield prefix + key + ':'
+            for entry in item:
+                yield prefix + '  -'
+                yield from fields(entry, indent + 4)
+        else:
+            first, *rest = text_lines(item)
+            yield prefix + key + ':' + (' ' + first if first else '')
+            for line in rest:
+                yield prefix + '  ' + line
+
+
 def location(row):
     return {key: row[key] for key in ('source_path', 'source_hash', 'line_start', 'line_end')
             if key in row.keys() and row[key] is not None}
 
 
 class Reader:
-    def __init__(self, connection, timeout=TIMEOUT_SECONDS):
+    def __init__(self, connection, timeout=TIMEOUT_SECONDS, shared=None):
         self.connection = connection
         self.scope = connection.scope
         self.deadline = time.monotonic() + timeout
         self.db = None
         self.warnings = []
         self.arguments = {}
+        self.context = shared
+        self.owns_context = shared is None
         if timeout <= 0:
             raise NavigationError('Navigation timed out before execution; no complete result.')
         try:
-            self.db = sqlite3.connect(Path(connection.database).resolve().as_uri() + '?mode=ro',
-                                      uri=True, isolation_level=None, timeout=timeout)
-            self.db.row_factory = sqlite3.Row
-            self.db.execute('PRAGMA query_only=ON')
-            self.db.set_progress_handler(lambda: int(time.monotonic() >= self.deadline), 1000)
-            self.db.execute('BEGIN')
-            validate_schema(self.db)
-            from evomneme_connection import validate_binding
-            self.warnings = list(dict.fromkeys([*connection.warnings, *validate_binding(self.db, connection)]))
+            if self.context is not None and self.context.connection != connection:
+                raise NavigationError('Shared read context belongs to another binding')
+            if self.context is None:
+                from evomneme_context import ReadContext
+                self.context = ReadContext(connection, timeout=timeout, timeout_error=NavigationError,
+                                           timeout_message='Navigation timed out; no complete result.')
+            self.db = self.context.db
+            self.deadline = self.context.deadline
+            self.warnings = list(self.context.warnings)
             root = self.db.execute("SELECT * FROM nodes WHERE scope_id=? AND id=?", (self.scope, connection.root_id)).fetchone()
             if root is None or root['validity'] != 'current':
                 raise NavigationError('Configured root is missing or not current; repair the binding/knowledge gap explicitly.')
@@ -69,9 +96,9 @@ class Reader:
             raise
 
     def close(self):
-        if self.db is not None:
-            self.db.close()
-            self.db = None
+        if self.owns_context and self.context is not None:
+            self.context.close()
+        self.db = None
 
     def check_time(self):
         if time.monotonic() >= self.deadline:
@@ -104,7 +131,7 @@ class Reader:
             if old:
                 raise NavigationError('Node ' + compact(name) + ' is not current (' + old['validity'] + ').')
             raise NavigationError('No current node matches ' + compact(name) + '; this does not prove source absence.')
-        examples = ' ; '.join(quote_command(['evomneme', 'nodes', '--', qualified(self.scope, row['id'])],
+        examples = ' ; '.join(quote_command(['evomneme', 'nodes', qualified(self.scope, row['id'])],
                                             self.connection.shell) for row in found[:3])
         raise NavigationError('Ambiguous node ' + compact(name) + ': ' + str(len(found)) + ' current matches. Use ' + examples)
 
@@ -116,12 +143,18 @@ class Reader:
             for name in candidates:
                 if not name or name in ROOT_ALIASES or (name.startswith('@') and '/' in name):
                     continue
+                if any(not char.isprintable() or char in '\u2028\u2029' for char in name):
+                    continue
                 matches = self.matches(name)
                 if len(matches) == 1 and matches[0]['id'] == id_:
                     argument = name
                     break
             self.arguments[id_] = argument
         return self.arguments[id_]
+
+    def command_argument(self, node):
+        argument = self.argument(node)
+        return qualified(self.scope, node['id']) if argument.startswith('-') else argument
 
     def edges_sql(self, ids, count=False):
         predicate = '(e.source_id=? OR e.target_id=?)'
@@ -146,10 +179,10 @@ class Reader:
 
     def node_card(self, node):
         self.check_time()
-        return dict(argument=self.argument(node), type=node['kind'], title=node['title'],
+        return dict(argument=self.argument(node), kind=node['kind'], title=node['title'],
                     summary=node['summary'], confidence=node['confidence'], validity=node['validity'],
                     locator=location(node), evidence=self.evidence(node=node['id']), link_count=self.count([node['id']]),
-                    links_command=quote_command(['evomneme', 'links', '--', self.argument(node)], self.connection.shell))
+                    links_command=quote_command(['evomneme', 'links', self.command_argument(node)], self.connection.shell))
 
     def edge_card(self, edge, root_id, pair=False):
         self.check_time()
@@ -157,11 +190,11 @@ class Reader:
         target = self.db.execute('SELECT * FROM nodes WHERE scope_id=? AND id=?', (self.scope, edge['target_id'])).fetchone()
         direction = 'self' if source['id'] == target['id'] else 'outgoing' if source['id'] == root_id else 'incoming'
         neighbor = target if source['id'] == root_id else source
-        card = dict(direction=direction, kind=edge['kind'], neighbor=self.argument(neighbor),
-                    title=neighbor['title'], summary=neighbor['summary'], neighbor_confidence=neighbor['confidence'],
-                    relationship_summary=edge['summary'], confidence=edge['confidence'],
+        card = dict(direction=direction, kind=edge['kind'], summary=edge['summary'], confidence=edge['confidence'],
                     validity=edge['validity'], resolution=edge['resolution'],
-                    nodes_command=quote_command(['evomneme', 'nodes', '--', self.argument(neighbor)],
+                    neighbor=dict(argument=self.argument(neighbor), title=neighbor['title'],
+                                  summary=neighbor['summary'], confidence=neighbor['confidence']),
+                    nodes_command=quote_command(['evomneme', 'nodes', self.command_argument(neighbor)],
                                                 self.connection.shell))
         if pair:
             card.update(source=self.argument(source), target=self.argument(target),
@@ -169,13 +202,13 @@ class Reader:
         return card
 
 
-def navigate(connection, command, names, all_output=False, timeout=TIMEOUT_SECONDS):
+def navigate(connection, command, names, all_output=False, timeout=TIMEOUT_SECONDS, shared=None):
     """Return one complete UTF-8 text result or raise; never emit partial cards."""
     if command not in ('nodes', 'links') or not names or (command == 'links' and len(names) > 2):
         raise NavigationError('Use nodes NAME [NAME ...], links NAME, or links NAME1 NAME2.')
     reader = None
     try:
-        reader = Reader(connection, timeout=timeout)
+        reader = Reader(connection, timeout=timeout, shared=shared)
         selected = [reader.resolve(name) for name in names]
         if command == 'nodes':
             selected = list({node['id']: node for node in selected}.values())
@@ -194,19 +227,25 @@ def navigate(connection, command, names, all_output=False, timeout=TIMEOUT_SECON
             reader.check_time()
             used += len((line + '\n').encode('utf-8'))
             if not all_output and used > OUTPUT_BYTES:
-                retry = quote_command(['evomneme', command, '--all', '--', *names], connection.shell)
+                retry = quote_command(['evomneme', command, '--all', *(['--'] if any(name.startswith('-') for name in names) else []), *names], connection.shell)
                 raise NavigationError('Output exceeds 65536 bytes; no cards emitted. scope=' + compact(connection.scope)
                                       + '; ' + command + '=' + str(count) + '. Full output: ' + retry)
             chunks.append(line + '\n')
 
-        append('scope=' + compact(connection.scope) + ' status=current-knowledge shell=' + connection.shell
-               + ' ' + command + '=' + str(count))
+        for line in fields(dict(scope=connection.scope, status='current-knowledge', shell=connection.shell,
+                                **{command: count})):
+            append(line)
         for warning in reader.warnings:
-            append('warning=' + compact(warning))
-        for card in cards:
-            append(compact(card))
-        append('complete scope=' + compact(connection.scope) + ' ' + command + '=' + str(count)
-               + '; source completeness is not established')
+            for line in fields(dict(warning=warning)):
+                append(line)
+        for index, card in enumerate(cards):
+            if index:
+                append('')
+            for line in fields(card):
+                append(line)
+        for line in fields(dict(complete=dict(scope=connection.scope, **{command: count},
+                                             source_completeness='not established'))):
+            append(line)
         reader.check_time()
         return ''.join(chunks)
     except sqlite3.Error as exc:

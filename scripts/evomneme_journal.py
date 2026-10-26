@@ -138,15 +138,33 @@ def trigger_sql(table, operation, columns, keys, name):
     return 'CREATE TRIGGER ' + ident(name) + ' AFTER ' + operation + ' ON ' + ident(table) + condition + ' BEGIN ' + ' '.join(body) + ' END'
 
 
-def install(database, suspend=False):
+def install(database, suspend=False, connection=None):
+    """Install released history, optionally inside a validated caller transaction.
+
+    A supplied connection must already own a transaction; its caller alone owns
+    commit, rollback and close. A savepoint rolls back installation on failure.
+    This lets bound graph commands record atomically.
+    """
     path = Path(database)
     if not path.is_absolute() or str(database).startswith(('\\\\', '//')):
         raise ValueError('Journal database must be an absolute local file path')
     path = path.resolve(strict=True)
-    db = sqlite3.connect(path.as_uri() + '?mode=rw', uri=True, timeout=5, isolation_level=None)
+    owned_connection = connection is None
+    db = connection if connection is not None else sqlite3.connect(path.as_uri() + '?mode=rw', uri=True, timeout=5, isolation_level=None)
+    if not owned_connection and not db.in_transaction:
+        raise ValueError('History installation requires an active caller transaction')
+    if not owned_connection:
+        main = next((row[2] for row in db.execute('PRAGMA database_list') if row[1] == 'main'), None)
+        if not main or Path(main).resolve(strict=True) != path:
+            raise ValueError('History connection does not match the requested database')
+    original_factory = db.row_factory
+    db.row_factory = None
     try:
+        if not owned_connection:
+            db.execute('SAVEPOINT evomneme_install_history')
         db.execute('SELECT json_object(\'check\',1)')
-        db.execute('BEGIN IMMEDIATE')
+        if owned_connection:
+            db.execute('BEGIN IMMEDIATE')
         existing = {r[0].lower() for r in db.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
         owned = bool(existing & {LOG, LINKS, META})
         if owned and not status(db, False).get('version'):
@@ -163,7 +181,10 @@ def install(database, suspend=False):
                 raise ValueError('Reserved activity table is incompatible; existing tables were preserved')
         if not owned:
             if suspend:
-                db.execute('ROLLBACK')
+                if owned_connection:
+                    db.execute('ROLLBACK')
+                else:
+                    db.execute('RELEASE evomneme_install_history')
                 return {'enabled': False, 'schema_version': db.execute('PRAGMA schema_version').fetchone()[0]}
             db.execute('CREATE TABLE ' + ident(LOG) + '''(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at TEXT NOT NULL,
@@ -212,16 +233,24 @@ def install(database, suspend=False):
                     'started_at': entry.get('started_at', utc_now()), 'refreshed_at': utc_now()}
             db.execute('INSERT OR REPLACE INTO ' + ident(META) + ' VALUES(?,?)', ('table:' + table, json.dumps(data)))
         db.execute('INSERT OR REPLACE INTO ' + ident(META) + ' VALUES(\'enabled\',?)', ('0' if suspend else '1',))
-        db.execute('COMMIT')
+        if owned_connection:
+            db.execute('COMMIT')
         result = status(db)
         result['schema_version'] = db.execute('PRAGMA schema_version').fetchone()[0]
+        if not owned_connection:
+            db.execute('RELEASE evomneme_install_history')
         return result
     except BaseException:
-        if db.in_transaction:
+        if owned_connection and db.in_transaction:
             db.execute('ROLLBACK')
+        elif not owned_connection and db.in_transaction:
+            db.execute('ROLLBACK TO evomneme_install_history')
+            db.execute('RELEASE evomneme_install_history')
         raise
     finally:
-        db.close()
+        db.row_factory = original_factory
+        if owned_connection:
+            db.close()
 
 
 def read(db, values):

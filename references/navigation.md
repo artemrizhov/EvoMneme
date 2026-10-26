@@ -1,5 +1,8 @@
 # Graph navigation from the shell
 
+Combine related reads with [command chains](chains.md); ordinary returned commands
+omit unnecessary `--`, and leading-dash node names use qualified command arguments.
+
 Use the read-only navigator in an authorized, connected host project. It is separate from the generic SQL executor: ordinary exploration needs names and shell commands, not SQL, JSON requests or per-call database/scope arguments. Developing EvoMneme itself permits isolated fixture tests, not connecting this repository as a host.
 
 ## Start with the actual project root
@@ -18,9 +21,30 @@ For an unfamiliar task spanning subsystems, read this overview, select responsib
 
 ## Cards and relationships
 
-`nodes NAME [NAME ...]` returns cards containing type/title/description, confidence/current validity, available source locators and evidence, a ready-to-use argument, and **the exact number of relationships that `links NAME` would return in the same snapshot**. It does not list neighbors. Parallel relationships count separately; a self-loop counts once. This is a relationship count, not the number of distinct neighbors.
+`nodes NAME [NAME ...]` returns cards containing `kind`, `title`, `summary`, confidence/current validity, available source locators and evidence, a ready-to-use argument, and **the exact number of relationships that `links NAME` would return in the same snapshot** (`link_count`). It does not list neighbors. Parallel relationships count separately; a self-loop counts once. This is a relationship count, not the number of distinct neighbors.
 
 `links NAME` lists compact relationships, their original directions and copyable neighbor names. `links NAME1 NAME2` returns every relationship between the pair in both directions, including parallel relationships, with the relationships' descriptions, uncertainty, source locators and available evidence. Agents do not need an edge ID to inspect the pair.
+
+Output is multiline plain text with one field per line, without JSON braces, commas or quotation marks around ordinary values. The schema's column names are retained: both nodes and relationships use `kind` and `summary`. On a relationship card, the top-level `summary` and `confidence` belong to the relationship; the neighbor's `argument`, `title`, `summary` and `confidence` are indented under `neighbor`. `argument`, `direction`, `neighbor`, `link_count`, shell commands and envelope/completion fields are navigation metadata, not additional table columns. Pair cards retain `source` and `target` as usable arguments in the original relationship direction.
+
+For example, a relationship card has this structure (illustrative stored values):
+
+```text
+direction: outgoing
+kind: depends_on
+summary: Saving requires the editable value.
+confidence: inferred
+validity: current
+resolution: resolved
+neighbor:
+  argument: Editable draft
+  title: Editable draft
+  summary: Retains raw text until confirmation.
+  confidence: confirmed
+nodes_command: & 'evomneme' 'nodes' 'Editable draft'
+```
+
+`locator` groups retain stored `source_path`, `source_hash`, `line_start` and `line_end` fields when available. `evidence` contains indented `-` entries with `description`, `validity` and available locator columns. Empty groups consist only of their field label. Blank lines appear **only between result cards**, and only when the result has multiple cards; header, warnings, nested groups and completion have no blank separators. Multiline scalar values continue with two extra spaces of indentation, including their empty lines, so stored text cannot impersonate another card or the completion marker. Terminal controls and nonprintable characters are shown as Unicode escapes. Returned commands retain necessary shell quoting; names containing line/control characters use a safe ID or percent-encoded qualified argument.
 
 The active graph consists of current nodes and current edges whose endpoints are both current in the same selected scope. Resolution/confidence remain visible; unresolved or ambiguous relationships are not silently promoted to confirmed ones. Stale records do not become active merely because the file is accessible. A node's `current` status is the graph's stored assertion, not a promise that its source has just been reverified.
 
@@ -38,7 +62,7 @@ Shell examples identify their quoting convention. Use the returned argument as o
 
 ## Complete output and unusually large neighborhoods
 
-Ordinary output is complete and compact, with counts and an explicit completion indication. There is no mandatory paging and no hidden SELECT prefix. A high-degree neighborhood or oversized card can exceed the normal stdout budget. In that case the program refuses the oversized response before emitting a misleading partial card/list, explains the counts/reason and provides a ready-to-copy retry using `--all`.
+Ordinary output is complete, with a field-per-line scope/status/shell/count header and a `complete` group repeating the scope and count and stating `source_completeness: not established`. There is no mandatory paging and no hidden SELECT prefix. A high-degree neighborhood or oversized card can exceed the normal stdout budget. In that case the program refuses the oversized response before emitting a misleading partial card/list, explains the counts/reason and provides a ready-to-copy retry using `--all`. The guard measures every UTF-8 output byte, including indentation, separators, header, warnings and completion.
 
 ```text
 evomneme links --all root > graph.txt

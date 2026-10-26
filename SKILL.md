@@ -17,6 +17,33 @@ Respect host instructions, writable areas, configured integrations, and the user
 
 ## SQL tool priority
 
+Use [command chains](references/chains.md) to combine related CLI work with
+`--next`: reads (`nodes`/`links`/`references`) share one snapshot; mutations
+(`add`/`update`/`delete`) commit together or all roll back. Never mix categories.
+All segments parse before database access; results are buffered and numbered.
+`--` makes the literal remainder the final segment; use `--summary=--next` for
+a literal flag value. Read the chain guide before combining special arguments.
+
+For ordinary graph writes, use the connected [maintenance CLI](references/mutations.md):
+`evomneme add node`, `update node NAME`, `add edge SOURCE TARGET`, `update edge ID`,
+`add evidence`, `update evidence ID`, and `delete node NAME` / `delete edge ID` /
+`delete evidence ID`. Delete physically removes records while retaining audit
+history; dependencies restrict deletion by default. Explicit `--cascade` on
+node/edge deletes only the documented dependency closure, never neighboring
+nodes; the configured root cannot be deleted. Read the selected subcommand's `--help`
+for every parameter, default and constraint. Supply explicit understood claims and
+confidence; update only changed fields, retain omitted values, and use repeatable
+`--clear FIELD` for nullable fields. The guide includes complete parameter syntax
+and attachment-switching examples. These bound commands preserve scope and
+record graph changes/activity atomically; ordinary CLI maintenance does not
+require a SQL transport setup notice. Advanced SQL maintenance follows below.
+
+For file-wide reconciliation, use the read-only [file references CLI](references/references.md):
+`evomneme references PATH` (or several paths) returns all matching node, edge and
+evidence source locators in the bound scope, including stale/superseded rows.
+Read its `--help`; this supports maintenance without relying on current-only
+navigation to find historical references. Check textual citations separately.
+
 This section governs SQL maintenance and advanced queries. For ordinary read-only graph exploration, use the connected [navigation CLI](references/navigation.md): `evomneme nodes root`, `evomneme links root`, then `nodes`/`links` with returned names. It handles scope, active relationships, joins and output completeness; agents need not author SQL or configure SQL MCP for each navigation call. A missing navigation setup is an integration gap, not permission to silently replace a failed configured route. Preserve existing transport choices and report failures as required above.
 
 When SQL maintenance or advanced SQL querying is needed in an authorized host session, check whether its host-bound MCP `execute_sql` is available. If unavailable and no project-level refusal is recorded below, explicitly tell the user that `execute_sql` is unavailable in this session and offer to connect the EvoMneme MCP adapter to that host's database using [MCP setup](references/mcp.md). Report the observed cause, or say that the cause is unverified; implementation files or a skill catalog entry do not prove tool availability. Give this notice before using another SQL route, even when that route is already authorized. Honor an existing decision to use Python/CLI/native SQLite, and avoid repeating an unchanged notice within the same session. Connect or repair within existing authorization; otherwise wait for the user's decision. Continue independent authorized work while connection is pending. Ordinary navigation through the selected read-only CLI does not require this SQL setup notice.
