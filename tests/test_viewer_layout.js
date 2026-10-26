@@ -92,9 +92,9 @@ try {
   const advance=ms=>{for(let remaining=ms;remaining>0;){const dt=Math.min(16,remaining);now+=dt;step(now);remaining-=dt;}};
   step(now);advance(160);
   assert.ok(a.position('x')>0 && a.position('x')<200);
-  const oldMotionAt16ms=200*(1-(1+12*.016)*Math.exp(-12*.016));
-  assert.ok(Math.abs(a.position('x')-oldMotionAt16ms)<1e-6,
-    '160 ms of wall time must advance geometry by only 16 ms of the original animation');
+  const oldMotionAt32ms=200*(1-(1+12*.032)*Math.exp(-12*.032));
+  assert.ok(Math.abs(a.position('x')-oldMotionAt32ms)<1e-6,
+    '160 ms of wall time must advance geometry by 32 ms of the original animation');
   assert.ok(animated.zoom()>1 && animated.zoom()<2);
   assert.ok(animated.pan('x')>0 && animated.pan('x')<100);
   assert.ok(Math.abs(Number(b.style('opacity'))-.4)<.001);

@@ -60,9 +60,9 @@
     const tick=now=>{
       if (cy.destroyed()) {stop(cy);return;}
       const dt=active.last===undefined?0:Math.min(32,Math.max(0,now-active.last))/1000;
-      // Geometry runs at one tenth of real time. Keep appearances responsive
+      // Geometry runs at one fifth of real time. Keep appearances responsive
       // while retaining the existing spring state when a new target arrives.
-      const motionDt=dt/10;
+      const motionDt=dt/5;
       active.last=now;
       let settled=true;
       cy.batch(()=>{
