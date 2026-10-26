@@ -43,7 +43,7 @@ function progressStart() {
   const progress={started:performance.now(),stage:'Loading graph',done:null,total:null};
   state.progress=progress;
   const paint=()=>{
-    if (state.progress!==progress) return;
+    if (state.progress!==progress || performance.now()-progress.started<1000) return;
     setConnectionStatus(`${progress.stage} · ${progress.done==null?'working…':`${progress.done.toLocaleString()} / ${progress.total.toLocaleString()}`} · ${((performance.now()-progress.started)/1000).toFixed(1)} s`);
   };
   progress.paint=paint;
@@ -687,6 +687,7 @@ async function pollChanges(older=false) {
 }
 function renderTimeline() {
   const list = $('timeline');
+  const panel = $('activityPanel'), panelScroll = panel.scrollTop;
   const focused = document.activeElement?._historyFocus;
   const scroll=list.scrollTop;
   list.replaceChildren();
@@ -746,6 +747,7 @@ function renderTimeline() {
   }
   list.scrollTop=scroll;
   historyButton();
+  panel.scrollTop=panelScroll;
 }
 function table(container,rows){container.replaceChildren();if(!rows.length){container.append(text('p','No rows.','hint'));return;}const el=document.createElement('table'),thead=document.createElement('thead'),head=document.createElement('tr'),columns=[...new Set(rows.flatMap(Object.keys))];columns.forEach(c=>head.append(text('th',c)));thead.append(head);el.append(thead);const body=document.createElement('tbody');for(const row of rows){const tr=document.createElement('tr');columns.forEach(c=>tr.append(text('td',typeof row[c]==='object'?JSON.stringify(row[c],null,2):row[c])));body.append(tr);}el.append(body);container.append(el);}
 function attributes(container,record){const dl=document.createElement('dl');for(const [key,value]of Object.entries(record)){dl.append(text('dt',key),text('dd',typeof value==='object'?JSON.stringify(value,null,2):value));}container.append(dl);}

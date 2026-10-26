@@ -35,14 +35,27 @@ const fixture=(nodes,edges=[])=>({nodes:nodes.map(id=>({graph_id:id,label:id,kin
   edges:edges.map(([id,source,target])=>({graph_id:id,source,target,kind:'link'})),
   graph_available:true,whole_graph:true,revision:'r1',tables:[],facets:{},edge_facets:{},layers:[],
   totals:{nodes:nodes.length,edges:edges.length},matched_nodes:nodes.length,bytes:0,elapsed_ms:1});
-async function draw(data,reset=true) {
+async function draw(data,reset=true,slow=false) {
   context.fixture=data;
-  await run("graphAction(()=>draw(fixture,"+reset+",'fixture'))");
+  await run("graphAction(()=>{"+(slow?'state.progress.started-=1000;':'')+"return draw(fixture,"+reset+",'fixture');})");
   assert.equal($('error').textContent,'','graph update failed: '+$('error').textContent);
   assert.equal(run('state.busy'),false);assert.equal(run('state.progress'),null);assert.equal(intervals.size,0);
 }
 async function main(){
-  await draw(fixture(['a','b','c','d'],[['ab','a','b'],['parallel','a','b'],['loop','c','c'],['missing','d','absent']]));
+  // Fast polling preserves Connected; progress appears only after one second.
+  let now=0;
+  context.performance={now:()=>now};
+  run("setConnectionStatus('● Connected');progressStart();");
+  assert.equal($('connection').textContent,'● Connected');
+  now=999;await run("graphStage('Loading graph')");
+  assert.equal($('connection').textContent,'● Connected');
+  now=1000;run('state.progress.paint()');
+  assert.match($('connection').textContent,/Loading graph.*1\.0 s/);
+  run('progressStop()');
+  assert.equal(intervals.size,0);
+  context.performance=performance;
+  statuses.length=0;
+  await draw(fixture(['a','b','c','d'],[['ab','a','b'],['parallel','a','b'],['loop','c','c'],['missing','d','absent']]),true,true);
   assert.equal(run('state.componentCount'),3);
   assert.equal(run('cy.nodes().length'),4);assert.equal(run('cy.edges().length'),3);
   assert.equal(run("state.components.get('n:a')===state.components.get('n:b')"),true);
@@ -98,6 +111,13 @@ async function main(){
   assert.equal(run('loadedSessions().find(g=>g.identity.chat==="chat-a").events.length'),2);
   assert.equal(run('state.sessions.size'),2,'attributed changes contribute caller metadata');
   assert.equal($('timeline').children.length,3);
+  // Rebuilding the list can temporarily shrink the outer scroll container.
+  const replaceTimeline=$('timeline').replaceChildren;
+  $('timeline').replaceChildren=function(...children){$('activityPanel').scrollTop=0;replaceTimeline.apply(this,children);};
+  $('activityPanel').scrollTop=240;
+  await run('ingest([])');
+  assert.equal($('activityPanel').scrollTop,240,'empty Live polls preserve the activity panel scroll');
+  $('timeline').replaceChildren=replaceTimeline;
   assert.equal($('timeline').children.flatMap(s=>s.children).filter(e=>e._activity).length,0,'collapsed sessions build no activity buttons');
   assert.match($('historySummary').textContent,/2 calls · 2 row changes/);
   await run('ingest([activities[0],{...activities[0],source:"legacy"},activities[1]])');
