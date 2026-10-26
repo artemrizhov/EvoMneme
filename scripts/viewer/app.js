@@ -435,6 +435,13 @@ async function runReplayLayout(r) {
   r.layoutPending=null;r.layoutRunning=true;
   replayStatus();
   if(state.workerLayoutEnabled)$('workerStatus').textContent='On · calculating layout in background…';
+  const started=performance.now();let statusTimer;
+  const reportElapsed=()=>{
+    if(!layoutOwnerActive(r) || !state.workerLayoutEnabled || (r.layoutEpoch || 0)!==epoch)return;
+    $('workerStatus').textContent=`On · calculating layout in background · ${Math.floor((performance.now()-started)/1000)} s`;
+    statusTimer=setTimeout(reportElapsed,1000);
+  };
+  statusTimer=setTimeout(reportElapsed,1000);
   const beforeApply=async()=>{
     while((state.graphMutation || pointerStart) && layoutOwnerActive(r) && (r.layoutEpoch || 0)===epoch)
       await graphYield();
@@ -445,11 +452,10 @@ async function runReplayLayout(r) {
   try {await layout(options,beforeApply,null);}
   catch(error){if(error!==graphCancelled){if(r===state.replay)pauseReplay();showError(error,true);}}
   finally {
+    clearTimeout(statusTimer);
     r.layoutRunning=false;replayStatus();startReplayLayout(r);
     if(layoutOwnerActive(r) && state.workerLayoutEnabled && !r.layoutPending)
-      $('workerStatus').textContent=cy.nodes().length>800 && $('layout').value==='cose'
-        ?'On · large components use short background force passes; later updates refine positions.'
-        :'On · layout calculated in background.';
+      $('workerStatus').textContent='On · layout calculated in background.';
   }
 }
 async function drainGraphWork() {
@@ -866,7 +872,7 @@ async function draw(data, resetLayout, key) {
   await countComponents();
   await decorate();
   if(newIds.size && !resetLayout && oldPositions.size) {
-    const visible=cy.elements(':visible').not('.replayRemoved');
+    const visible=MemoryGraphLayout.layoutElements(cy);
     const linked=new Set();
     for(const edge of visible.edges()){linked.add(edge.data('source'));linked.add(edge.data('target'));}
     const isolated=new Set([...newIds].filter(id=>!linked.has(id)));

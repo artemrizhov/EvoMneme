@@ -7,13 +7,6 @@
 
   const transitions = new WeakMap();
 
-  // CoSE repulsion compares node pairs. Keep a pass bounded as a component
-  // grows, rather than multiplying thousands of nodes by hundreds of iterations.
-  function forceIterations(count,preferred) {
-    if(count<=800)return preferred;
-    return Math.min(preferred,Math.max(1,Math.floor(20000000/(count*count))));
-  }
-
   function runForce(cy,options) {
     const solver=cy.layout(options);
     // The bundled CoSE calls components() during initialization. Its general
@@ -50,6 +43,18 @@
       const item=active?.items.get(node.id());
       return [node.id(),{...(item?.node===node?item.target:node.position())}];
     }));
+  }
+
+  function layoutElements(cy) {
+    const elements=cy.elements().not('.replayRemoved');
+    // :visible also excludes opacity zero. New nodes start there while fading
+    // in, but their edges can already be visible. Opacity is presentation, not
+    // graph membership; explicit display/visibility filters still apply.
+    const shown=el=>el.takesUpSpace() && el.style('visibility')!=='hidden';
+    const nodes=elements.nodes().filter(n=>shown(n) && !n.ancestors().some(p=>p.style('visibility')==='hidden'));
+    const ids=new Set(nodes.map(n=>n.id()));
+    const edges=elements.edges().filter(e=>shown(e) && ids.has(e.data('source')) && ids.has(e.data('target')));
+    return nodes.union(edges);
   }
 
   function stop(cy) {
@@ -305,7 +310,7 @@
   }
 
   function arrangeNow(cy, options = {}) {
-    const elements=cy.elements(':visible').not('.replayRemoved'), nodes=elements.nodes();
+    const elements=layoutElements(cy), nodes=elements.nodes();
     if (!nodes.length) return;
     const width=Math.max(100,options.width || cy.width());
     const height=Math.max(100,options.height || cy.height());
@@ -342,7 +347,7 @@
       }
       const settings={...common,name:options.name || 'cose',randomize:false,
         nodeRepulsion:()=>6500,nodeOverlap:24,idealEdgeLength:()=>120,
-        componentSpacing:100,gravity:.2,numIter:forceIterations(nodes.length,nodes.length>250?350:800),minNodeSpacing:28,
+        componentSpacing:100,gravity:.2,numIter:350,minNodeSpacing:28,
         ...(nodes.length>800?{initialTemp:200,coolingFactor:.99}:{}),
         // Cytoscape's spacing transform expects a layout position for every
         // node; locked nodes have none in grid layouts and can produce NaNs.
@@ -543,7 +548,7 @@
         runForce(cy,{name:'cose',eles:region,animate:false,fit:false,randomize:false,
           nodeDimensionsIncludeLabels:true,nodeRepulsion:()=>6500,nodeOverlap:24,
           idealEdgeLength:()=>120,componentSpacing:100,gravity:.2,
-          numIter:forceIterations(members.length,350),initialTemp:200,minTemp:1,coolingFactor:.99});
+          numIter:350,initialTemp:200,minTemp:1,coolingFactor:.99});
         // Existing members need room too when a component grows or reconnects.
         separate(members);
         if(!members.some(n=>n.locked())) {
@@ -563,7 +568,7 @@
     cy.scratch('memory-layout',options.overview?'grid-overview':nodes.length>10000?'grid-large':name);
   }
 
-  function createWorkerLayout(createWorker, timeout=45000) {
+  function createWorkerLayout(createWorker, timeout=30*60*1000) {
     let worker,pending,serial=0;
     function cancel() {
       serial++;
@@ -577,7 +582,7 @@
       if(pending)cancel();
       if(!worker)worker=createWorker();
       const targets=options.incremental || options.runLayout===false?targetPositions(cy):null;
-      const id=++serial,elements=cy.elements(':visible').not('.replayRemoved').map(el=>{
+      const id=++serial,elements=layoutElements(cy).map(el=>{
         if(el.isEdge())return {group:'edges',data:{id:el.id(),source:el.data('source'),target:el.data('target')}};
         const style={};
         for(const key of ['width','height','border-width','padding','label','font-size','text-valign',
@@ -610,7 +615,7 @@
       transition(cy,()=>{
         cy.nodes().positions(n=>positions.get(n.id()) || n.position());
         cy.scratch('memory-layout',result.layout);
-        if(options.fit!==false)fitViewport(cy,cy.elements(':visible').not('.replayRemoved'));
+        if(options.fit!==false)fitViewport(cy,layoutElements(cy));
       },options);
       cy.emit('memorylayoutprogress',[{id,progress:false,update:1}]);
       return true;
@@ -618,5 +623,5 @@
     return {arrange:arrangeAsync,cancel};
   }
 
-  return {arrange,fit,separate,boxes,vacantPositions,transition,stop,targetPositions,createWorkerLayout};
+  return {arrange,fit,separate,boxes,vacantPositions,transition,stop,targetPositions,layoutElements,createWorkerLayout};
 });

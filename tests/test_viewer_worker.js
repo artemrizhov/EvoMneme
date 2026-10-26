@@ -3,6 +3,8 @@
 const assert=require('node:assert/strict');
 const {Worker}=require('node:worker_threads');
 const path=require('node:path');
+const fs=require('node:fs');
+const vm=require('node:vm');
 const cytoscape=require('../scripts/viewer/vendor/cytoscape.min.js');
 const layout=require('../scripts/viewer/graph-layout.js');
 const directory=path.resolve(__dirname,'../scripts/viewer');
@@ -46,6 +48,21 @@ async function main() {
       const a=boxes[i],b=boxes[j];
       assert.ok(Math.abs(a.x+a.dx-b.x-b.dx)>=(a.w+b.w)/2 || Math.abs(a.y+a.dy-b.y-b.dy)>=(a.h+b.h)/2);
     }
+    // A newly inserted endpoint can still be at opacity zero while its edge
+    // is already visible. The worker must receive a structurally closed graph.
+    cy.$id('b').style('opacity',0);
+    assert.equal(cy.$id('b').visible(),false);
+    assert.equal(cy.$id('ab').visible(),true);
+    assert.equal(layout.layoutElements(cy).nodes().length,3);
+    assert.equal(layout.layoutElements(cy).edges().length,2);
+    assert.equal(await controller.arrange(cy,{name:'grid',width:900,height:600,fit:false}),true,
+      'A fading endpoint must remain in the worker snapshot with its edges');
+    cy.$id('b').removeStyle('opacity');
+    cy.$id('b').style('display','none');
+    assert.equal(layout.layoutElements(cy).nodes().length,2,'Explicitly filtered nodes must remain excluded');
+    assert.equal(layout.layoutElements(cy).edges().length,0,'Edges to filtered endpoints must not leak into the snapshot');
+    assert.equal(await controller.arrange(cy,{name:'grid',width:900,height:600,fit:false}),true);
+    cy.$id('b').removeStyle('display');
     // Cancellation and replacement must not apply a stale result, even if the
     // terminated worker had already sent it before the next microtask.
     const before={...cy.$id('a').position()};
@@ -130,15 +147,55 @@ async function main() {
     if(i)largeElements.push({data:{id:'large-edge'+i,source:'large'+(i-1),target:'large'+i}});
   }
   const large=cytoscape({headless:true,styleEnabled:true,layout:{name:'preset'},elements:largeElements});
-  const largeController=layout.createWorkerLayout(realWorker,15000);
+  const largeController=layout.createWorkerLayout(realWorker);
   try {
-    assert.equal(await largeController.arrange(large,{name:'cose',seed:false,width:1200,height:400,fit:false}),true,
-      'A representative 6000-node connected component must complete a bounded background pass');
+    const pending=largeController.arrange(large,{name:'cose',seed:false,width:1200,height:400,fit:false});
+    await new Promise(resolve=>setTimeout(resolve,100));
+    largeController.cancel();
+    assert.equal(await pending,false,'A full large-component calculation must remain cancellable without awaiting completion');
     assert.equal(large.nodes().length,6000);assert.equal(large.edges().length,5999);
     for(const n of large.nodes())assert.ok(Number.isFinite(n.position('x')) && Number.isFinite(n.position('y')));
     const bounds=large.nodes().boundingBox();
-    assert.ok(bounds.w>1200 || bounds.h>400,'A large force pass must not squeeze thousands of nodes into viewport coordinates');
+    assert.ok(bounds.w>1200 || bounds.h>400,'Cancelling a full calculation must preserve the displayed geometry');
+    const requested=[];
+    const probe=cytoscape({headless:true,styleEnabled:true,elements:[{data:{id:'probe'}}]});
+    try {
+      for(const graph of [probe,large]) {
+        const native=graph.layout;
+        graph.layout=options=>{requested.push(options.numIter);return {options,run(){}};};
+        try {layout.arrange(graph,{name:'cose',seed:false,fit:false});}
+        finally {graph.layout=native;}
+      }
+      assert.ok(requested[0]>1,'Force layout must retain a full iteration budget');
+      assert.equal(requested[1],requested[0],'Growing to 6000 nodes must not reduce the iteration count');
+      const native=large.layout;
+      large.layout=options=>{requested.push(options.numIter);return {options,run(){}};};
+      try {layout.arrange(large,{name:'cose',incremental:true,affected:['large0'],fit:false});}
+      finally {large.layout=native;}
+      assert.equal(requested[2],requested[0],'Incremental layout must retain the same full budget');
+    } finally {probe.destroy();}
   } finally {largeController.cancel();large.destroy();}
+  // Virtual time verifies that a valid long calculation survives the former
+  // 45-second cutoff, without making the test itself wait for minutes.
+  let clock=0,nextTimer=0,worker;
+  const timers=new Map(),scope={module:{exports:{}},
+    setTimeout(fn,delay){const id=++nextTimer;timers.set(id,{fn,at:clock+delay});return id;},
+    clearTimeout(id){timers.delete(id);}};
+  vm.runInNewContext(fs.readFileSync(path.join(directory,'graph-layout.js'),'utf8'),scope);
+  const slow=cytoscape({headless:true,styleEnabled:true,elements:[{data:{id:'slow'}}]});
+  const patient=scope.module.exports.createWorkerLayout(()=>worker={postMessage(){},terminate(){}});
+  try {
+    let settled=false;
+    const pending=patient.arrange(slow,{fit:false});
+    pending.then(()=>{settled=true;},()=>{settled=true;});
+    clock=120000;
+    for(const [id,timer] of timers)if(timer.at<=clock){timers.delete(id);timer.fn();}
+    await Promise.resolve();
+    assert.equal(settled,false,'A long background calculation must not be killed after 45 seconds');
+    worker.onmessage({data:{id:1,layout:'cose',positions:[['slow',{x:10,y:20}]]}});
+    assert.equal(await pending,true,'A result arriving after two minutes must still apply');
+    assert.deepEqual(slow.$id('slow').position(),{x:10,y:20});
+  } finally {patient.cancel();slow.destroy();}
   console.log('Background layout passed: real worker computation, geometry, cancellation, replacement, failure and timeout.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
