@@ -361,10 +361,14 @@
       return {members,x1,y1,x2,y2,movable:members.some(n=>changed.has(n.id())) && !members.some(n=>n.locked())};
     });
     const placed=[],large=[],grid=new Map(),cellSize=256;
+    const mergeBounds=(a,b)=>!a?b && {...b}:!b?{...a}:{
+      x1:Math.min(a.x1,b.x1),y1:Math.min(a.y1,b.y1),x2:Math.max(a.x2,b.x2),y2:Math.max(a.y2,b.y2)};
+    let occupiedBounds=null;
     const cells=b=>({x1:Math.floor(b.x1/cellSize),x2:Math.floor(b.x2/cellSize),
       y1:Math.floor(b.y1/cellSize),y2:Math.floor(b.y2/cellSize)});
     const tooLarge=r=>(r.x2-r.x1+1)*(r.y2-r.y1+1)>4096;
     const insert=b=>{
+      occupiedBounds=mergeBounds(occupiedBounds,b);
       placed.push(b);const r=cells(b);
       if(tooLarge(r)){large.push(b);return;}
       for(let x=r.x1;x<=r.x2;x++)for(let y=r.y1;y<=r.y2;y++) {
@@ -385,8 +389,13 @@
     };
     items.filter(b=>!b.movable).forEach(insert);
     const moving=items.filter(b=>b.movable).sort((a,b)=>(b.x2-b.x1)*(b.y2-b.y1)-(a.x2-a.x1)*(a.y2-a.y1));
+    // Include not-yet-placed changed regions in the overall footprint too.
+    // Copy bounds so later translations cannot mutate these suffix envelopes.
+    const remaining=Array(moving.length+1).fill(null);
+    for(let i=moving.length-1;i>=0;i--)remaining[i]=mergeBounds(moving[i],remaining[i+1]);
     const spiralCursors=new Map();
-    for(const item of moving) {
+    for(let movingIndex=0;movingIndex<moving.length;movingIndex++) {
+      const item=moving[movingIndex];
       const origin={x1:item.x1,y1:item.y1,x2:item.x2,y2:item.y2};
       const center=placementOrigin || {x:0,y:0};
       const centroid=item.members.reduce((s,n)=>{
@@ -430,6 +439,47 @@
         const distance=Math.min(tx,ty),move={x:direction.x*distance,y:direction.y*distance};
         item.x1=origin.x1+move.x;item.x2=origin.x2+move.x;
         item.y1=origin.y1+move.y;item.y2=origin.y2+move.y;
+      }
+      const others=mergeBounds(occupiedBounds,remaining[movingIndex+1]);
+      if(item.members.length>1 && others && viewport?.width>72 && viewport?.height>72) {
+        const vw=viewport.width-72,vh=viewport.height-72;
+        const score=b=>{
+          const bounds=mergeBounds(others,b),w=(bounds.x2-bounds.x1)/vw,h=(bounds.y2-bounds.y1)/vh;
+          const dx=(b.x1-origin.x1)/vw,dy=(b.y1-origin.y1)/vh;
+          // Uniform fit is limited by the larger normalized dimension. Penalize
+          // wasted area and travel as well, rather than stretching a group.
+          return Math.max(w,h)**2+.03*w*h+.08*(dx*dx+dy*dy);
+        };
+        let best={...item},bestScore=score(best);
+        const original={...item,...origin},originalFree=!overlaps(original).length;
+        const originalScore=score(original);
+        if(originalFree && originalScore<bestScore){best=original;bestScore=originalScore;}
+        const width=origin.x2-origin.x1,height=origin.y2-origin.y1;
+        const consider=(x,y)=>{
+          const candidate={...item,x1:x-width/2,x2:x+width/2,y1:y-height/2,y2:y+height/2};
+          const value=score(candidate);
+          if(value<bestScore && !overlaps(candidate).length){best=candidate;bestScore=value;}
+        };
+        // Search around the current occupied graph, not the original spawn
+        // ellipse. Test both interior gaps and its outer neighbourhood.
+        const cx=(others.x1+others.x2)/2,cy=(others.y1+others.y2)/2;
+        const ow=(others.x2-others.x1)/shape.x,oh=(others.y2-others.y1)/shape.y;
+        const step=Math.max(70,Math.min(ow,oh)/6);
+        const outer=.65*Math.max(ow,oh,width/shape.x,height/shape.y,140);
+        const phase=Math.atan2(fallback.y,fallback.x);
+        consider(cx,cy);
+        for(let i=1;i<=96;i++) {
+          const angle=phase+i*2.399963229728653,radius=step*Math.sqrt(i);
+          consider(cx+Math.cos(angle)*radius*shape.x,cy+Math.sin(angle)*radius*shape.y);
+        }
+        for(let i=1;i<=48;i++) {
+          const angle=phase+i*2.399963229728653,radius=outer*Math.sqrt(i/48);
+          consider(cx+Math.cos(angle)*radius*shape.x,cy+Math.sin(angle)*radius*shape.y);
+        }
+        // Keep an already free location unless the improvement is material.
+        // Small edits must not alternate between nearly equivalent positions.
+        if(originalFree && bestScore>originalScore*.94)best=original;
+        item.x1=best.x1;item.x2=best.x2;item.y1=best.y1;item.y2=best.y2;
       }
       const dx=item.x1-origin.x1,dy=item.y1-origin.y1;
       if(dx || dy)item.members.positions(n=>{const p=n.position();return {x:p.x+dx,y:p.y+dy};});

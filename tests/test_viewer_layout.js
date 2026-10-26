@@ -377,4 +377,34 @@ function regionAspect(width,height) {
 assert.ok(regionAspect(1200,400)>1.3,'Component centers must favor the width of a landscape viewport');
 assert.ok(regionAspect(400,1200)<.8,'Component centers must favor the height of a portrait viewport');
 
+function fillEstablishedLayout(portrait) {
+  const cy=graph();
+  const point=(x,y)=>portrait?{x:y,y:x}:{x,y};
+  try {
+    cy.add([{data:{id:'fixed-a',label:'X'},position:point(-40,-900)},
+      {data:{id:'fixed-b',label:'X'},position:point(40,900)},
+      {data:{id:'fixed-edge',source:'fixed-a',target:'fixed-b'}},
+      {data:{id:'moving-a',label:'X'},position:point(-40,1900)},
+      {data:{id:'moving-b',label:'X'},position:point(40,1900)},
+      {data:{id:'moving-edge',source:'moving-a',target:'moving-b'}}]);
+    const frozen=new Map(['fixed-a','fixed-b'].map(id=>[id,{...cy.$id(id).position()}]));
+    const options={name:'cose',incremental:true,affected:['moving-a','moving-b'],fit:false,
+      width:portrait?400:1200,height:portrait?1200:400,placementOrigin:{x:0,y:0}};
+    graphLayout.arrange(cy,options);
+    const a=cy.$id('moving-a').position(),b=cy.$id('moving-b').position();
+    const center={x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    assert.ok(Math.abs(portrait?center.x:center.y)<900,
+      'Placement must improve the bounds of an established graph even without an immediate collision');
+    assert.ok(Math.abs(portrait?center.y:center.x)>150,
+      'A changed group must consider free space beside the occupied graph');
+    for(const [id,p] of frozen)assert.deepEqual(cy.$id(id).position(),p,'Global placement must preserve unaffected groups');
+    assertSeparated(cy);
+    graphLayout.arrange(cy,options);
+    const a2=cy.$id('moving-a').position(),b2=cy.$id('moving-b').position();
+    assert.ok(Math.hypot((a2.x+b2.x)/2-center.x,(a2.y+b2.y)/2-center.y)<1e-6,
+      'An already satisfactory location must not oscillate on the next calculation');
+  } finally {cy.destroy();}
+}
+fillEstablishedLayout(false);fillEstablishedLayout(true);
+
 console.log('Graph layout regressions passed: geometry, inertia, native layout and reduced motion.');

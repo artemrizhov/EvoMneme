@@ -92,6 +92,22 @@ async function main() {
       assert.ok(Math.abs(a.x+a.dx-b.x-b.dx)>=(a.w+b.w)/2 || Math.abs(a.y+a.dy-b.y-b.dy)>=(a.h+b.h)/2,
         'A background layout must separate changed groups from unrelated islands');
     }
+    const established=cytoscape({headless:true,styleEnabled:true,elements:[
+      {data:{id:'fixed-a'},position:{x:-40,y:-900}},
+      {data:{id:'fixed-b'},position:{x:40,y:900}},
+      {data:{id:'fixed-edge',source:'fixed-a',target:'fixed-b'}},
+      {data:{id:'moving-a'},position:{x:-40,y:1900}},
+      {data:{id:'moving-b'},position:{x:40,y:1900}},
+      {data:{id:'moving-edge',source:'moving-a',target:'moving-b'}}],layout:{name:'preset'}});
+    try {
+      assert.equal(await controller.arrange(established,{name:'cose',incremental:true,affected:['moving-a','moving-b'],
+        width:1200,height:400,placementOrigin:{x:0,y:0},fit:false}),true);
+      const a=established.$id('moving-a').position(),b=established.$id('moving-b').position();
+      assert.ok(Math.abs((a.y+b.y)/2)<900 && Math.abs((a.x+b.x)/2)>150,
+        'The actual worker must account for the full occupied frame, not just initial placement');
+      assert.deepEqual(established.$id('fixed-a').position(),{x:-40,y:-900});
+      assert.deepEqual(established.$id('fixed-b').position(),{x:40,y:900});
+    } finally {established.destroy();}
     let releaseApply,enterApply;
     const applyGate=new Promise(resolve=>releaseApply=resolve),entered=new Promise(resolve=>enterApply=resolve);
     const guarded=controller.arrange(cy,{name:'circle',width:900,height:600,fit:false},()=>{enterApply();return applyGate;});
