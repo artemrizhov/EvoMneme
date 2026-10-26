@@ -20,7 +20,7 @@ const context=vm.createContext({console,performance,setTimeout,clearTimeout,
   clearInterval(timer){intervals.delete(timer);clearInterval(timer);},
   document:{hidden:true,getElementById:$,createElement:()=>element(),querySelectorAll:()=>[],activeElement:null},
   location:{hash:'#token=fixture',pathname:'/'},sessionStorage:{getItem(){},setItem(){}},history:{replaceState(){}},
-  URLSearchParams,Option:function(value,label){this.value=value;this.label=label;},
+  URLSearchParams,AbortController,Option:function(value,label){this.value=value;this.label=label;},
   window:{addEventListener(){}},ResizeObserver:class{observe(){}},MemoryGraphLayout:graphLayout});
 vm.runInContext(fs.readFileSync(require.resolve('../scripts/viewer/vendor/cytoscape.min.js'),'utf8'),context);
 vm.runInContext('const cytoscapeCore=cytoscape;cytoscape=options=>cytoscapeCore({...options,container:undefined,headless:true,styleEnabled:true});',context);
@@ -28,6 +28,7 @@ let source=fs.readFileSync(require.resolve('../scripts/viewer/app.js'),'utf8');
 source=source.replace(/refresh\(true\);setInterval\(\(\)=>\{if\(\$\('live'\)\.checked && !state\.busy\)refresh\(\);\},2000\);\s*$/,'');
 assert.ok(!source.endsWith('},2000);\n'),'automatic polling disabled in harness');
 vm.runInContext(source,context);
+vm.runInContext('const shippedApi=api;',context);
 const run=code=>vm.runInContext(code,context);
 $('layout').value='grid';$('perspective').value='kind';$('limit').value='100';$('depth').value='1';
 $('followGraph').checked=true;
@@ -179,6 +180,22 @@ async function main(){
   assert.equal(run('cy._private.batchCount'),0);
   assert.equal(run('state.previous'),null);assert.equal(run('state.revision'),null);
   assert.equal(run('state.busy'),false);assert.equal(intervals.size,0);
+  // A display control aborts an outstanding snapshot request, rather than
+  // waiting for its timeout or letting its stale response replace the view.
+  let requestAborted=false;
+  context.fetch=(url,{signal})=>new Promise((resolve,reject)=>{
+    signal.addEventListener('abort',()=>{requestAborted=true;reject(new Error('aborted'));});
+  });
+  run('const savedTestApi=api;api=shippedApi');
+  $('error').textContent='';$('live').checked=true;
+  const loadingSnapshot=run('refresh()');
+  await new Promise(resolve=>setTimeout(resolve,20));
+  await $('fit').onclick();await loadingSnapshot;
+  assert.equal(requestAborted,true,'Display changes must abort stale snapshot requests');
+  assert.equal($('live').checked,true,'Cancellation is not a refresh failure');
+  assert.equal($('error').textContent,'');
+  assert.equal(run('state.busy'),false);assert.equal(intervals.size,0);
+  run('api=savedTestApi');
   // A foreground page with suspended animation frames uses the bounded timer
   // fallback too (e.g. a hidden panel or a renderer that has not started).
   context.requestAnimationFrame=()=>123;context.cancelAnimationFrame=()=>{};
@@ -256,7 +273,8 @@ async function main(){
   assert.equal(run('cy.scratch("memory-layout")'),'grid-overview');
   assert.equal(run('state.busy'),false);
   assert.match($('workerStatus').textContent,/Enable background layout/);
-  context.Worker=class {postMessage(){}terminate(){}};
+  let stoppedWorkers=0;
+  context.Worker=class {postMessage(){}terminate(){stoppedWorkers++;}};
   run('setWorkerLayout(true)');
   const pendingLargeLayout=run('graphAction(()=>requestedLayout({fit:false}))');
   await new Promise(resolve=>setTimeout(resolve,20));
@@ -264,6 +282,15 @@ async function main(){
   await pendingLargeLayout;
   assert.equal(run('state.busy'),false,'Disabling a pending worker must release startup work');
   assert.equal(run('cy.scratch("memory-layout")'),'grid-overview');
+  run('setWorkerLayout(true)');
+  const staleFilterLayout=run('graphAction(()=>requestedLayout({fit:false}))');
+  await new Promise(resolve=>setTimeout(resolve,20));
+  const beforeFilterCancel=stoppedWorkers;
+  // Disable only the replacement worker so the filtered redraw can finish.
+  run('state.workerLayoutEnabled=false');
+  $('apply').onclick();await staleFilterLayout;
+  assert.ok(stoppedWorkers>beforeFilterCancel,'Applying filters must terminate the old calculation');
+  assert.equal(run('state.busy'),false);assert.equal($('error').textContent,'');
   delete context.Worker;
   run('cy.layout=blockingLayout');$('layout').value='grid';
   // Preferences are restored before startup refresh, independently for each
@@ -319,7 +346,15 @@ async function main(){
   context.document.querySelectorAll=selector=>selector.startsWith('.sidebar input')
     ?['layout','perspective','labels','edgeLabels','followGraph','experimentalAcceleration','experimentalWorker',
       'search','wholeGraph','apply','live','refresh','previous','next'].map($):[];
-  await run('graphAction(openReplay)');await settleReplay();
+  let replayWorkerStopped=false;
+  context.Worker=class {postMessage(){}terminate(){replayWorkerStopped=true;}};
+  run('setWorkerLayout(true)');
+  const staleReplayLayout=run('graphAction(()=>requestedLayout({fit:false}))');
+  await new Promise(resolve=>setTimeout(resolve,20));
+  run('state.workerLayoutEnabled=false');
+  await $('replayOpen').onclick();await staleReplayLayout;await settleReplay();
+  assert.equal(replayWorkerStopped,true,'Opening Replay must terminate the current layout');
+  delete context.Worker;
   context.document.querySelectorAll=querySelectorAll;
   assert.equal(run('state.replay.index'),0);
   assert.equal($('live').checked,false);
@@ -354,7 +389,19 @@ async function main(){
   assert.equal(layoutMessages.length,1,'A slow layout must have only one in-flight worker request');
   assert.ok(run('state.replay.layoutPending'));
   assert.equal(run('state.graphActions.length'),0);
-  replyLayout(layoutMessages[0]);
+  run('let releaseBusyPreview;const busyPreview=new Promise(resolve=>releaseBusyPreview=resolve);state.testPreviewFrames=0;const previewListener=()=>state.testPreviewFrames++;cy.on("memorylayoutprogress",previewListener);');
+  const busyPreview=run('graphAction(()=>busyPreview)');
+  run('state.graphMutation=true');
+  const preview=layoutMessages[0];
+  preview.worker.onmessage({data:{id:preview.message.id,layout:'grid',
+    positions:preview.message.elements.filter(e=>e.group==='nodes').map(e=>[e.data.id,e.position])}});
+  await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(run('state.testPreviewFrames'),0,'Geometry must wait while topology is being mutated');
+  run('state.graphMutation=false');
+  await waitFor(()=>run('state.testPreviewFrames')===1,'A preview was blocked by unrelated UI work');
+  assert.equal(run('state.busy'),true,'Preview application must not wait for the whole data update');
+  run('releaseBusyPreview()');await busyPreview;
+  run('cy.off("memorylayoutprogress",previewListener)');
   await waitFor(()=>layoutMessages.length===2,'The latest pending layout was not dispatched');
   assert.equal(layoutMessages[1].message.elements.filter(e=>e.group==='edges').length,0,'The follow-up job must use the latest graph');
   replyLayout(layoutMessages[1]);

@@ -92,6 +92,9 @@ try {
   const advance=ms=>{for(let remaining=ms;remaining>0;){const dt=Math.min(16,remaining);now+=dt;step(now);remaining-=dt;}};
   step(now);advance(160);
   assert.ok(a.position('x')>0 && a.position('x')<200);
+  const oldMotionAt16ms=200*(1-(1+12*.016)*Math.exp(-12*.016));
+  assert.ok(Math.abs(a.position('x')-oldMotionAt16ms)<1e-6,
+    '160 ms of wall time must advance geometry by only 16 ms of the original animation');
   assert.ok(animated.zoom()>1 && animated.zoom()<2);
   assert.ok(animated.pan('x')>0 && animated.pan('x')<100);
   assert.ok(Math.abs(Number(b.style('opacity'))-.4)<.001);
@@ -108,7 +111,7 @@ try {
   graphLayout.transition(animated,()=>a.position({x:-300,y:50}));
   advance(5);
   assert.ok(a.position('x')>turning,'Direction changes must decelerate before reversing');
-  advance(2000);
+  advance(20000);
   assert.deepEqual(a.position(),{x:-300,y:50});
   assert.equal(Number(b.style('opacity')),1);
   assert.equal(frames.size,0);
@@ -124,7 +127,7 @@ try {
   reduced=false;
   graphLayout.arrange(animated,{name:'grid',width:900,height:600,fit:false});
   assert.deepEqual(a.position(),{x:900,y:50},'All layout stages must restore the initial frame');
-  step(now);advance(2000);
+  step(now);advance(20000);
   assertSeparated(animated);
   graphLayout.transition(animated,()=>a.position({x:1500,y:200}));
   const beforeStall={...a.position()};
@@ -134,9 +137,24 @@ try {
   assert.equal(frames.size,1,'Only one animation loop exists after a stall');
   for(let i=0;i<100;i++)graphLayout.transition(animated,()=>a.position({x:1600+i,y:200}));
   assert.equal(frames.size,1,'Rapid retargeting must not queue animation frames');
-  advance(2000);
+  advance(20000);
   assert.deepEqual(a.position(),{x:1699,y:200});
   assert.equal(frames.size,0);
+  // Manual Fit interrupts both node and camera inertia, including when the
+  // camera was still heading towards a very different layout destination.
+  for(const zoom of [.2,4]) {
+    graphLayout.transition(animated,()=>{
+      a.position({x:a.position('x')+500,y:200});
+      animated.viewport({zoom,pan:{x:800,y:-200}});
+    });
+    step(now);advance(160);
+    graphLayout.fit(animated,animated.elements());
+    const fitted={zoom:animated.zoom(),pan:{...animated.pan()},position:{...a.position()}};
+    assert.equal(frames.size,0,'Fit must cancel the previous animation frame');
+    advance(20000);
+    assert.deepEqual({zoom:animated.zoom(),pan:{...animated.pan()},position:{...a.position()}},fitted,
+      'A previous layout must not change the fitted viewport afterwards');
+  }
 } finally {graphLayout.stop(animated);animated.destroy();}
 
 const islands=graph();

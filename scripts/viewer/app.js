@@ -9,25 +9,44 @@ const state = { snapshot: null, offset: 0, root: '', selected: null, pathStart: 
   selectedActivity:null,pendingLayout:false,disabledLayers:new Set(),revision:null,refreshQueued:false,resetQueued:false,activitiesReady:false,
   journal:null,changeAfter:null,changeBefore:null,changeOlder:false,changeBusy:false,seenChanges:new Set(),
   activityAfter:null,activityBefore:null,activityOlder:false,seenActivities:new Set(),expandedSessions:new Set(),sessionLimits:new Map(),selectedSession:null,
-  components:new Map(),componentCount:0,graphActions:[],progress:null,replay:null,acceleration:false,workerLayoutEnabled:false };
+  components:new Map(),componentCount:0,graphActions:[],progress:null,replay:null,acceleration:false,workerLayoutEnabled:false,graphMutation:false,workerError:'' };
 const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c8d889','#88cdd7','#ccab91','#b0a3d4'];
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
 function setConnectionStatus(value) { const el=$('connection');el.textContent=value;el.title=value; }
 function showError(error, persistent=false) { $('error').textContent = error.message || String(error); $('error').classList.remove('hidden'); clearTimeout(showError.timer); if (!persistent) showError.timer = setTimeout(() => $('error').classList.add('hidden'), 12000); }
+const graphCancelled=new Error('Graph work superseded');
+function checkGraphWork(work=state.activeWork) {if(work?.cancelled)throw graphCancelled;}
+function interruptGraphWork() {
+  const work=state.activeWork;
+  if(work) {
+    work.cancelled=true;
+    for(const controller of work.requests)controller.abort();
+    // A cancelled draw may have applied only part of its topology.
+    state.previous=null;state.revision=null;
+  }
+  state.graphActions=[];state.refreshQueued=state.resetQueued=false;
+  cancelReplayLayout(state.replay);backgroundLayout.cancel();
+  MemoryGraphLayout.stop(cy);
+}
 async function api(route, values = {}) {
+  const work=state.activeWork;
+  checkGraphWork(work);
   const controller=new AbortController();
+  work?.requests.add(controller);
   const timeout=setTimeout(()=>controller.abort(),90000);
   try {
     const response=await fetch('/api/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token || ''},body:JSON.stringify(values),signal:controller.signal});
     const data=await response.json();
+    checkGraphWork(work);
     if (!response.ok) throw new Error(data.error || response.statusText);
     return data;
   } catch (error) {
+    checkGraphWork(work);
     if (controller.signal.aborted) throw new Error('Viewer request timed out after 90 seconds. Check the server and retry with a narrower graph selection.');
     throw error;
-  } finally {clearTimeout(timeout);}
+  } finally {clearTimeout(timeout);work?.requests.delete(controller);}
 }
-function guarded(fn) { return (...args) => Promise.resolve().then(() => fn(...args)).catch(showError); }
+function guarded(fn) { return (...args) => Promise.resolve().then(() => fn(...args)).catch(error=>{if(error!==graphCancelled)showError(error);}); }
 // A timer fallback also works in background tabs, where animation frames stop.
 function graphYield() { return new Promise(resolve=>setTimeout(resolve,0)); }
 function graphPaint() {
@@ -55,6 +74,7 @@ function progressStop() {
   state.progress=null;
 }
 async function graphStage(stage,total=null) {
+  const work=state.activeWork;checkGraphWork(work);
   if (state.progress) {
     Object.assign(state.progress,{stage,total,done:total==null?null:0});
     state.progress.paint();
@@ -64,14 +84,17 @@ async function graphStage(stage,total=null) {
     if(now-(state.replay.lastYield ?? -Infinity)<8)return;
     const replay=state.replay;
     await graphPaint();
+    checkGraphWork(work);
     if(state.replay===replay)replay.lastYield=performance.now();
     return;
   }
   await graphPaint();
+  checkGraphWork(work);
 }
 async function graphChunks(items,fn,stage,batch=false) {
   if (stage) await graphStage(stage,items.length);
   for (let start=0;start<items.length;start+=1500) {
+    checkGraphWork();
     const end=Math.min(start+1500,items.length);
     if(batch)cy.startBatch();
     try {for (let i=start;i<end;i++) fn(items[i],i);}
@@ -79,6 +102,7 @@ async function graphChunks(items,fn,stage,batch=false) {
     if (stage && state.progress) {state.progress.done=end;state.progress.paint();}
     if (items.length>1500) {
       await graphYield();
+      checkGraphWork();
       if(state.replay)state.replay.lastYield=performance.now();
     }
   }
@@ -86,21 +110,23 @@ async function graphChunks(items,fn,stage,batch=false) {
 async function graphAction(fn) {
   if (state.busy) {state.graphActions.push(fn);return;}
   state.busy=true;progressStart();
+  const work=state.activeWork={cancelled:false,requests:new Set()};
   try {
     await fn();
     await graphStage('Rendering graph');
     progressStop();
     setConnectionStatus('● Connected · '+new Date().toLocaleTimeString());
   } catch(error) {
+    if(error===graphCancelled || work.cancelled)return;
     $('live').checked=false;
     state.graphActions=[];state.refreshQueued=state.resetQueued=false;
     setConnectionStatus('Graph update failed · Live paused');showError(error,true);
   } finally {
-    progressStop();state.busy=false;
+    progressStop();state.busy=false;state.activeWork=null;
     await drainGraphWork();
   }
 }
-function graphControl(fn) {return guarded((...args)=>graphAction(()=>fn(...args)));}
+function graphControl(fn) {return guarded((...args)=>{interruptGraphWork();return graphAction(()=>fn(...args));});}
 
 // Reversible row deltas retain entities deleted since recording began. The
 // baseline and all deltas come from one server-side read transaction.
@@ -254,7 +280,11 @@ async function renderReplay() {
           }
           replayStatus();
         }
-      } catch(error) {pauseReplay();r.activeTarget=null;r.desired=r.index;throw error;}
+      } catch(error) {
+        r.activeTarget=null;
+        if(error!==graphCancelled){pauseReplay();r.desired=r.index;}
+        throw error;
+      }
     });
   } finally {
     r.rendering=false;replayStatus();
@@ -321,6 +351,7 @@ async function openReplay() {
 }
 async function exitReplay() {
   const r=state.replay;if(!r)return;
+  interruptGraphWork();
   pauseReplay();r.exiting=true;clearTimeout(r.renderTimer);cancelReplayLayout(r);
   await graphAction(async()=>{
     MemoryGraphLayout.stop(cy);
@@ -341,7 +372,7 @@ $('replayOpen').onclick=graphControl(openReplay);
 $('replayPlay').onclick=playReplay;
 $('replayPosition').oninput=()=>{
   const target=$('replayPosition').value;
-  pauseReplay();cancelReplayLayout(state.replay);seekReplay(target);
+  pauseReplay();interruptGraphWork();seekReplay(target);
 };
 $('replaySpeed').onchange=()=>{if(state.replay?.playing){pauseReplay();playReplay();}};
 $('replayExit').onclick=guarded(exitReplay);
@@ -368,19 +399,19 @@ function startReplayLayout(r) {
 async function runReplayLayout(r) {
   r.layoutTimer=null;
   if(state.replay!==r || r.exiting || !r.layoutPending)return;
-  if(state.busy){r.layoutTimer=setTimeout(()=>void runReplayLayout(r),16);return;}
+  if(state.graphMutation){r.layoutTimer=setTimeout(()=>void runReplayLayout(r),16);return;}
   const options=r.layoutPending,epoch=r.layoutEpoch || 0;
   r.layoutPending=null;r.layoutRunning=true;
   replayStatus();
   const beforeApply=async()=>{
-    while((state.busy || pointerStart) && state.replay===r && !r.exiting && (r.layoutEpoch || 0)===epoch)
+    while((state.graphMutation || pointerStart) && state.replay===r && !r.exiting && (r.layoutEpoch || 0)===epoch)
       await graphYield();
     if(state.replay!==r || r.exiting || (r.layoutEpoch || 0)!==epoch)return false;
     if(!$('followGraph').checked)options.fit=false;
     return true;
   };
   try {await layout(options,beforeApply);}
-  catch(error){pauseReplay();showError(error,true);}
+  catch(error){if(error!==graphCancelled){pauseReplay();showError(error,true);}}
   finally {r.layoutRunning=false;replayStatus();startReplayLayout(r);}
 }
 async function drainGraphWork() {
@@ -481,6 +512,7 @@ function setAcceleration(enabled) {
 }
 function setWorkerLayout(enabled) {
   backgroundLayout.cancel();
+  state.workerError='';
   if(enabled && typeof Worker!=='function') {
     state.workerLayoutEnabled=false;$('experimentalWorker').checked=false;
     $('workerStatus').textContent='Background workers are unavailable. Layout runs on the main thread.';
@@ -494,9 +526,9 @@ function setWorkerLayout(enabled) {
   saveVisualPreferences();
 }
 $('experimentalAcceleration').onchange=graphControl(()=>setAcceleration($('experimentalAcceleration').checked));
-$('experimentalWorker').onchange=guarded(()=>{
+$('experimentalWorker').onchange=graphControl(()=>{
   setWorkerLayout($('experimentalWorker').checked);
-  if(state.workerLayoutEnabled && !state.busy)return graphAction(()=>requestedLayout({seed:true}));
+  if(state.workerLayoutEnabled)return requestedLayout({seed:true});
 });
 $('cy').addEventListener('webglcontextlost',event=>{
   if(!state.acceleration)return;
@@ -632,6 +664,7 @@ async function decorate() {
   if (values.length > 30) $('legend').append(text('span',`+${values.length-30} categories`));
 }
 async function layout(options = {},beforeApply=null) {
+  const work=state.activeWork;checkGraphWork(work);
   const bounds=$('cy').getBoundingClientRect();
   if (bounds.width<1 || bounds.height<1) {state.pendingLayout=true;return;}
   state.pendingLayout=false;
@@ -647,11 +680,14 @@ async function layout(options = {},beforeApply=null) {
   if(state.workerLayoutEnabled) {
     try {
       const applied=await backgroundLayout.arrange(cy,settings,guard);
+      checkGraphWork(work);
       if(applied || state.workerLayoutEnabled)return;
     }
     catch(error) {
+      if(error===graphCancelled || work?.cancelled)throw graphCancelled;
       backgroundError=error.message;
       setWorkerLayout(false);
+      state.workerError=backgroundError;
       $('workerStatus').textContent='Background layout failed: '+error.message+'. Background layout disabled; large graphs use a quick grid overview.';
     }
   }
@@ -662,7 +698,8 @@ async function layout(options = {},beforeApply=null) {
   // overview, including after a failed/timed-out experimental worker.
   if(cy.nodes().length>800 && settings.name==='cose') {
     settings.overview=true;
-    $('workerStatus').textContent=(backgroundError?'Background layout failed: '+backgroundError+'. ':'')
+    const failure=backgroundError || state.workerError;
+    $('workerStatus').textContent=(failure?'Background layout failed: '+failure+'. ':'')
       +'Large graph: quick grid overview keeps controls responsive. Enable background layout for force-directed positioning.';
   }
   MemoryGraphLayout.arrange(cy,settings);
@@ -742,6 +779,7 @@ async function draw(data, resetLayout, key) {
   let topologyChanged=oldIds.size!==ids.size;
   await graphChunks([...ids],id=>{if(!oldIds.has(id))topologyChanged=true;},'Comparing topology');
   await graphStage('Updating graph');
+  state.graphMutation=true;
   cy.startBatch();
   try {
     cy.elements().removeClass('changed');
@@ -764,8 +802,12 @@ async function draw(data, resetLayout, key) {
       if (additions.length) cy.add(additions);
       if(state.progress) {Object.assign(state.progress,{stage:'Adding graph elements',done:Math.min(i+1500,elements.length),total:elements.length});state.progress.paint();}
       if(elements.length>1500)await graphYield();
+      checkGraphWork();
     }
-  } finally {await graphStage('Finalizing graph elements');cy.endBatch();}
+  } finally {
+    try {await graphStage('Finalizing graph elements');}
+    finally {cy.endBatch();state.graphMutation=false;}
+  }
   await countComponents();
   await decorate();
   if (!state.replay) await applyHighlight();
@@ -799,8 +841,10 @@ async function draw(data, resetLayout, key) {
 }
 async function refresh(resetLayout=false) {
   if (state.replay) return;
+  if(resetLayout)interruptGraphWork();
   if (state.busy) {state.refreshQueued=true;state.resetQueued ||= resetLayout;return;}
   state.busy = true;
+  const work=state.activeWork={cancelled:false,requests:new Set()};
   progressStart();
   $('error').classList.add('hidden');
   try {
@@ -853,6 +897,7 @@ async function refresh(resetLayout=false) {
     progressStop();
     setConnectionStatus('● Connected · '+new Date().toLocaleTimeString());
   } catch (error) {
+    if(error===graphCancelled || work.cancelled)return;
     $('live').checked=false;
     state.refreshQueued=state.resetQueued=false;
     state.graphActions=[];state.previous=null;state.revision=null;
@@ -862,6 +907,7 @@ async function refresh(resetLayout=false) {
   } finally {
     progressStop();
     state.busy = false;
+    state.activeWork=null;
     await drainGraphWork();
   }
 }
@@ -1137,7 +1183,7 @@ function renderTimeline() {
     row._activity = event;
     row._historyFocus='event:'+activityKey(event);
     row.setAttribute('aria-pressed',String(event === state.selectedActivity));
-    row.onclick = guarded(()=>graphAction(()=>selectActivity(event)));
+    row.onclick = graphControl(()=>selectActivity(event));
     row.append(text('span',new Date(event.time*1000).toLocaleTimeString(),'time'));
     const details = event.source==='database_change'
       ? `${event.operation.toUpperCase()} ${event.table} · ${new Set(references(event)).size} related IDs · saved in SQLite`
@@ -1248,7 +1294,7 @@ $('aggregate').onchange = () => {
 function renderTables(tables){syncSelect($('tableSelect'),tables.map(t=>[t.name,`${t.name} (${t.count})`]),false);}
 async function loadTable(){const name=$('tableSelect').value;if(!name){$('tableData').replaceChildren();return;}const definition=state.snapshot.tables.find(t=>t.name===name);$('schemaDetail').textContent=definition.sql+'\n\nForeign keys: '+JSON.stringify(definition.foreign_keys,null,2);const quoted='"'+name.replaceAll('"','""')+'"';const result=await api('query',{sql:`SELECT * FROM ${quoted} LIMIT 201 OFFSET ${state.tableOffset}`});table($('tableData'),result.rows);$('tablePage').textContent=`Rows ${state.tableOffset+1}–${state.tableOffset+result.rows.length} / ${definition.count}`;$('tablePrevious').disabled=state.tableOffset===0;$('tableNext').disabled=!result.has_more;}
 function download(name,data,type){const url=URL.createObjectURL(new Blob([data],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-$('refresh').onclick = () => refresh();
+$('refresh').onclick = () => {interruptGraphWork();return refresh();};
 $('apply').onclick = () => { state.offset=0; refresh(true); };
 $('search').onkeydown = e => { if (e.key==='Enter') $('apply').click(); };
 $('clearFilters').onclick = () => {

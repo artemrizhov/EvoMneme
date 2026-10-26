@@ -60,6 +60,9 @@
     const tick=now=>{
       if (cy.destroyed()) {stop(cy);return;}
       const dt=active.last===undefined?0:Math.min(32,Math.max(0,now-active.last))/1000;
+      // Geometry runs at one tenth of real time. Keep appearances responsive
+      // while retaining the existing spring state when a new target arrives.
+      const motionDt=dt/10;
       active.last=now;
       let settled=true;
       cy.batch(()=>{
@@ -68,8 +71,8 @@
           if(node.removed())continue;
           if(!node.locked()) {
             const p=node.position();
-            const [x,vx,sx]=spring(p.x,item.target.x,item.vx,dt);
-            const [y,vy,sy]=spring(p.y,item.target.y,item.vy,dt);
+            const [x,vx,sx]=spring(p.x,item.target.x,item.vx,motionDt);
+            const [y,vy,sy]=spring(p.y,item.target.y,item.vy,motionDt);
             item.vx=vx;item.vy=vy;node.position({x,y});
             settled &&= sx && sy;
           } else {item.vx=item.vy=0;}
@@ -80,9 +83,9 @@
           }
         }
         const pan=cy.pan(),velocity=active.velocity,target=active.destination;
-        const [zoom,vz,sz]=spring(cy.zoom(),target.zoom,velocity.zoom,dt,.00001);
-        const [x,vx,sx]=spring(pan.x,target.pan.x,velocity.x,dt);
-        const [y,vy,sy]=spring(pan.y,target.pan.y,velocity.y,dt);
+        const [zoom,vz,sz]=spring(cy.zoom(),target.zoom,velocity.zoom,motionDt,.00001);
+        const [x,vx,sx]=spring(pan.x,target.pan.x,velocity.x,motionDt);
+        const [y,vy,sy]=spring(pan.y,target.pan.y,velocity.y,motionDt);
         active.velocity={zoom:vz,x:vx,y:vy};
         cy.viewport({zoom,pan:{x,y}});settled &&= sz && sx && sy;
       });
@@ -213,6 +216,13 @@
   }
 
   function fit(cy, elements, padding = 36) {
+    // An explicit fit owns the viewport immediately; an old spring must not
+    // pull it back towards a layout destination on the next renderer frame.
+    stop(cy);
+    fitViewport(cy,elements,padding);
+  }
+
+  function fitViewport(cy, elements, padding = 36) {
     if (!elements.length) return;
     // Fitting a tiny initial graph must not magnify every node several-fold.
     cy.fit(elements,padding);
@@ -286,7 +296,7 @@
       }
       packComponents(groups,width,height);
       cy.scratch('memory-layout',options.overview?'grid-overview':'grid-large');
-      if (options.fit!==false) fit(cy,elements);
+      if (options.fit!==false) fitViewport(cy,elements);
       return;
     }
     cy.scratch('memory-layout',options.name || 'cose');
@@ -313,7 +323,7 @@
       separate(members);
     }
     packComponents(groups,width,height);
-    if (options.fit!==false) fit(cy,elements);
+    if (options.fit!==false) fitViewport(cy,elements);
   }
 
   function arrange(cy, options = {}) {
@@ -366,8 +376,9 @@
       transition(cy,()=>{
         cy.nodes().positions(n=>positions.get(n.id()) || n.position());
         cy.scratch('memory-layout',result.layout);
-        if(options.fit!==false)fit(cy,cy.elements(':visible').not('.replayRemoved'));
+        if(options.fit!==false)fitViewport(cy,cy.elements(':visible').not('.replayRemoved'));
       },options);
+      cy.emit('memorylayoutprogress',[{id,progress:false,update:1}]);
       return true;
     }
     return {arrange:arrangeAsync,cancel};
