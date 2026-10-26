@@ -2,6 +2,14 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-10-26 — Select code knowledge through source understanding
+
+The previous full-coverage instructions encouraged lexical declaration dumps, test internals, redundant file links and service nodes for every review or unresolved site. They are superseded by a bounded entity policy: files/modules, classes, methods/functions, fields, constants and globals, with local implementation omitted unless an entity escapes. Tests stop at cases, external code at directly used boundaries, and properties/overloads are consolidated. Ordinary tasks maintain knowledge from relevant source reading; only explicit full builds/rebuilds trigger sequential, resumable project-wide reading. Search remains navigation, not a record generator.
+
+Direct relationships require the agent's own analysis and source evidence. Immediate containment replaces redundant descendant-to-file links; uncertainty and routine review work stay in summaries and file inspection attributes. The viewer now retrieves file inspection state by its own node or a matching current file locator in the same scope. The v3 schema and generic SQL transport are unchanged; existing host data is not automatically cleaned or reclassified.
+
+Validation: the staged change passed all 30 schema/viewer tests independently of concurrent edits, including three new regressions for edge-free file lookup, scope isolation, missing/empty locators and stale/non-file exclusions. The combined working tree also passed its 11 schema and 22 viewer tests; three loopback HTTP checks required an outside-sandbox retry after WinError 10013. The selection examples were reviewed for private methods, local helpers, escaping callbacks, properties/overloads, external bases, shallow parameterized tests and the two population modes. This is not a fresh-session agent behavior evaluation or a measured reduction in host data. The skill-creator validator could not start because its environment lacks PyYAML; no dependency was installed. Viewer work was coordinated at the detail-method boundary; concurrent UI/large-graph changes are separate.
+
 ## 2026-10-26 — Viewer requires v3
 
 At the user's request, removed legacy graph projections, detail adapters, graph-ID aliases and legacy activity/journal link mappings. The viewer now validates the controlled v3 contract at startup and on database reads, including custom projections, before optional journal installation can write anything. Unsupported stores require a compatible published migration. The generic SQL executor and explicit v2 migration remain available; neither provides legacy viewing.

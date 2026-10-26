@@ -384,10 +384,11 @@ class Explorer:
                         row.update(extra[0])
                     coverage, more = self.rows(db, '''SELECT f.*,n.source_path FROM file_details f
                         JOIN nodes n ON n.scope_id=f.scope_id AND n.id=f.node_id
-                        WHERE f.scope_id=? AND (f.node_id=? OR f.node_id IN (
-                            SELECT target_id FROM edges WHERE scope_id=? AND source_id=?
-                            AND kind='declared_in' AND validity='current'))''',
-                        [row['scope_id'], row['id'], row['scope_id'], row['id']], 200)
+                        WHERE f.scope_id=? AND (f.node_id=? OR (
+                            n.kind='file' AND n.validity='current'
+                            AND n.source_path=NULLIF(?, '')))
+                        ORDER BY f.node_id''',
+                        [row['scope_id'], row['id'], row.get('source_path')], 200)
                     row['coverage_has_more'] = more
             if rows and not self.mapping and rows[0].get('source_table') in {'nodes', 'edges'}:
                 row = rows[0]

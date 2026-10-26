@@ -1,49 +1,71 @@
-# Full code graph: coverage and maintenance
+# Meaningful code graph: selection and maintenance
 
-Use this procedure for initial construction, expansion of an existing architecture-only store, continuation of incomplete coverage, and structural reconciliation. It applies within an authorized host; it does not activate EvoMneme in its own repository. The agent owns analysis and SQL within the [controlled schema](schema.md). No external analyzer or separate indexing service is required.
+The graph is a navigable account of code the agent has understood, not an index of every token or declaration. Apply these rules within an authorized host using the [controlled schema](schema.md). Do not activate EvoMneme in its own repository. No scanner, separate indexing pipeline or new schema is required.
 
-## Establish the source boundary
+## Choose the reading scope
 
-Inventory the host's sources independently of the database. Include all project-owned packages, modules, declarations, tests, scripts, and code-bearing configuration, including private, nested, and currently unused code. Account for uncommitted and new files as well as tracked sources. Do not assume a Git-tracked file list alone is complete or traverse dependency/build directories indiscriminately.
+**Ordinary development:** add and reconcile knowledge from sources actually read while solving the task. Follow relevant dependencies when needed to understand them. Do not inventory or populate the entire repository merely because the skill is active, and do not resume unrelated full-build work during a small task.
 
-Record the host/version/worktree and inspected content identities, included roots, and explicit exclusions with reasons. Secrets, knowledge-store files, third-party dependency trees, and disposable build outputs are outside the normal source inventory. For generated code, record its generator/source and boundary references; record any excluded generated output explicitly. Do not exclude project-owned code just because it is large, unfamiliar, ignored by Git, or irrelevant to the current feature. Honor a user's narrower scope and describe resulting coverage within that scope. Inaccessible or unsupported project sources are coverage gaps, not successful exclusions.
+**Explicit full build or rebuild:** establish the own-source boundary and read it sequentially in bounded, resumable batches. File/directory listings may establish the traversal order, including local new files; search may locate relevant code. Neither those lists nor grep/static-analysis results are observations to turn into records. Read and understand the sources yourself before preparing SQL. A rebuild request does not by itself require deleting the existing database; reconcile useful data within the agreed scope.
 
-## Represent declarations and relationships
+Include own application/library code and own scripts/examples under the same selection rules. Tests and foreign dependencies use the shallow boundaries below. Do not traverse dependency trees, vendored implementations, secrets or disposable build outputs. Describe excluded roots/reasons once in the existing project/module summary or private connection receipt; do not create a node per excluded file or generated artifact. For generated code, retain the meaningful generator/source boundary rather than indexing the output mechanically. Documentation/configuration can support facts without becoming code nodes for every file, key or code fence.
 
-For every in-scope file, record its role and declarations as `nodes`: modules/namespaces, classes/interfaces/types, functions/methods/constructors, fields/properties/constants, and equivalent language structures. Include nested declarations and distinguish overloads, accessors, and same-named symbols in different owners. Use identities qualified by source and owner, plus a language-appropriate disambiguator; line numbers alone are not identities. Store qualified names/signatures/language in `symbol_details`; common responsibilities and source locations stay on the node. Distinguish declared members from inherited members reachable through inheritance.
+## Select entities
 
-Store every relationship in the shared `edges` table, rather than burying names in summaries or introducing separate code adjacency tables:
+The allowed code entities are **files, modules, classes, methods, functions, fields, constants and global variables**. These are data conventions, not new SQL constraints. Use stable identities qualified by source and immediate owner; line numbers are locators, not identity. Keep source paths consistent within a scope. Store qualified names/signatures/language in `symbol_details` and common meaning/locators on `nodes`.
 
-- Ownership/containment, imports/exports/re-exports, inheritance, and interface implementation.
-- Calls and symbol references, reads/writes and data dependencies where represented in the source.
-- Configuration, registrations, events, callbacks, dependency injection, and other indirect/runtime connections.
+- Keep module-level functions and class methods, including private ones. Keep instance/class fields, class constants and module globals/constants. Do not copy inherited members onto subclasses.
+- Exclude function-local variables and nested functions/classes/constants that only serve internal implementation. An entity returned, exposed or passed to another consumer may be represented when reading establishes that boundary crossing; it is an exception to the local-declaration rule, not a reason to store the rest of the body. Passing or returning a local variable's value does not by itself expose the local variable as a program entity; a returned callable/type can have its own identity.
+- Model a property as one field; describe access behavior there. Consolidate overload signatures and getter/setter variants into their logical entity rather than separate nodes. Do not invent extra kinds for each syntax form.
+- A file and a module need separate nodes only when each represents a distinct responsibility/boundary. A one-file module normally uses the file node as the owner.
+- Represent foreign code only by the directly used entity, such as a called function or base class, with a short role and available locator. Use its actual entity kind and note the external boundary in its summary. Do not expand its implementation, inherited members or dependencies, or create unused imported symbols.
+- Represent tests by test-case functions/methods and minimal file/class ownership. Summarize what the case checks and link it to own code only when analysis establishes a meaningful direct interaction. Do not store fixtures, helpers, local declarations, assertion internals or separate parameterized instances.
 
-Review these categories throughout the source inventory, not just in selected subsystems. Preserve direction, relationship kind, and evidence locations; multiple occurrences may share an edge if their evidence remains available. Represent external dependencies as boundary entities without indexing their implementation. Separate resolved edges from inferred candidate targets and unresolved references. For a dynamic target that cannot be established, retain the originating symbol/location, what is known, and the missing evidence as queryable unresolved work. Do not invent a resolved call edge or silently omit the site. An unresolved edge is not evidence that no dependency exists.
+A code node must identify an actual eligible entity. Its summary captures responsibility, important behavior/contracts, limitations and consequential uncertainty, without copying the source body. Read source again when detailed implementation is needed. Architecture, decisions and substantive findings may be separate knowledge nodes; routine coverage checks and analysis TODOs are not such findings.
 
-Architecture, contracts, decisions, and findings link to the structural graph. Preserve existing useful records when expanding a summary-only store. Do not copy implementation bodies or turn every expression into a prose record; compact locators and relationships provide navigation back to source.
+## Establish relationships
 
-## Build and demonstrate coverage
+Write an edge only after your own source analysis establishes what the connection means and where it is supported. Code search and analyzer output can help navigate, but are not sufficient evidence, even when accompanied by hashes or line numbers. SQL batching is appropriate for already understood observations.
 
-Keep source inventory as file `nodes` and coverage state in `file_details`, connected to declarations through `declared_in` edges. Track each file's inspected content identity, declaration coverage, relationship categories reviewed, unresolved sites, and remaining work. Record category review/gaps in `remaining_work` and unresolved sites as graph nodes/edges; do not create private coverage tables. Distinguish pending, partial, verified, stale, and blocked work, with reasons. A file with no declarations still needs a recorded inspection outcome. Keep explicit exclusions visible alongside coverage, rather than counting them as inspected code. Additional structured coverage fields require a published schema/viewer change.
+- Use `contains` from the immediate owner to a member: file → class → method/field, or file → top-level function. Do not add file → every descendant or a parallel `declared_in` edge. Source paths on nodes provide file lookup without redundant adjacency.
+- Keep direct calls, inheritance and other meaningful interactions you have understood, including callbacks/registrations when their target and mechanism are established. Do not create all-pairs connections, transitive dependencies, name-match references, incidental reads/writes or edges merely because a field has a type annotation.
+- Import syntax alone does not establish use. A module import/re-export can be a meaningful boundary interaction when you have read and understood that role; do not emit one edge per imported name mechanically.
+- Repeated occurrences between the same entities with the same relationship meaning share an edge. Retain only evidence needed to verify it, not an attachment for every occurrence. Keep distinct edges only when their meanings genuinely differ.
+- Unknown or candidate targets stay in the originating node's summary or the file's `remaining_work`, with what is known and what would resolve it. Do not create unresolved/ambiguous reference nodes, gap/review nodes or speculative call edges. Reasoned conclusions must be labelled with appropriate confidence and evidence; confidence is not permission to insert a guess.
 
-Build in bounded, resumable batches. Prioritize the current development area without dropping the rest of the inventory; save the next pending work and resume it in subsequent active sessions without another user request. Do not block every small task on a full rebuild or repeatedly rescan unchanged implementation bodies. A dedicated maintenance subagent may help under the skill's delegation and ownership rules. If time, access, or available tooling prevents completion, preserve the gap and report partial coverage, not a finished graph.
+All retained adjacency belongs in `edges`. This requirement applies to meaningful relationships selected above, not to every fact mentioned in a summary. Do not encode a second adjacency model in JSON or private extension tables.
 
-Before claiming structural completeness for a source snapshot:
+## Inspection state and full-build completion
 
-1. Reconcile the independently obtained file inventory against coverage state: every included file is accounted for; no pending, blocked, or stale files are hidden.
-2. Compare declarations observed in each file with stored identities, owners, kinds, and locators. Check for omissions, duplicate identities, and stale/deleted declarations. Use existing environment facilities and source inspection; do not derive the expected declaration list solely from the graph itself.
-3. Verify containment and source evidence, and review the relationship categories for every file. Record unresolved semantic/runtime relationships separately; complete declaration coverage does not establish a complete resolved call/data-flow graph.
-4. Exercise retrieval by qualified symbol, owner/member listing, and incoming/outgoing relationships. Follow source evidence for sampled results. These checks assess navigability and correctness, not exhaustive coverage by themselves.
-5. Recheck the source snapshot before recording the result. Changes during analysis leave affected coverage stale until reconciled.
+Keep per-file inspection state in `file_details`: inspected hash, declaration/relationship status and concise remaining work. Put symbol-specific uncertainty in its summary. Never create coverage-review, gap, exclusion or unresolved-reference nodes to count work. The viewer finds a symbol's file inspection state through its source locator in the same scope; no additional graph edge is required.
 
-Report the inspected scope/version, files and declarations accounted for, exclusions, pending/stale/blocked work, relationship review coverage, and unresolved targets. Use coverage ratios only when the denominator was established from sources. If the expected symbol total is not established, say so. SQL success, foreign-key integrity, hashes, and total records/edges/evidence are not proof of completeness. Never describe the entire graph as fully resolved while known relationship gaps remain.
+For an explicit full build, maintain a compact traversal cursor and included/excluded roots in the private connection receipt or an existing owning module/project summary. Add file nodes as files are read; do not prepopulate thousands of pending nodes. Save the next file/region at batch boundaries and resume when continuing that full-build task. Distinguish pending, partial, verified, stale and blocked work; unfinished reading is not complete coverage.
 
-## Keep the graph current
+Before claiming completion for an explicit scope/snapshot:
 
-At session start, compare the current source inventory and content identities with the last verified state, including local edits and changes made by other agents. Reuse prior observations only after confirming their applicability to the current scope; a new commit or branch does not validate old knowledge automatically.
+1. Reconcile the own-source file list with files actually read and documented exclusions. Include uncommitted/new sources within the agreed boundary; do not conceal inaccessible sources as successful exclusions.
+2. Compare the eligible declarations you observed with stored identities, immediate owners and locators. Account for omitted local implementation, shallow tests and external boundaries rather than treating them as gaps.
+3. Review meaningful direct interactions in the read code. Keep unresolved questions as attributes; declaration coverage does not establish that all dynamic targets are known.
+4. Exercise source lookup, immediate owner/member navigation and incoming/outgoing relationships. Recheck the source snapshot before recording verified status; changes during analysis leave affected inspection state stale.
 
-For additions and edits, reconcile the file's full declaration set and relationships, not only the lines touched by the task. For renames/moves, reconcile symbol identities, containment, and references; for deletions, remove or invalidate current declarations, incident edges, and evidence while retaining useful version-scoped history. Recheck incoming dependents, exports, inheritance, and runtime registration sites affected by a changed symbol or contract. Unchanged caller text does not guarantee an unchanged target. Mark unverified dependents and their coverage stale.
+Report the inspected scope/version, remaining reading point and consequential uncertainty. Coverage ratios require a source-grounded denominator. Record totals, successful SQL, hashes and spot checks alone are not completeness evidence. Do not impose arbitrary record quotas or claim development-efficiency gains without measurement.
 
-Commit coherent graph, evidence, and coverage updates in an explicit transaction, after rechecking source identity. Do not mark a batch verified when its declarations were written but its relationship review is still pending. Concurrent agents must coordinate ownership of overlapping source areas; database locks alone do not resolve conflicting interpretations.
+## Reconcile changes
 
-Before task completion, reconcile its changes or report the exact remaining gap, persist the broader coverage backlog, and continue it during later active work. No maintenance runs after sessions end unless separately authorized.
+During ordinary work, recheck the applicability of knowledge you use. Reconcile changed eligible entities, immediate ownership, meaningful edges and evidence; follow affected callers/contracts as needed. For moves or deletions, update identities/locators and remove or invalidate obsolete current relationships. Retain useful version-scoped history. Mark affected dependents stale when they cannot yet be verified; do not create a service node for each pending check.
+
+Commit coherent graph/evidence/inspection updates in an explicit transaction after rechecking source identity. Concurrent agents must coordinate overlapping source areas; database locks do not reconcile conflicting interpretations. These selection rules do not automatically clean an existing oversized store: plan destructive cleanup separately within host authorization.
+
+## Selection examples
+
+| Observation from source reading | Representation |
+| --- | --- |
+| Private method `Cache._load` with local `buffer` and helper `decode_chunk` used only inside it | Keep the method under `Cache`; omit the local variable/helper. Summarize an important decoding constraint if relevant. |
+| `make_handler` returns nested `handle`, which callers invoke | Keep the factory and escaping function with immediate ownership and locators; explain the returned-callback contract. Do not invent calls from unidentified consumers. |
+| Property `Cache.size` has getter/setter; `fetch` has several overload signatures | One field for the property and one method/function for `fetch`; describe access behavior/signatures without accessor/overload nodes. |
+| `Client` subclasses external `vendor.Base` and calls external `vendor.send` | Keep the directly used external class/function and evidenced inheritance/call edges. Do not read/index the vendor tree. |
+| `field: OtherType` or an unused import of `OtherType` | No type/use edge solely from that syntax. |
+| Parameterized `test_retry`, a fixture, and nested assertion helpers | One test-case node under its file/class; concise checked behavior; omit fixture/helpers/parameter instances. |
+| A callback target cannot be determined | A note on the caller or its file inspection state, not a new reference/gap node or guessed edge. |
+| A small bug fix reads two methods | Reconcile the relevant entities/interactions; do not start or resume repository-wide population. |
+| Explicit request to rebuild the project's full graph | Read own sources sequentially under these rules; persist the next reading point, not scanner-generated declarations. |

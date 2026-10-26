@@ -109,6 +109,53 @@ class SchemaTests(unittest.TestCase):
         self.assertTrue(all(n['layer'] != 'code' for n in layers['nodes']))
         self.assertEqual(before, self.path.read_bytes())
 
+    def test_symbol_inspection_without_file_edges_and_scope_isolation(self):
+        self.db.execute("DELETE FROM edges WHERE kind='declared_in'")
+        self.db.execute("""INSERT INTO nodes(scope_id,id,kind,title,summary,confidence,validity,source_path,updated_at,layer)
+            VALUES('main','owner','class','Demo','Owns run','confirmed','current','src/demo.py','now','code')""")
+        self.db.execute("UPDATE nodes SET kind='method' WHERE scope_id='main' AND id='fn'")
+        for id_, source, target in [('file-owner', 'file', 'owner'), ('owner-member', 'owner', 'fn')]:
+            self.db.execute("""INSERT INTO edges(scope_id,id,source_id,target_id,kind,summary,confidence,validity,updated_at)
+                VALUES('main',?,?,?,'contains','Immediate owner','confirmed','current','now')""", (id_, source, target))
+        self.db.execute("UPDATE file_details SET relationship_status='verified' WHERE scope_id='branch'")
+        self.db.commit()
+        before = self.path.read_bytes()
+        self.assertEqual(self.nearby(root='file', direction='outgoing', edge_kind='contains'),
+                         {'file': 0, 'owner': 1, 'fn': 2})
+        self.assertEqual(self.db.execute("SELECT count(*) FROM edges WHERE kind='declared_in'").fetchone()[0], 0)
+        for scope, status in [('main', 'partial'), ('branch', 'verified')]:
+            with self.subTest(scope=scope):
+                detail = self.explorer.detail({'type': 'nodes', 'id': json.dumps([scope, 'fn'], separators=(',', ':'))})
+                self.assertEqual([(r['scope_id'], r['node_id'], r['relationship_status']) for r in detail['coverage']],
+                                 [(scope, 'file', status)])
+                self.assertEqual(detail['coverage'][0]['remaining_work'], 'Review dynamic call')
+                self.assertFalse(detail['rows'][0]['coverage_has_more'])
+        self.assertEqual(before, self.path.read_bytes())
+
+    def test_symbol_inspection_requires_nonempty_matching_source_path(self):
+        self.db.execute("DELETE FROM edges WHERE kind='declared_in'")
+        for path in (None, '', 'src/other.py'):
+            with self.subTest(path=path):
+                self.db.execute("UPDATE nodes SET source_path=? WHERE scope_id='main' AND id='fn'", (path,))
+                # Empty file locators must not match each other accidentally.
+                self.db.execute("UPDATE nodes SET source_path=? WHERE scope_id='main' AND id='file'",
+                                ('src/demo.py' if path == 'src/other.py' else path,))
+                self.db.commit()
+                detail = self.explorer.detail({'type': 'nodes', 'id': '["main","fn"]'})
+                self.assertEqual(detail['coverage'], [])
+                own = self.explorer.detail({'type': 'nodes', 'id': '["main","file"]'})
+                self.assertEqual([r['node_id'] for r in own['coverage']], ['file'])
+
+    def test_locator_lookup_excludes_stale_and_nonfile_nodes_but_keeps_own_detail(self):
+        for kind, validity in [('file', 'stale'), ('file', 'superseded'), ('module', 'current')]:
+            with self.subTest(kind=kind, validity=validity):
+                self.db.execute("UPDATE nodes SET kind=?,validity=? WHERE scope_id='main' AND id='file'", (kind, validity))
+                self.db.commit()
+                detail = self.explorer.detail({'type': 'nodes', 'id': '["main","fn"]'})
+                self.assertEqual(detail['coverage'], [])
+                own = self.explorer.detail({'type': 'nodes', 'id': '["main","file"]'})
+                self.assertEqual([r['node_id'] for r in own['coverage']], ['file'])
+
     def test_detail_changes_refresh_fingerprints_and_new_types_need_no_schema(self):
         before = self.explorer.snapshot({'whole_graph': True})
         previous = {n['graph_id']: n['fingerprint'] for n in before['nodes']}

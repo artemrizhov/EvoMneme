@@ -4,7 +4,7 @@ For read-only visual investigation, graph slices, provenance detail and explicit
 
 The agent maintains knowledge within the [controlled schema contract](schema.md); the tool only executes SQL. It accepts reads, writes, DDL, and agent-authored migrations against an explicitly bound SQLite file. It has no knowledge-specific commands, automatic schema, source scanner, Git integration, loader installer, or automatic reconciliation. Use it only for an authorized host; never create a live host store for EvoMneme itself, its forks, or worktrees.
 
-Use the released schema for the [full code graph and coverage state](code-graph.md): common `nodes`/`edges`, `symbol_details`, `file_details`, and `evidence`. New kinds are data values; additional tables or changed field semantics require a public architecture change with matching viewer support and migration. Small SQL result limits control retrieval, not how much code the graph must cover.
+Use the released schema for the [selected code entities and inspection state](code-graph.md): common `nodes`/`edges`, `symbol_details`, `file_details`, and `evidence`. New kinds are data values, subject to the entity selection rules; additional tables or changed field semantics require a public architecture change with matching viewer support and migration. SQL batches persist observations already understood through source reading; successful SQL and record totals do not validate their meaning. Keep uncertainty and routine inspection work in existing attributes, not service nodes.
 
 ## Connect one local store
 
