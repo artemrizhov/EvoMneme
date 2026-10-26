@@ -850,7 +850,7 @@ async function draw(data, resetLayout, key) {
     const isolated=new Set([...newIds].filter(id=>!linked.has(id)));
     if(isolated.size) {
       const positions=MemoryGraphLayout.vacantPositions(visible.nodes(),isolated,spawn.origin,
-        MemoryGraphLayout.targetPositions(cy));
+        MemoryGraphLayout.targetPositions(cy),16,$('cy').getBoundingClientRect());
       for(const [id,p] of positions)cy.getElementById(id).position(p);
     }
   }

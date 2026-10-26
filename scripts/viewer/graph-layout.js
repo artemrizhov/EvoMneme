@@ -10,8 +10,20 @@
   function directionFor(key) {
     let hash=2166136261;
     for(let i=0;i<key.length;i++)hash=Math.imul(hash^key.charCodeAt(i),16777619);
+    // Avalanche nearby identities too: sequential IDs must not all choose
+    // almost the same angle and gradually form a vertical or horizontal strip.
+    hash=Math.imul(hash^(hash>>>16),0x85ebca6b);
+    hash=Math.imul(hash^(hash>>>13),0xc2b2ae35);
+    hash^=hash>>>16;
     const angle=(hash>>>0)/4294967296*Math.PI*2;
     return {x:Math.cos(angle),y:Math.sin(angle)};
+  }
+
+  function placementShape(viewport={}) {
+    const ratio=Number.isFinite(viewport.width) && Number.isFinite(viewport.height) && viewport.width>0 && viewport.height>0
+      ?viewport.width/viewport.height:1;
+    const x=Math.sqrt(ratio);
+    return {x,y:1/x};
   }
 
   function targetPositions(cy) {
@@ -131,7 +143,8 @@
     });
   }
 
-  function vacantPositions(nodes,movable,origin,targets=new Map(),gap=16) {
+  function vacantPositions(nodes,movable,origin,targets=new Map(),gap=16,viewport={}) {
+    const shape=placementShape(viewport);
     const items=boxes(nodes);
     for(const item of items) {
       const target=targets.get(item.node.id());
@@ -160,14 +173,14 @@
       // Restart from the center on every update, so deleted or relocated
       // nodes leave reusable holes. Share scans for equally sized new nodes
       // within a batch; occupancy can only grow during this call.
-      const shape=[b.w,b.h,b.dx,b.dy].join(',');
-      let index=cursors.get(shape) || 0;
+      const size=[b.w,b.h,b.dx,b.dy].join(',');
+      let index=cursors.get(size) || 0;
       do {
         const radius=70*Math.sqrt(index),angle=index*2.399963229728653;
-        b.x=origin.x+Math.cos(angle)*radius;b.y=origin.y+Math.sin(angle)*radius;
+        b.x=origin.x+Math.cos(angle)*radius*shape.x;b.y=origin.y+Math.sin(angle)*radius*shape.y;
         index++;
       } while(!free(b));
-      cursors.set(shape,index);insert(b);
+      cursors.set(size,index);insert(b);
       result.set(b.node.id(),{x:b.x,y:b.y});
     }
     return result;
@@ -339,7 +352,8 @@
     return regions;
   }
 
-  function separateRegions(regions,changed,placementOrigin) {
+  function separateRegions(regions,changed,placementOrigin,viewport) {
+    const shape=placementShape(viewport);
     const items=regions.map(region=>{
       const members=region.nodes(),bounds=boxes(members);
       const x1=Math.min(...bounds.map(b=>b.x+b.dx-b.w/2)),y1=Math.min(...bounds.map(b=>b.y+b.dy-b.h/2));
@@ -380,22 +394,25 @@
       },{x:0,y:0});
       const radial={x:centroid.x-center.x,y:centroid.y-center.y};
       const length=Math.hypot(radial.x,radial.y);
-      const direction=length>1e-6?{x:radial.x/length,y:radial.y/length}:directionFor(item.members[0].id());
+      const fallback=directionFor(item.members[0].id());
+      const fallbackLength=Math.hypot(fallback.x*shape.x,fallback.y*shape.y);
+      const direction=length>1e-6?{x:radial.x/length,y:radial.y/length}
+        :{x:fallback.x*shape.x/fallbackLength,y:fallback.y*shape.y/fallbackLength};
       let blocked=null,collisions;
       if(item.members.length===1 && overlaps(item).length) {
         const p=item.members[0].position(),center=placementOrigin || p;
-        const shape=[origin.x2-origin.x1,origin.y2-origin.y1,origin.x1-p.x,origin.y1-p.y,center.x,center.y].join(',');
-        let index=spiralCursors.get(shape) || 0;
+        const size=[origin.x2-origin.x1,origin.y2-origin.y1,origin.x1-p.x,origin.y1-p.y,center.x,center.y].join(',');
+        let index=spiralCursors.get(size) || 0;
         // Avoid group envelopes using the same central spiral as initial
         // placement. Axis-only escape would turn a batch into a vertical queue.
         do {
           const radius=70*Math.sqrt(index),angle=index*2.399963229728653;
-          const dx=center.x+Math.cos(angle)*radius-p.x,dy=center.y+Math.sin(angle)*radius-p.y;
+          const dx=center.x+Math.cos(angle)*radius*shape.x-p.x,dy=center.y+Math.sin(angle)*radius*shape.y-p.y;
           item.x1=origin.x1+dx;item.x2=origin.x2+dx;
           item.y1=origin.y1+dy;item.y2=origin.y2+dy;
           index++;
         } while(overlaps(item).length);
-        spiralCursors.set(shape,index);
+        spiralCursors.set(size,index);
       }
       // Grow the obstacle envelope on each collision. Every candidate lies
       // outside all obstacles seen so far, so this cannot bounce indefinitely.
@@ -452,7 +469,7 @@
             x:p.x+center.x-destination.x,y:p.y+center.y-destination.y};});
         }
       }
-      separateRegions(regions,changed,options.placementOrigin);
+      separateRegions(regions,changed,options.placementOrigin,options);
     }
     // Discrete layouts retain their slots on automatic updates. Only new
     // nodes need a vacant position; explicit Relayout still runs the full solver.

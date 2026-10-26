@@ -342,4 +342,39 @@ try {
   assertSeparated(vacancies);
 } finally {vacancies.destroy();}
 
+const spanRatio=points=>{
+  const width=Math.max(...points.map(p=>p.x))-Math.min(...points.map(p=>p.x));
+  const height=Math.max(...points.map(p=>p.y))-Math.min(...points.map(p=>p.y));
+  return width/height;
+};
+const aspectSlots=graph();
+try {
+  aspectSlots.add(Array.from({length:150},(_,i)=>({data:{id:'slot'+i,label:'X'},position:{x:0,y:0}})));
+  const moving=new Set(aspectSlots.nodes().map(n=>n.id()));
+  const wide=graphLayout.vacantPositions(aspectSlots.nodes(),moving,{x:0,y:0},new Map(),16,{width:1200,height:400});
+  const tall=graphLayout.vacantPositions(aspectSlots.nodes(),moving,{x:0,y:0},new Map(),16,{width:400,height:1200});
+  assert.ok(spanRatio([...wide.values()])>2,'New slots must use the width of a landscape viewport');
+  assert.ok(spanRatio([...tall.values()])<.7,'New slots must follow a portrait viewport too');
+} finally {aspectSlots.destroy();}
+
+function regionAspect(width,height) {
+  const cy=graph(),affected=[];
+  try {
+    for(let i=0;i<30;i++) {
+      const a='aspect-a'+i,b='aspect-b'+i;affected.push(a,b);
+      cy.add([{data:{id:a,label:'X'},position:{x:-40,y:0}},
+        {data:{id:b,label:'X'},position:{x:40,y:0}},
+        {data:{id:'aspect-edge'+i,source:a,target:b}}]);
+    }
+    graphLayout.arrange(cy,{name:'cose',incremental:true,affected,width,height,fit:false,placementOrigin:{x:0,y:0}});
+    assertSeparated(cy);
+    return spanRatio(Array.from({length:30},(_,i)=>{
+      const a=cy.$id('aspect-a'+i).position(),b=cy.$id('aspect-b'+i).position();
+      return {x:(a.x+b.x)/2,y:(a.y+b.y)/2};
+    }));
+  } finally {cy.destroy();}
+}
+assert.ok(regionAspect(1200,400)>1.3,'Component centers must favor the width of a landscape viewport');
+assert.ok(regionAspect(400,1200)<.8,'Component centers must favor the height of a portrait viewport');
+
 console.log('Graph layout regressions passed: geometry, inertia, native layout and reduced motion.');
