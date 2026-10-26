@@ -6,6 +6,8 @@ The stdio adapter exposes one `execute_sql` tool backed by the same executor as 
 
 ## Project-local setup
 
+If `execute_sql` is unavailable in an authorized host session and the host's `AGENTS.md` has no applicable refusal, explicitly report that fact and offer to connect this adapter. Check actual client tool availability before assigning a cause; distinguish a missing configuration from an observed startup/discovery failure or an unverified cause. Give the notice before an authorized alternative SQL route is used. Record an explicit project-level refusal in the host's `AGENTS.md` and honor it across sessions as described in [SQL tool priority](../SKILL.md#sql-tool-priority); suppress routine absence notices and connection offers until the user revises that decision. Respect an existing transport decision, avoid repeated unchanged notices in the same session, and configure or repair only within the user's authorization. MCP remains optional; a working Python/CLI route does not make its tool available to the client.
+
 First select and exclude the host's local database as described in [storage setup](storage.md). Use an existing Python 3.11+ executable and trusted absolute tool path. An illustrative JSON client entry is below; place it only in the **host's supported project-local** MCP configuration after checking that client's documented format. This is not a universal filename/configuration guarantee or a request to change global client settings.
 
 ```json

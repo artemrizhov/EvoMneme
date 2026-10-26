@@ -2,6 +2,10 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-10-26 — Report unavailable SQL tools
+
+The transport preference allowed agents to proceed with Python/CLI without explicitly reporting that MCP `execute_sql` was unavailable. Authorized host sessions must now report its absence and offer to connect the host-bound adapter before using another authorized SQL route, unless the user has explicitly declined connection for that project. Record that refusal in the host project's `AGENTS.md` and suppress routine absence notices and connection offers across sessions until the user revises the decision; silence or another transport alone is insufficient. Causes must be grounded in observed configuration or discovery evidence, with unknown causes stated as unverified. Existing transport choices and authorization remain effective; unchanged notices are not repeated within a session. The integration checklist now covers missing-tool reporting, refusal persistence, fresh-session suppression and user reversal. This instruction change does not establish fresh-session compliance; that behavior remains unverified.
+
 ## 2026-10-26 — Select code knowledge through source understanding
 
 The previous full-coverage instructions encouraged lexical declaration dumps, test internals, redundant file links and service nodes for every review or unresolved site. They are superseded by a bounded entity policy: files/modules, classes, methods/functions, fields, constants and globals, with local implementation omitted unless an entity escapes. Tests stop at cases, external code at directly used boundaries, and properties/overloads are consolidated. Ordinary tasks maintain knowledge from relevant source reading; only explicit full builds/rebuilds trigger sequential, resumable project-wide reading. Search remains navigation, not a record generator.
