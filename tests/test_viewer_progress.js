@@ -414,6 +414,26 @@ async function main(){
   assert.equal(layoutMessages[1].message.elements.filter(e=>e.group==='edges').length,0,'The follow-up job must use the latest graph');
   replyLayout(layoutMessages[1]);
   await waitFor(()=>run('!state.replay.layoutRunning && !state.replay.layoutPending && state.replay.layoutTimer==null'),'Layout did not settle');
+  // Keep the worker continuously busy across several generations. Work
+  // already owned by the running job must not leak into every future job;
+  // only changes that have not yet been dispatched should accumulate.
+  run('queueReplayLayout({incremental:true,affected:["island-a"],newNodes:["node-a"],fit:false})');
+  await waitFor(()=>layoutMessages.length===3,'First rolling job did not start');
+  run('queueReplayLayout({incremental:true,affected:["island-b"],newNodes:["node-b"],fit:false});queueReplayLayout({incremental:true,affected:["island-c"],newNodes:["node-c"],fit:false})');
+  assert.equal(run('state.replay.layoutPending.affected.join(",")'),'island-b,island-c',
+    'An unchanged island must not remain dirty merely because its job is still running');
+  assert.equal(run('state.replay.layoutPending.newNodes.join(",")'),'node-b,node-c');
+  replyLayout(layoutMessages[2]);
+  await waitFor(()=>layoutMessages.length===4,'Second rolling job did not start');
+  assert.deepEqual([...layoutMessages[3].message.options.affected],['island-b','island-c']);
+  run('queueReplayLayout({incremental:true,affected:["island-d"],newNodes:["node-d"],fit:false})');
+  replyLayout(layoutMessages[3]);
+  await waitFor(()=>layoutMessages.length===5,'Third rolling job did not start');
+  assert.deepEqual([...layoutMessages[4].message.options.affected],['island-d'],
+    'Continuous playback must retire previously calculated changes without requiring a pause');
+  assert.deepEqual([...layoutMessages[4].message.options.newNodes],['node-d']);
+  replyLayout(layoutMessages[4]);
+  await waitFor(()=>run('!state.replay.layoutRunning && !state.replay.layoutPending && state.replay.layoutTimer==null'),'Rolling layouts did not settle');
   run('setWorkerLayout(false);seekReplay(0)');await settleReplay();
   delete context.Worker;
   // Exercise the real range-input handler: pausing must not overwrite the

@@ -399,8 +399,11 @@ function cancelReplayLayout(r) {
 function queueReplayLayout(options) {
   const r=state.replay;if(!r || r.exiting)return;
   if(options.incremental) {
+    // The running job already owns its changes. Carry forward only work
+    // queued since dispatch, otherwise dirty/new flags survive indefinitely
+    // whenever playback keeps the worker continuously occupied.
     for(const key of ['affected','newNodes'])
-      options[key]=[...new Set([...(r.layoutOptions?.[key] || []),...(r.layoutPending?.[key] || []),...(options[key] || [])])];
+      options[key]=[...new Set([...(r.layoutPending?.[key] || []),...(options[key] || [])])];
   }
   r.layoutPending=options;
   startReplayLayout(r);
@@ -414,7 +417,6 @@ async function runReplayLayout(r) {
   if(state.replay!==r || r.exiting || !r.layoutPending)return;
   if(state.graphMutation){r.layoutTimer=setTimeout(()=>void runReplayLayout(r),16);return;}
   const options=r.layoutPending,epoch=r.layoutEpoch || 0;
-  r.layoutOptions=options;
   r.layoutPending=null;r.layoutRunning=true;
   replayStatus();
   const beforeApply=async()=>{
@@ -426,7 +428,7 @@ async function runReplayLayout(r) {
   };
   try {await layout(options,beforeApply);}
   catch(error){if(error!==graphCancelled){pauseReplay();showError(error,true);}}
-  finally {r.layoutRunning=false;r.layoutOptions=null;replayStatus();startReplayLayout(r);}
+  finally {r.layoutRunning=false;replayStatus();startReplayLayout(r);}
 }
 async function drainGraphWork() {
   if (state.refreshQueued) {
