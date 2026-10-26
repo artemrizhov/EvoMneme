@@ -12,7 +12,7 @@ function element(id='') {
     set textContent(value) {content=value;if(id==='connection')statuses.push(value);},get textContent(){return content;},
     replaceChildren(...children){this.children=children;},append(...children){this.children.push(...children);},prepend(){},
     addEventListener(){},setAttribute(){},getBoundingClientRect(){return {width:900,height:600};},
-    focus(){},add(value){this.options.push(value);}};
+    focus(){context.document.activeElement=this;},add(value){this.options.push(value);}};
 }
 function $(id){if(!elements.has(id))elements.set(id,element(id));return elements.get(id);}
 const context=vm.createContext({console,performance,setTimeout,clearTimeout,
@@ -66,12 +66,13 @@ async function main(){
   await draw(context.fixture,false);
   assert.equal(run("cy.getElementById('n:a').position('x')"),432);
   assert.equal(run("cy.getElementById('n:a').hasClass('path')"),true);
-  // A large input yields during preparation/addition/styling. Every element is
-  // retained and edges switch back to curves after a smaller replacement.
+  // Cross the shipped 10,000-node straight-edge threshold as well as the
+  // 1,500-element work-chunk threshold. Every element is retained and edges
+  // switch back to curves after a smaller replacement.
   let yielded=false;setTimeout(()=>{yielded=true;},0);
-  await draw(fixture(Array.from({length:1601},(_,i)=>String(i)),[['edge','0','1']]));
-  assert.equal(yielded,true);assert.equal(run('cy.nodes().length'),1601);
-  assert.equal(run('state.componentCount'),1600);
+  await draw(fixture(Array.from({length:10001},(_,i)=>String(i)),[['edge','0','1']]));
+  assert.equal(yielded,true);assert.equal(run('cy.nodes().length'),10001);
+  assert.equal(run('state.componentCount'),10000);
   assert.equal(run("cy.edges()[0].data('curve')"),'straight');
   await draw(fixture(['a','b'],[['edge','a','b']]));
   assert.equal(run("cy.edges()[0].data('curve')"),'bezier');
@@ -82,6 +83,64 @@ async function main(){
   $('cy').getBoundingClientRect=()=>({width:0,height:0});
   await draw(fixture(['hidden']));assert.equal(run('state.pendingLayout'),true);
   await draw(fixture([]));assert.equal(run('state.componentCount'),0);
+  // Session history uses the shipped ingestion/render/highlight code. Identical
+  // session IDs in separate chats stay distinct; attributed rows share a group.
+  await draw(fixture(['a','b','c'],[['ab','a','b']]));
+  run('state.history=[];state.recorded=[];state.sessions.clear();state.seenActivities.clear();state.seenChanges.clear();');
+  context.activities=[
+    {source:'sql',activity_id:'call-1',activity_record_id:1,time:1,chat:'chat-a',session:'same',agent:'worker',read:['nodes'],write:[],references:[{graph_type:'nodes',graph_id:'a'}],ok:true},
+    {source:'database_change',change_id:1,activity_id:'call-1',time:1,chat:'chat-a',session:'same',agent:'worker',operation:'delete',table:'nodes',changed:['n:b'],removed:['n:b'],before:{title:{type:'text',value:'old'}},after:null,ok:true},
+    {source:'sql',activity_id:'call-2',time:2,chat:'chat-b',session:'same',read:[],write:[],references:[{graph_type:'nodes',graph_id:'c'}],ok:true},
+    {source:'database_change',change_id:2,time:3,operation:'update',table:'nodes',changed:['n:c'],before:null,after:null,ok:true}
+  ];
+  await run('ingest(activities)');
+  assert.equal(run('loadedSessions().length'),3);
+  assert.equal(run('loadedSessions().find(g=>g.identity.chat==="chat-a").events.length'),2);
+  assert.equal(run('state.sessions.size'),2,'attributed changes contribute caller metadata');
+  assert.equal($('timeline').children.length,3);
+  assert.equal($('timeline').children.flatMap(s=>s.children).filter(e=>e._activity).length,0,'collapsed sessions build no activity buttons');
+  assert.match($('historySummary').textContent,/2 calls · 2 row changes/);
+  await run('ingest([activities[0],{...activities[0],source:"legacy"},activities[1]])');
+  assert.equal(run('state.history.length'),4,'database and legacy copies deduplicate by activity_id; row changes by change_id');
+  run('state.testGroup=sessionKey(activities[0]);state.expandedSessions.add(state.testGroup);renderTimeline()');
+  const group=$('timeline').children.find(s=>s.children.some(e=>e._activity===context.activities[0]));
+  const callButton=group.children.find(e=>e._activity===context.activities[0]);
+  callButton.focus();
+  context.newActivity={source:'sql',activity_id:'call-3',time:4,chat:'chat-a',session:'same',read:[],write:[],references:[{graph_type:'edges',graph_id:'ab'}],ok:true};
+  await run('selectSession(state.testGroup);ingest([newActivity])');
+  assert.equal(run('state.expandedSessions.has(state.testGroup)'),true);
+  assert.equal(context.document.activeElement._activity,context.activities[0],'Live redraw preserves event keyboard focus');
+  assert.equal(run('cy.elements(".touched").length'),3,'selected session updates its union on Live ingestion');
+  assert.match($('activitySelection').textContent,/3 currently loaded activities/);
+  await run('selectActivity(activities[1])');
+  assert.equal(run('cy.elements(".touched").length'),1,'individual row selection keeps exact graph references');
+  assert.match($('changeMeta').textContent,/DELETE/);
+  assert.match($('changeDiff').children[0].children[1].children[0].children[1].textContent,/old/);
+  await run('$("reset").onclick()');
+  assert.equal(run('state.history.length'),5);assert.equal(run('state.selectedSession'),null);
+  assert.equal(run('cy.elements(".touched").length'),0);
+  run('$("record").onclick();$("record").onclick()');
+  assert.equal(run('state.recording'),false);assert.equal(run('state.history.length'),5,'browser pause retains persistent history');
+  // Every loaded event participates in grouping; expanded DOM is bounded to
+  // 50 children until explicitly requested, independently of total history.
+  context.bulk=Array.from({length:120},(_,i)=>({...context.newActivity,activity_id:'bulk-'+i,time:5+i}));
+  await run('ingest(bulk)');
+  const bounded=$('timeline').children.find(s=>s.children.some(e=>e._activity?.activity_id==='bulk-119'));
+  assert.equal(bounded.children.filter(e=>e._activity).length,50);
+  assert.equal(run('loadedSessions().find(g=>g.key===state.testGroup).events.length'),123);
+  // Older loads retrieve both independent streams even with caller filters.
+  run('state.testHistoryRequests=[];state.journal={version:2,enabled:true};state.activityAfter=9;state.activityBefore=4;state.activityOlder=true;state.changeAfter=8;state.changeBefore=3;state.changeOlder=true;api=async(route,request)=>{state.testHistoryRequests.push({route,...request});return route==="events"?{storage:"database",enabled:true,events:[],before_id:1,after_id:9,has_older:false,cursors:{}}:{journal:{version:2,enabled:true},events:[],before_id:1,after_id:8,has_older:false};};');
+  await run('pollEvents(true)');
+  assert.equal(run('state.testHistoryRequests.map(r=>r.route+":"+r.before_id).join(",")'),'events:4,changes:3');
+  assert.equal(run('state.activityAfter'),9);assert.equal(run('state.changeAfter'),8);
+  assert.equal($('olderChanges').disabled,true);
+  assert.match($('traceStatus').textContent,/Database call history/);
+  context.boundedHistory=Array.from({length:10001},(_,i)=>({...context.newActivity,activity_id:'bounded-'+i,time:200+i}));
+  await run('state.expandedSessions.clear();ingest(boundedHistory)');
+  assert.equal(run('state.history.length'),10000);
+  assert.match($('historySummary').textContent,/browser limit reached/);
+  assert.equal($('timeline').children.flatMap(s=>s.children).filter(e=>e._activity).length,0);
+  run('state.history=[];state.recorded=[];state.sessions.clear();state.expandedSessions.clear();state.selectedActivity=null;state.selectedSession=null;state.seenActivities.clear();state.seenChanges.clear();document.activeElement=null;');
   // Full refresh lifecycle: ready follows component count/render handoff; an
   // exception cleans timers and busy state and a later request can retry.
   run('metrics=()=>{};renderFilters=()=>{};renderEdgeFilters=()=>{};renderLayers=()=>{};renderTables=()=>{};pollEvents=async()=>{};');

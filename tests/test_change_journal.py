@@ -44,9 +44,9 @@ class JournalTests(unittest.TestCase):
         self.addCleanup(viewer.close)
         return viewer.changes(values)
 
-    def test_explicit_install_and_readonly_default(self):
+    def test_optout_readonly_and_automatic_default(self):
         before=self.path.read_bytes()
-        viewer=Explorer(self.path)
+        viewer=Explorer(self.path,history=False)
         self.addCleanup(viewer.close)
         self.assertFalse(viewer.changes({})['journal']['enabled'])
         viewer.snapshot({'whole_graph':True})

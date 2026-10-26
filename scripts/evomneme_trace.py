@@ -5,6 +5,12 @@ from pathlib import Path
 import sys
 import time
 import uuid
+from types import SimpleNamespace
+
+
+def build_event(response, accesses, elapsed_ms, context, session, database, client, activity_id):
+    metadata = SimpleNamespace(session=session, database=str(database), client=client)
+    return ActivityLog.build_event(metadata, response, accesses, elapsed_ms, context, activity_id)
 
 
 class ActivityLog:
@@ -23,10 +29,8 @@ class ActivityLog:
         self.disabled = False
         self.client = None
 
-    def record(self, response, accesses, elapsed_ms, context=None):
+    def build_event(self, response, accesses, elapsed_ms, context=None, activity_id=None):
         """References identify returned rows only, never every row examined by SQLite."""
-        if self.disabled:
-            return
         references = []
         for result, access in zip(response['results'], accesses):
             for field, graph_type in (('trace_node_id', 'nodes'), ('trace_edge_id', 'edges')):
@@ -47,8 +51,9 @@ class ActivityLog:
                                    'scope_id': row[columns.index('scope_id')],
                                    'id': row[columns.index('id')]})
         context = context or {}
-        event = {'source': 'sql', 'time': time.time(), 'session': context.get('session_id', self.session),
-                 'chat': context.get('chat_id', self.session), 'agent': context.get('agent_id', self.path.stem),
+        event = {'source': 'sql', 'activity_id': activity_id or uuid.uuid4().hex,
+                 'time': time.time(), 'session': context.get('session_id', self.session),
+                 'chat': context.get('chat_id'), 'agent': context.get('agent_id'),
                  'client': self.client,
                  'chat_title': context.get('chat_title'), 'session_title': context.get('session_title'),
                  'agent_name': context.get('agent_name'),
@@ -62,6 +67,16 @@ class ActivityLog:
                  'write': sorted({t for a in accesses for t in a['write']}),
                  'references': references, 'returned_rows': sum(len(r['rows']) for r in response['results']),
                  'has_more': any(r['has_more'] for r in response['results'])}
+        encoded = json.dumps(event, ensure_ascii=True, separators=(',', ':'))
+        if len(encoded) > 512 * 1024:
+            event['references'] = []
+            event['references_truncated'] = True
+        return event
+
+    def record(self, response=None, accesses=None, elapsed_ms=0, context=None, event=None):
+        if self.disabled:
+            return
+        event = event or self.build_event(response, accesses, elapsed_ms, context)
         try:
             encoded = json.dumps(event, ensure_ascii=True, separators=(',', ':')) + '\n'
             if len(encoded) > 512 * 1024:
@@ -84,3 +99,4 @@ def configure_trace(executor, directory, session):
         raise ValueError('--trace-directory and --session-id must be supplied together')
     if directory:
         executor.activity_log = ActivityLog(directory, session, executor.path)
+        executor.session_id = session

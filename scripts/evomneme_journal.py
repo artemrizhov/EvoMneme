@@ -12,7 +12,9 @@ LOG = PREFIX + 'log'
 LINKS = PREFIX + 'elements'
 META = PREFIX + 'meta'
 OWNER = 'EvoMneme row journal'
-VERSION = '1'
+VERSION = '2'
+CALLS = PREFIX + 'calls'
+ACTOR_FIELDS = ('chat', 'session', 'agent', 'client', 'chat_title', 'session_title', 'agent_name', 'identity')
 MAX_COLUMNS = 200
 
 
@@ -48,7 +50,7 @@ def status(db, inspect_schema=True):
     if not {LOG, LINKS, META} <= names:
         return {'enabled': False, 'tracked_tables': [], 'untracked_tables': []}
     values = dict(db.execute('SELECT key,value FROM ' + ident(META)))
-    if values.get('owner') != OWNER or values.get('format_version') != VERSION:
+    if values.get('owner') != OWNER or values.get('format_version') not in {'1', VERSION}:
         return {'enabled': False, 'error': 'Unrecognized journal format; existing tables were preserved',
                 'tracked_tables': [], 'untracked_tables': []}
     managed = {key[6:]: json.loads(value) for key, value in values.items() if key.startswith('table:')}
@@ -60,7 +62,8 @@ def status(db, inspect_schema=True):
             entry = managed.get(name, {})
             if entry.get('signature') != data['signature'] or not set(entry.get('triggers', [])) <= trigger_names:
                 untracked.append(name)
-    return {'enabled': values.get('enabled') == '1', 'version': VERSION,
+    return {'enabled': values.get('enabled') == '1', 'version': values['format_version'],
+            'activity_enabled': values['format_version'] == VERSION and CALLS in names,
             'started_at': values.get('started_at'), 'tracked_tables': sorted(managed),
             'untracked_tables': untracked, 'unsupported_tables': unsupported}
 
@@ -154,6 +157,10 @@ def install(database, suspend=False):
             for table, fields in required.items():
                 if not fields <= {r[1] for r in db.execute('PRAGMA table_info(' + ident(table) + ')')}:
                     raise ValueError('Journal schema is incompatible; existing history was preserved')
+        if CALLS in existing:
+            if not owned or status(db, False).get('version') != VERSION or not {'id', 'activity_id', 'event_json'} <= {
+                    r[1] for r in db.execute('PRAGMA table_info(' + ident(CALLS) + ')')}:
+                raise ValueError('Reserved activity table is incompatible; existing tables were preserved')
         if not owned:
             if suspend:
                 db.execute('ROLLBACK')
@@ -172,6 +179,14 @@ def install(database, suspend=False):
                            [('owner', OWNER), ('format_version', VERSION), ('started_at', utc_now()), ('enabled', '1')])
             db.execute('CREATE TRIGGER evomneme_change_cleanup AFTER DELETE ON ' + ident(LOG)
                        + ' BEGIN DELETE FROM ' + ident(LINKS) + ' WHERE change_id=OLD.id; END')
+        # A nullable opaque ID deliberately has no FK: native SQL can COMMIT or
+        # roll back individual portions before the completed call is recorded.
+        columns = {r[1] for r in db.execute('PRAGMA table_info(' + ident(LOG) + ')')}
+        for column in ('activity_id', 'actor_json'):
+            if column not in columns:
+                db.execute('ALTER TABLE ' + ident(LOG) + ' ADD COLUMN ' + column + ' TEXT')
+        db.execute('CREATE TABLE IF NOT EXISTS ' + ident(CALLS) + '(id INTEGER PRIMARY KEY AUTOINCREMENT,activity_id TEXT NOT NULL UNIQUE,event_json TEXT NOT NULL)')
+        db.execute('INSERT OR REPLACE INTO ' + ident(META) + ' VALUES(\'format_version\',?)', (VERSION,))
         managed = {k[6:]: json.loads(v) for k, v in db.execute('SELECT key,value FROM ' + ident(META)) if k.startswith('table:')}
         current, _ = tables(db)
         for table in sorted(set(managed) | set(current)):
@@ -247,6 +262,11 @@ def read(db, values):
                        'key_before': json.loads(key_before) if key_before else None,
                        'key_after': json.loads(key_after) if key_after else None,
                        'ok': True, 'read': [], 'write': [table], 'returned_rows': 0, 'elapsed_ms': 0}
+        if info['version'] == VERSION:
+            actor = db.execute('SELECT activity_id,actor_json FROM ' + ident(LOG) + ' WHERE id=?', [number]).fetchone()
+            if actor[0]:
+                event['activity_id'] = actor[0]
+                event.update(json.loads(actor[1] or '{}'))
         size = len(json.dumps(event,ensure_ascii=True))
         if events and used + size > 4 * 1024 * 1024:
             more = True
@@ -260,6 +280,47 @@ def read(db, values):
     return {'journal': info, 'events': events,
             'after_id': max([after or 0] + [e['change_id'] for e in events]),
             'before_id': first, 'has_older': older, 'has_more': more if after is not None else False}
+
+
+def read_calls(db, values):
+    """Page persisted calls by a database cursor, independent of timestamps."""
+    info = status(db, False)
+    empty = {'events': [], 'cursors': {}, 'enabled': bool(info.get('activity_enabled')),
+             'storage': 'database', 'after_id': values.get('after_id', 0),
+             'before_id': 0, 'has_older': False, 'has_more': False}
+    after, before = values.get('after_id'), values.get('before_id')
+    if after is not None and before is not None:
+        raise ValueError('Choose after_id or before_id')
+    for name, value, minimum in (('after_id', after, 0), ('before_id', before, 1)):
+        if value is not None and (type(value) is not int or value < minimum):
+            raise ValueError('Invalid ' + name)
+    limit = max(1, min(int(values.get('limit', 100)), 200))
+    if not empty['enabled']:
+        return empty
+    clause, args, order = '', [], 'DESC'
+    if after is not None:
+        clause, args, order = ' WHERE id>?', [after], 'ASC'
+    elif before is not None:
+        clause, args = ' WHERE id<?', [before]
+    rows = db.execute('SELECT id,event_json FROM ' + ident(CALLS) + clause + ' ORDER BY id ' + order + ' LIMIT ?', args + [limit + 1])
+    events, used = [], 0
+    more = False
+    for index, (number, encoded) in enumerate(rows):
+        if index >= limit or (events and used + len(encoded) > 2 * 1024 * 1024):
+            more = True
+            break
+        event = json.loads(encoded)
+        event['activity_record_id'] = number
+        events.append(event)
+        used += len(encoded)
+    if order == 'DESC':
+        events.reverse()
+    first = events[0]['activity_record_id'] if events else (before or 0)
+    return {**empty, 'events': events,
+            'after_id': max([after or 0] + [e['activity_record_id'] for e in events]),
+            'before_id': first,
+            'has_older': bool(first and db.execute('SELECT 1 FROM ' + ident(CALLS) + ' WHERE id<? LIMIT 1', [first]).fetchone()),
+            'has_more': more if after is not None else False}
 
 
 def main():

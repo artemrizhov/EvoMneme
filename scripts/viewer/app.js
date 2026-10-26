@@ -7,7 +7,8 @@ const state = { snapshot: null, offset: 0, root: '', selected: null, pathStart: 
   recorded: [], history: [], sessions: new Map(), cursors: {}, changes: new Set(), previous: null,
   busy: false, tableOffset: 0, missed: false, view: 'graph', filterKey: '', recordingSince: Infinity, nullField:'',
   selectedActivity:null,pendingLayout:false,disabledLayers:new Set(),revision:null,refreshQueued:false,resetQueued:false,activitiesReady:false,
-  journal:null,changeAfter:null,changeBefore:null,changeOlder:false,changeBusy:false,seenChanges:new Set(),timelineLimit:35,
+  journal:null,changeAfter:null,changeBefore:null,changeOlder:false,changeBusy:false,seenChanges:new Set(),
+  activityAfter:null,activityBefore:null,activityOlder:false,seenActivities:new Set(),expandedSessions:new Set(),sessionLimits:new Map(),selectedSession:null,
   components:new Map(),componentCount:0,graphActions:[],progress:null };
 const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c8d889','#88cdd7','#ccab91','#b0a3d4'];
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
@@ -360,7 +361,7 @@ async function draw(data, resetLayout, key) {
   await countComponents();
   await decorate();
   await applyHighlight();
-  if (!state.selectedActivity) await graphChunks(cy.elements(),el=>{if(state.changes.has(el.id()))el.addClass('changed');},'Marking changes',true);
+  if (!state.selectedActivity&&!state.selectedSession) await graphChunks(cy.elements(),el=>{if(state.changes.has(el.id()))el.addClass('changed');},'Marking changes',true);
   if (selected && cy.getElementById(selected).length) {
     state.selected = cy.getElementById(selected);
     state.selected.select();
@@ -372,7 +373,7 @@ async function draw(data, resetLayout, key) {
   }
   if (resetLayout || !oldPositions.size || (topologyChanged && $('followGraph').checked)) {
     await graphStage('Laying out graph');
-    layout({seed:resetLayout || !oldPositions.size,fit:!state.selectedActivity});
+    layout({seed:resetLayout || !oldPositions.size,fit:!state.selectedActivity&&!state.selectedSession});
   } else if (added) {
     await graphStage('Positioning new nodes');
     MemoryGraphLayout.separate(cy.nodes(),newIds);
@@ -448,19 +449,48 @@ async function refresh(resetLayout=false) {
 }
 function matches(e){return ['chat','session','agent'].every(key=>!$(key).value||e[key]===$(key).value);}
 function isObservation(event) {
-  return event.source === 'snapshot' || event.source==='database_change' || Array.isArray(event.changed);
+  return !hasCaller(event);
+}
+function hasCaller(event) {return !!(event.chat || event.session || event.agent || event.client?.name);}
+function sessionKey(event) {
+  if (!hasCaller(event)) return 'unknown';
+  if (event.session) return JSON.stringify(['session',event.chat || null,event.session]);
+  return JSON.stringify(['process',event.chat || null,event.agent || null,event.client?.name || null]);
+}
+const localActivityKeys=new WeakMap();let localActivitySerial=0;
+function activityKey(event) {
+  if(event.source==='database_change')return 'change:'+event.change_id;
+  if(event.activity_id)return 'activity:'+event.activity_id;
+  if(!localActivityKeys.has(event))localActivityKeys.set(event,'local:'+(++localActivitySerial));
+  return localActivityKeys.get(event);
+}
+function loadedSessions() {
+  const groups=new Map();
+  for(const event of state.history.filter(matches)) {
+    const key=sessionKey(event);
+    if(!groups.has(key))groups.set(key,{key,events:[],identity:event});
+    const group=groups.get(key);group.events.push(event);
+    if(event.time>=group.identity.time)group.identity=event;
+  }
+  return [...groups.values()].sort((a,b)=>b.identity.time-a.identity.time);
+}
+async function selectSession(key) {
+  state.selectedActivity=null;state.selectedSession=key;$('followGraph').checked=false;
+  cy.elements().unselect().removeClass('path changed');
+  await applyHighlight();
 }
 function identityLabel(event, key) {
   const titles = {chat:'chat_title',session:'session_title',agent:'agent_name'};
   const title = event[titles[key]], id = event[key];
   if (title) return `${title}${id ? ' · ' + id : ''}`;
   if (key === 'chat' && event.identity?.chat === false) return 'Chat not reported';
-  if (key === 'agent' && event.identity?.agent === false) return `Process ${String(id || '').slice(0,8)}`;
+  if (key === 'agent' && event.identity?.agent === false) return id?`Process ${String(id).slice(0,8)}`:'Agent not reported';
   return id || `${key} not reported`;
 }
 async function selectActivity(event) {
   $('followGraph').checked=false;
   state.selectedActivity = event;
+  state.selectedSession = null;
   cy.elements().unselect().removeClass('path changed');
   await applyHighlight();
   const highlighted = cy.elements('.touched');
@@ -475,7 +505,8 @@ function references(event) {
   return ids.filter(Boolean).concat(event.changed || []);
 }
 async function applyHighlight() {
-  const events = state.selectedActivity ? [state.selectedActivity] : state.recorded.filter(matches);
+  const events = state.selectedActivity ? [state.selectedActivity] : state.selectedSession
+    ? state.history.filter(event=>matches(event)&&sessionKey(event)===state.selectedSession) : state.recorded.filter(matches);
   const touched = new Set(),changed=new Set(),context=new Set();
   await graphChunks(events,event=>{
     for(const id of references(event))touched.add(id);
@@ -496,7 +527,7 @@ async function applyHighlight() {
   },'Highlighting graph',true);
   $('highlightCount').textContent = `${touched.size} accumulated IDs · ${visibleCount} visible`;
   const selected = state.selectedActivity;
-  $('showAccumulated').classList.toggle('hidden',!selected);
+  $('showAccumulated').classList.toggle('hidden',!selected&&!state.selectedSession);
   if (selected) {
     const removed = selected.removed?.length || 0;
     const visible = visibleCount;
@@ -506,6 +537,9 @@ async function applyHighlight() {
         + (visible < touched.size ? ' Other IDs are outside this slice, deleted, or grouped.' : '')
       : removed ? `Selected observation: ${removed} IDs were removed from the graph.`
         : 'Selected activity has no exact node/relationship IDs; only table-level access was recorded.';
+  } else if(state.selectedSession) {
+    $('highlightCount').textContent=`${touched.size} session IDs · ${visibleCount} visible`;
+    $('activitySelection').textContent=`Selected group: union of ${events.length} currently loaded activities; ${visibleCount} / ${touched.size} IDs visible. Older unloaded history is excluded.`;
   } else $('activitySelection').textContent = '';
   renderChangeDetail(selected);
   renderTimeline();
@@ -547,14 +581,15 @@ function updateSessionOptions() {
     syncSelect($(key),[['','All '+(key==='chat'?'chats':key+'s')],...[...choices.entries()].sort((a,b)=>a[1].localeCompare(b[1]))],false);
   }
   $('identityStatus').textContent = identities.length
-    ? 'Identity filters contain SQL-call metadata only. Missing chat titles/IDs must be supplied by callers in activity_context; client names come from MCP initialization.'
-    : 'Only database observations are available. No traced SQL calls with caller metadata have been loaded; no chat or agent can be identified from these changes.';
+    ? 'Caller metadata comes from recorded calls and attributed changes. Process identities are shown when chat or agent identity was not reported. Unassigned changes remain separate.'
+    : 'No caller metadata loaded. Unassigned changes and observations cannot identify a chat or agent.';
 }
 async function ingest(events,highlight=true) {
   // Empty Live polls do not change highlights. Avoid restyling every element
   // of a large graph merely to redisplay the same empty activity response.
   if (!events.length) {
     if (!state.activitiesReady) {state.activitiesReady=true;updateSessionOptions();}
+    renderTimeline();
     return;
   }
   state.activitiesReady=true;
@@ -562,6 +597,9 @@ async function ingest(events,highlight=true) {
     if (event.source==='database_change') {
       if (state.seenChanges.has(event.change_id)) continue;
       state.seenChanges.add(event.change_id);
+    } else if(event.activity_id) {
+      if(state.seenActivities.has(event.activity_id))continue;
+      state.seenActivities.add(event.activity_id);
     }
     if (!isObservation(event)) {
       const key = JSON.stringify([event.chat,event.session,event.agent]);
@@ -586,32 +624,41 @@ async function ingest(events,highlight=true) {
     state.missed = true;
   }
   state.seenChanges=new Set(state.history.filter(e=>e.source==='database_change').map(e=>e.change_id));
+  state.seenActivities=new Set(state.history.filter(e=>e.source!=='database_change'&&e.activity_id).map(e=>e.activity_id));
   updateSessionOptions();
   if(highlight && events.length)await applyHighlight();
+  else renderTimeline();
 }
-async function pollEvents() {
-  const data = await api('events',{cursors:state.cursors});
-  state.cursors = data.cursors;
-  await ingest(data.events);
-  $('traceStatus').textContent = (data.enabled ? 'Tracing configured' : 'Tracing not configured')
-    + (data.has_more ? ' · catching up' : '')
-    + (state.missed ? ' · history / identities limited to latest 10,000' : '');
-  await pollChanges();
+async function pollEvents(older=false) {
+  for(let page=0;page<5;page++) {
+    const request={cursors:state.cursors,limit:state.activityAfter==null?100:200};
+    if(older) {if(state.activityBefore==null)break;request.before_id=state.activityBefore;}
+    else if(state.activityAfter!=null)request.after_id=state.activityAfter;
+    const data = await api('events',request);
+    state.cursors = data.cursors || state.cursors;
+    if(older || state.activityAfter==null) {
+      state.activityBefore=data.before_id??null;state.activityOlder=!!data.has_older;
+    }
+    if(!older)state.activityAfter=data.after_id??state.activityAfter;
+    await ingest(data.events || []);
+    $('traceStatus').textContent = (data.storage==='database' || data.enabled ? 'Database call history available' : 'Call history unavailable')
+      + (data.has_more ? ' · catching up' : '')
+      + (state.missed ? ' · browser history limited to 10,000 loaded activities' : '');
+    if(older || !data.has_more)break;
+  }
+  await pollChanges(older);
 }
 function historyButton() {
-  const scoped=['chat','session','agent'].some(key=>$(key).value);
-  $('olderChanges').disabled=scoped || state.changeBusy || (state.timelineLimit>=state.history.filter(matches).length && !state.changeOlder);
-  $('olderChanges').title=scoped?'Clear caller filters to inspect database changes with unknown authors.':'';
+  $('olderChanges').disabled=state.changeBusy || (!state.changeOlder&&!state.activityOlder);
+  $('olderChanges').title='Loads older SQL calls and row changes. Counts describe loaded history; caller filters may hide retrieved entries.';
 }
 async function pollChanges(older=false) {
   if (state.changeBusy) return;
   if (!state.journal?.version) {
-    $('journalStatus').textContent='Persistent history is not enabled. Use --record-changes at server startup to install it explicitly.';
+    $('journalStatus').textContent='Database row history is not available yet.';
     historyButton();return;
   }
-  if (older && state.timelineLimit<state.history.filter(matches).length) {
-    state.timelineLimit=Math.min(10000,state.timelineLimit+100);renderTimeline();return;
-  }
+  if(older && (!state.changeOlder || state.changeBefore==null)) {renderTimeline();return;}
   state.changeBusy=true;
   historyButton();
   try {
@@ -621,15 +668,14 @@ async function pollChanges(older=false) {
       if (older) request.before_id=state.changeBefore;
       else if (state.changeAfter!=null) request.after_id=state.changeAfter;
       const data=await api('changes',request);
-      state.journal=data.journal;
+      state.journal=data.journal || state.journal;
       $('storageMode').textContent=state.journal.enabled?'LOCAL · HISTORY RECORDING':'LOCAL · READ ONLY';
       if (older || state.changeAfter==null) {
         state.changeBefore=data.before_id;
         state.changeOlder=data.has_older;
       }
       if (!older) state.changeAfter=data.after_id;
-      await ingest(data.events);
-      if (older) state.timelineLimit=Math.min(10000,state.timelineLimit+data.events.length);
+      await ingest(data.events || []);
       more=data.has_more;
       if (!more || older) break;
     }
@@ -641,12 +687,36 @@ async function pollChanges(older=false) {
 }
 function renderTimeline() {
   const list = $('timeline');
-  const focused = document.activeElement?._activity;
+  const focused = document.activeElement?._historyFocus;
+  const scroll=list.scrollTop;
   list.replaceChildren();
-  for (const event of state.history.filter(matches).slice(-state.timelineLimit).reverse()) {
+  const groups=loadedSessions();
+  const loaded=groups.flatMap(group=>group.events);
+  $('historySummary').textContent=`Loaded (matching filters): ${loaded.filter(e=>e.source==='sql').length} calls · ${loaded.filter(e=>e.source==='database_change').length} row changes · ${loaded.filter(e=>e.source!=='sql'&&e.source!=='database_change').length} other actions · ${groups.length} groups${state.missed?' · browser limit reached: 10,000 activities; some loaded entries were discarded':''}. Counts exclude unloaded database history.`;
+  const focusable=(el,key)=>{el._historyFocus=key;if(focused===key)el.focus({preventScroll:true});return el;};
+  for(const group of groups) {
+    const section=text('section','','session-group');
+    const heading=text('div','','session-heading');
+    const expanded=state.expandedSessions.has(group.key),identity=group.identity;
+    const label=group.key==='unknown'?'Unassigned changes / observations · caller unknown':
+      [identityLabel(identity,'chat'),identityLabel(identity,'session'),identityLabel(identity,'agent'),identity.client?.name || 'client not reported'].join(' / ');
+    const toggle=text('button',`${expanded?'▾':'▸'} ${label}`,'session-toggle');
+    toggle.type='button';toggle.setAttribute('aria-expanded',String(expanded));toggle._historyFocus='toggle:'+group.key;
+    toggle.onclick=()=>{if(expanded)state.expandedSessions.delete(group.key);else state.expandedSessions.add(group.key);renderTimeline();};
+    const highlight=text('button','Highlight loaded group','session-highlight');
+    highlight.type='button';highlight.title='Union of exact IDs in currently loaded entries only';highlight.setAttribute('aria-pressed',String(state.selectedSession===group.key));highlight._historyFocus='highlight:'+group.key;
+    highlight.onclick=graphControl(()=>selectSession(group.key));
+    heading.append(toggle,highlight);section.append(heading);
+    const calls=group.events.filter(e=>e.source==='sql').length,changes=group.events.filter(e=>e.source==='database_change').length;
+    section.append(text('p',`${calls} loaded calls · ${changes} loaded row changes · ${group.events.length-calls-changes} other loaded actions · latest ${new Date(identity.time*1000).toLocaleString()}`,'session-counts'));
+    list.append(section);focusable(toggle,toggle._historyFocus);focusable(highlight,highlight._historyFocus);
+    if(!expanded)continue;
+    const limit=state.sessionLimits.get(group.key)||50;
+    for (const event of group.events.slice(-limit).reverse()) {
     const row = text('button','','event');
     row.type = 'button';
     row._activity = event;
+    row._historyFocus='event:'+activityKey(event);
     row.setAttribute('aria-pressed',String(event === state.selectedActivity));
     row.onclick = guarded(()=>graphAction(()=>selectActivity(event)));
     row.append(text('span',new Date(event.time*1000).toLocaleTimeString(),'time'));
@@ -654,21 +724,27 @@ function renderTimeline() {
       ? `${event.operation.toUpperCase()} ${event.table} · ${new Set(references(event)).size} related IDs · saved in SQLite`
       : event.changed
       ? `${event.changed.length} created / modified · ${event.removed.length} removed from snapshot`
-      : `${event.read.length?'read '+event.read.join(', '):''} ${event.write.length?'write attempted '+event.write.join(', '):''}`
+      : `${event.read?.length?'read '+event.read.join(', '):''} ${event.write?.length?'write attempted '+event.write.join(', '):''}`
         + ` · ${event.returned_rows} returned · ${event.elapsed_ms} ms`
         + (event.rolled_back ? ' · open transaction rolled back' : '')
         + (event.durable_effects_possible ? ' · durable effects possible' : '')
         + (event.has_more ? ' · bounded output' : '')
         + (event.references_truncated ? ' · ID limit: table-level only' : '');
     const label = event.source==='database_change'
-      ? `Change #${event.change_id} · author not reported`
+      ? `Change #${event.change_id}${hasCaller(event)?'':' · author not reported'}`
       : isObservation(event)
       ? 'Database observation · author not reported'
       : [event.client?.name || 'SQL client not reported',identityLabel(event,'chat'),identityLabel(event,'session'),identityLabel(event,'agent')].join(' / ');
     row.append(text('span',`${label} · ${details}${event.ok?'':' · FAILED'}`,event.ok?'':'failed'));
-    list.append(row);
-    if (focused === event) row.focus({preventScroll:true});
+    section.append(row);focusable(row,row._historyFocus);
+    }
+    if(group.events.length>limit) {
+      const more=text('button',`Show 50 more (${group.events.length-limit} loaded entries remaining)`,'session-more');
+      more._historyFocus='more:'+group.key;more.onclick=()=>{state.sessionLimits.set(group.key,limit+50);renderTimeline();};
+      section.append(more);focusable(more,more._historyFocus);
+    }
   }
+  list.scrollTop=scroll;
   historyButton();
 }
 function table(container,rows){container.replaceChildren();if(!rows.length){container.append(text('p','No rows.','hint'));return;}const el=document.createElement('table'),thead=document.createElement('thead'),head=document.createElement('tr'),columns=[...new Set(rows.flatMap(Object.keys))];columns.forEach(c=>head.append(text('th',c)));thead.append(head);el.append(thead);const body=document.createElement('tbody');for(const row of rows){const tr=document.createElement('tr');columns.forEach(c=>tr.append(text('td',typeof row[c]==='object'?JSON.stringify(row[c],null,2):row[c])));body.append(tr);}el.append(body);container.append(el);}
@@ -780,19 +856,21 @@ $('record').onclick=()=>{state.recording=!state.recording;state.recordingSince=s
 $('reset').onclick = graphControl(async() => {
   state.recorded=[];
   state.selectedActivity=null;
+  state.selectedSession=null;
   state.recordingSince=state.recording?Date.now()/1000:Infinity;
   cy.elements().removeClass('changed');
   await applyHighlight();
 });
-$('loadHistory').onclick = graphControl(async() => {state.selectedActivity=null;state.recorded=[...state.history];await applyHighlight();});
-$('showAccumulated').onclick = graphControl(async() => {state.selectedActivity=null;await applyHighlight();});
+$('loadHistory').onclick = graphControl(async() => {state.selectedActivity=null;state.selectedSession=null;state.recorded=[...state.history];await applyHighlight();});
+$('showAccumulated').onclick = graphControl(async() => {state.selectedActivity=null;state.selectedSession=null;await applyHighlight();});
 for (const key of ['chat','session','agent']) $(key).onchange = graphControl(async() => {
   state.selectedActivity=null;
+  state.selectedSession=null;
   updateSessionOptions();
   await applyHighlight();
 });
 $('onlyTouched').onchange=graphControl(applyHighlight);
-$('olderChanges').onclick=graphControl(()=>pollChanges(true));
+$('olderChanges').onclick=graphControl(()=>pollEvents(true));
 
 // Pointer interaction opts out of following growth; programmatic fit/layout does not.
 let pointerStart=null;

@@ -1,8 +1,8 @@
 # Optional MCP SQL transport
 
-Optional local [Cytoscape explorer and activity tracing](viewer.md) add explicit per-call `activity_context` (chat/session/agent IDs and readable titles) and startup `--trace-directory` / `--session-id` flags. Tracing is off unless configured and does not change SQL results or discover chat ancestry. The separate read-only viewer binds to loopback; the stdio adapter remains network-free.
+Managed v3 databases automatically retain row changes and SQL-call activity in the same SQLite file. The [Cytoscape explorer](viewer.md) reads this history without trace-directory setup and groups loaded activities by session. Supply known per-call `activity_context` (chat/session/agent IDs and readable titles); MCP initialization contributes client metadata but cannot discover chat ancestry. `--no-history` opts a process out of history setup/recording; optional legacy JSONL tracing remains available. Graph inspection is read-only after history setup; the viewer binds to loopback and the stdio adapter remains network-free.
 
-The stdio adapter exposes one `execute_sql` tool backed by the same executor as the CLI. Its database is bound once at startup; callers cannot choose a path in tool arguments. It has no network server, SDK dependency, code scanner, knowledge API, automatic schema, or instruction loader. Use it only when the authorized host's existing MCP client supports stdio; otherwise the SQL CLI or an existing authorized SQLite interface is sufficient.
+The stdio adapter exposes one `execute_sql` tool backed by the same executor as the CLI. Its database is bound once at startup; callers cannot choose a path in tool arguments. It has no network server, SDK dependency, code scanner, knowledge API, automatic base-graph schema creation, or instruction loader. History is a published versioned extension installed only in recognized managed stores; generic or not-yet-initialized SQLite files keep the native SQL contract. Use it only when the authorized host's existing MCP client supports stdio; otherwise the SQL CLI or an existing authorized SQLite interface is sufficient.
 
 ## Project-local setup
 
@@ -63,7 +63,7 @@ Only the fields below are accepted; unknown execution/command keys are rejected.
 | --- | --- |
 | `sql` | Required nonempty statement string, or array of 1–100 objects containing `sql` and optional `params`. |
 | `params` | Optional positional array for `?`, or named object for `:name` (keys omit `:`). For a batch, put it in each command and omit it at top level. |
-| `activity_context` | Optional object containing `chat_id`, `chat_title`, `session_id`, `session_title`, `agent_id`, `agent_name`; each supplied value is a nonempty string up to 200 characters. Reuse stable IDs and the parent chat identity for subagents; pass only known information. Used only by configured tracing; does not change SQL results. MCP initialization supplies client name/version separately when reported. |
+| `activity_context` | Optional object containing `chat_id`, `chat_title`, `session_id`, `session_title`, `agent_id`, `agent_name`; each supplied value is a nonempty string up to 200 characters. Reuse stable IDs and the parent chat identity for subagents; pass only known information. Automatic managed-store history preserves this metadata without changing SQL results. MCP initialization supplies client name/version separately when reported. |
 | `max_rows` | Integer 0–1000; default 50, shared across all command results. |
 | `max_output_bytes` | Integer 1024–1048576; default 16384 for the full execution-result object. |
 | `timeout_ms` | Integer 1–60000; default 5000 for execution and lock waits together. |

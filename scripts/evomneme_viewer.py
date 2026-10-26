@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Loopback Cytoscape explorer; read-only unless row-history recording is requested."""
+"""Loopback explorer with automatic history setup and read-only query endpoints."""
 
 import argparse
 from contextlib import contextmanager
@@ -15,8 +15,8 @@ import threading
 from urllib.parse import urlsplit
 
 from evomneme import cell, json_bytes
-from evomneme_graph import projection_sql, validate_schema
-from evomneme_journal import install as install_journal, read as read_changes, status as journal_status
+from evomneme_graph import V3_COLUMNS, projection_sql, validate_schema
+from evomneme_journal import LOG, install as install_journal, read as read_changes, read_calls, status as journal_status
 
 ASSETS = Path(__file__).parent / 'viewer'
 MAX_ROWS = 2000
@@ -54,7 +54,7 @@ def bounded_cell(value):
 
 
 class Explorer:
-    def __init__(self, database, mapping=None, trace_directory=None, record_changes=False):
+    def __init__(self, database, mapping=None, trace_directory=None, record_changes=False, history=True):
         requested = Path(database)
         if not requested.is_absolute() or str(database).startswith(('\\\\', '//')):
             raise ValueError('database must be an absolute local file path')
@@ -72,11 +72,11 @@ class Explorer:
         self.watch_lock = threading.Lock()
         self.watch_token = secrets.token_hex(8)
         self.snapshot_key = None
-        self.manage_changes = record_changes
+        self.manage_changes = history
         self.journal_schema_version = None
         with self.connect():
-            pass  # Validate before --record-changes can modify the selected store.
-        if record_changes:
+            pass  # Reject unsupported stores before automatic setup can write.
+        if history:
             self.journal_schema_version = install_journal(self.path)['schema_version']
 
     def maintain_journal(self):
@@ -105,6 +105,15 @@ class Explorer:
             if self.watch is None:
                 self.watch = sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True, check_same_thread=False, timeout=1)
                 self.watch.execute('PRAGMA query_only=ON')
+            if not self.mapping:
+                # Completed SELECT calls also write activity. Their data_version
+                # must not invalidate a potentially very large graph response.
+                info = journal_status(self.watch)
+                tracked = set(info.get('tracked_tables', [])) - set(info.get('unsupported_tables', []))
+                if info.get('enabled') and not info.get('untracked_tables') and set(V3_COLUMNS) <= tracked:
+                    schema = self.watch.execute('PRAGMA schema_version').fetchone()[0]
+                    change = self.watch.execute('SELECT coalesce(max(id),0) FROM ' + quote(LOG)).fetchone()[0]
+                    return self.watch_token + ':journal:' + str(schema) + ':' + str(change)
             return self.watch_token + ':' + str(self.watch.execute('PRAGMA data_version').fetchone()[0])
 
     def file_identity(self):
@@ -413,6 +422,22 @@ class Explorer:
             return {'rows': rows, 'evidence': evidence, 'coverage': coverage}
 
     def events(self, values):
+        self.maintain_journal()
+        with self.connect() as db:
+            result = read_calls(db, values)
+        legacy = self.legacy_events(values)
+        with self.connect() as db:
+            for event in legacy['events']:
+                if result['enabled'] and event.get('activity_id') and db.execute(
+                        'SELECT 1 FROM evomneme_change_calls WHERE activity_id=?', [event['activity_id']]).fetchone():
+                    continue
+                result['events'].append(event)
+        result['cursors'] = legacy['cursors']
+        result['legacy_enabled'] = legacy['enabled']
+        result['has_more'] |= legacy['has_more']
+        return result
+
+    def legacy_events(self, values):
         cursors = values.get('cursors', {})
         if not isinstance(cursors, dict):
             raise ValueError('Invalid trace cursor')
@@ -443,6 +468,11 @@ class Explorer:
                     budget -= len(raw)
                     event = json.loads(raw)
                     if event.get('database') == str(self.path):
+                        # Old JSONL producers predate opaque activity IDs. File
+                        # and byte position identify a record without guessing
+                        # a caller or relating it to database row changes.
+                        if not event.get('activity_id'):
+                            event['activity_id'] = 'legacy:' + path.name + ':' + str(position)
                         output.append(event)
                 updated[path.name] = position
                 backlog |= position < path.stat().st_size
@@ -532,10 +562,11 @@ def main():
     parser.add_argument('--mapping', help='JSON file with read-only nodes and edges SQL projections')
     parser.add_argument('--trace-directory', help='Same explicit directory used by traced executors')
     parser.add_argument('--port', type=int, default=0)
-    parser.add_argument('--record-changes', action='store_true', help='Explicitly install/maintain versioned row-history tables and triggers in this database; default is read-only')
+    parser.add_argument('--record-changes', action='store_true', help='Compatibility option; history setup is enabled by default')
+    parser.add_argument('--no-history', action='store_true', help='Disable history setup/maintenance; saved history remains readable')
     args = parser.parse_args()
     mapping = json.loads(Path(args.mapping).read_text(encoding='utf-8')) if args.mapping else None
-    explorer = Explorer(args.database, mapping, args.trace_directory, record_changes=args.record_changes)
+    explorer = Explorer(args.database, mapping, args.trace_directory, record_changes=args.record_changes, history=not args.no_history)
     server, token = make_server(explorer, args.port)
     print('EvoMneme viewer: http://127.0.0.1:' + str(server.server_port) + '/#token=' + token, flush=True)
     try:

@@ -378,7 +378,7 @@ class ViewerTests(unittest.TestCase):
         self.assertTrue(first['events'][1]['rolled_back'])
         self.assertEqual(first['events'][2]['references'], [])
         self.assertEqual(first['events'][3]['references'][0]['graph_type'], 'nodes')
-        self.assertEqual(view.events({'cursors':first['cursors']})['events'], [])
+        self.assertEqual(view.events({'cursors':first['cursors'], 'after_id':first['after_id']})['events'], [])
         content = executor.activity_log.path.read_text()
         self.assertNotIn('SELECT',content)
         self.assertNotIn('rolled back',content)

@@ -11,6 +11,10 @@ from pathlib import Path
 import sqlite3
 import sys
 import time
+import uuid
+
+from evomneme_activity import DatabaseActivity, managed_table
+from evomneme_trace import build_event
 
 MAX_INPUT_BYTES = 1048576
 MAX_VALUE_BYTES = 8388608
@@ -25,7 +29,7 @@ LIMITS = {
 PARAMS_SCHEMA = {'anyOf': [{'type': 'array'}, {'type': 'object'}]}
 INPUT_SCHEMA = {
     'type': 'object', 'required': ['sql'], 'additionalProperties': False,
-    'description': 'When local tracing is configured, include known activity_context IDs and human-readable titles on calls. Reuse the main chat identity across its subagents. Supply only identities/titles actually known to the caller; omit unknown fields.',
+    'description': 'Calls are recorded automatically in recognized v3 databases. Include known activity_context IDs and human-readable titles. Reuse the main chat identity across its subagents. Omit unknown fields.',
     'properties': {
         'sql': {'anyOf': [
             {'type': 'string'},
@@ -35,7 +39,7 @@ INPUT_SCHEMA = {
         ]},
         'params': PARAMS_SCHEMA,
         'activity_context': {'type': 'object', 'additionalProperties': False,
-                             'description': 'Optional explicit main chat, work session and agent identities for configured local tracing. Never inferred from MCP. Does not change SQL results.',
+                             'description': 'Optional explicit main chat, work session and agent identities for database activity history. Never inferred from MCP. Does not change SQL results.',
                              'properties': {key: {'type': 'string', 'minLength': 1, 'maxLength': 200}
                                             for key in ('chat_id', 'session_id', 'agent_id', 'chat_title', 'session_title', 'agent_name')}},
         **{key: {'type': 'integer', 'default': bounds[0], 'minimum': bounds[1], 'maximum': bounds[2]}
@@ -161,7 +165,7 @@ def error_result(response, kind, exception, index, budget):
 class Executor:
     """Bind one persistent local database file for this executor's lifetime."""
 
-    def __init__(self, database, create=False):
+    def __init__(self, database, create=False, history=True):
         self.requested_path = Path(database)
         if not self.requested_path.is_absolute() or str(database).startswith(('\\\\', '//')):
             raise RequestError('database must be an absolute local filesystem path')
@@ -176,12 +180,21 @@ class Executor:
                                           isolation_level=None, timeout=LIMITS['timeout_ms'][0] / 1000)
         self.closed = False
         self.activity_log = None
+        self.history = DatabaseActivity(self) if history else None
+        self.bookkeeping = self.history or DatabaseActivity(self)
+        self.session_id = uuid.uuid4().hex
+        self.client = {'name': 'EvoMneme Python'}
         try:
             self.connection.execute('PRAGMA foreign_keys=ON')
             self.connection.enable_load_extension(False)
             self.connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_VALUE_BYTES)
             self.connection.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, MAX_INPUT_BYTES)
             self._check_binding()
+            if self.history:
+                try:
+                    self.history.ensure()
+                except (sqlite3.Error, ValueError, OSError) as exc:
+                    print('EvoMneme history setup failed: ' + str(exc), file=sys.stderr)
         except BaseException:
             self.close()
             raise
@@ -205,16 +218,31 @@ class Executor:
     def execute_sql(self, /, sql=None, params=None, max_rows=LIMITS['max_rows'][0],
                     max_output_bytes=LIMITS['max_output_bytes'][0],
                     timeout_ms=LIMITS['timeout_ms'][0], activity_context=None, **unknown):
-        """Keep SQL results unchanged when optional activity observation is enabled."""
+        """Record recognized-store activity while preserving native SQL results."""
         started = time.monotonic()
         accesses = []
+        self._activity_event = None
         if activity_context is not None and (not isinstance(activity_context, dict) or
                 set(activity_context) - {'chat_id', 'session_id', 'agent_id', 'chat_title', 'session_title', 'agent_name'} or
                 any(not isinstance(v, str) or not 1 <= len(v) <= 200 for v in activity_context.values())):
             return error_result(empty_result(), 'request', RequestError('Invalid activity_context'), None, LIMITS['max_output_bytes'][0])
+        if self.history or self.activity_log:
+            self._activity_event = build_event(empty_result(), [], 0, activity_context,
+                                               self.session_id, self.path, self.client, uuid.uuid4().hex)
         response = self._execute_sql(sql, params, max_rows, max_output_bytes, timeout_ms, accesses, unknown)
-        if self.activity_log:
-            self.activity_log.record(response, accesses, (time.monotonic() - started) * 1000, activity_context)
+        if self._activity_event is not None:
+            event = build_event(response, accesses, (time.monotonic() - started) * 1000,
+                                activity_context, self.session_id, self.path, self.client,
+                                self._activity_event['activity_id'])
+            if self.history and not self.closed:
+                try:
+                    self.history.clear()
+                    if self.history.ensure():
+                        self.history.record(event)
+                except (sqlite3.Error, ValueError, OSError) as exc:
+                    print('EvoMneme activity history could not be saved: ' + str(exc), file=sys.stderr)
+            if self.activity_log:
+                self.activity_log.record(event=event)
         return response
 
     def _execute_sql(self, sql, params, max_rows, max_output_bytes, timeout_ms, accesses, unknown):
@@ -245,7 +273,10 @@ class Executor:
 
         def authorize(action, first, second, database, trigger):
             """Use engine write metadata for RETURNING; prohibit external file capabilities."""
-            if self.activity_log and database == 'main' and accesses:
+            internal = self.bookkeeping.counter_installed and (
+                managed_table(first) or managed_table(trigger)
+                or (trigger or '').startswith('evomneme_counter_') or trigger == 'evomneme_activity_scope')
+            if (self.history or self.activity_log) and database == 'main' and accesses and not internal:
                 if action == sqlite3.SQLITE_READ:
                     accesses[-1]['read'].add(first)
                 elif action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE}:
@@ -258,7 +289,7 @@ class Executor:
                 if second is not None and (first or '').lower() in {'temp_store_directory', 'data_store_directory'}:
                     return sqlite3.SQLITE_DENY
                 state['writes'] |= second is not None
-            if action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE}:
+            if action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE} and not internal:
                 state['writes'] = True
             if action in {sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT}:
                 state['transaction'] = first
@@ -271,11 +302,30 @@ class Executor:
                 if expired():
                     raise TimeoutError('SQL execution exceeded timeout_ms')
                 self.connection.set_authorizer(None)
+                self.connection.set_progress_handler(None, 0)
+                if self.history:
+                    try:
+                        self._check_binding()
+                        if self.history.ensure():
+                            self.history.scope(self._activity_event)
+                    except (sqlite3.Error, ValueError, OSError) as exc:
+                        print('EvoMneme history setup failed: ' + str(exc), file=sys.stderr)
+                        try:
+                            self.history.clear()
+                        except sqlite3.Error:
+                            pass
+                        self.history.ready = False
+                try:
+                    self.bookkeeping.observe_existing()
+                except (sqlite3.Error, ValueError, OSError) as exc:
+                    print('EvoMneme bookkeeping observation failed: ' + str(exc), file=sys.stderr)
+                self.connection.set_progress_handler(expired, PROGRESS_STEPS)
                 self.connection.execute('PRAGMA busy_timeout=' + str(max(1, int((deadline - time.monotonic()) * 1000))))
                 state.update(writes=False, transaction=None)
                 self.connection.set_authorizer(authorize)
                 before_transaction = self.connection.in_transaction
                 before_changes = self.connection.total_changes
+                before_history = self.bookkeeping.mutations
                 cursor = self.connection.execute(statement, bindings)
                 # Native COMMIT/RELEASE may have persisted changes before output
                 # formatting fails. Record that transition before any byte checks.
@@ -319,7 +369,7 @@ class Executor:
                 cursor = None
                 if not native_completed:
                     response['completed_statements'] += 1
-                output['affected_rows'] = self.connection.total_changes - before_changes
+                output['affected_rows'] = self.connection.total_changes - before_changes - (self.bookkeeping.mutations - before_history)
                 response['results'].append(output)
                 used_bytes += metadata_bytes + row_bytes
             self._check_binding()
@@ -353,6 +403,11 @@ class Executor:
             if not self.closed:
                 self.connection.set_authorizer(None)
                 self.connection.set_progress_handler(None, 0)
+                if self.history:
+                    try:
+                        self.history.clear()
+                    except sqlite3.Error as exc:
+                        print('EvoMneme activity attribution cleanup failed: ' + str(exc), file=sys.stderr)
 
 
 def read_input(filename):
@@ -372,6 +427,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', required=True, help='Absolute local SQLite path; existing unless --create')
     parser.add_argument('--create', action='store_true', help='Create a new empty file; refuses existing paths')
+    parser.add_argument('--no-history', action='store_true', help='Disable history setup and call recording in this process; existing triggers/history remain')
     parser.add_argument('--trace-directory', help='Optional absolute host-local activity directory')
     parser.add_argument('--session-id', help='Explicit chat/session identity for optional activity tracing')
     source = parser.add_mutually_exclusive_group(required=True)
@@ -396,7 +452,8 @@ def main(argv=None):
             if args.params is not None:
                 arguments['params'] = json_loads(args.params)
             arguments.update({key: getattr(args, key) for key in LIMITS if getattr(args, key) is not None})
-        executor = Executor(args.database, args.create)
+        executor = Executor(args.database, args.create, history=not args.no_history)
+        executor.client = {'name': 'EvoMneme CLI'}
         if args.trace_directory or args.session_id:
             from evomneme_trace import configure_trace
             configure_trace(executor, args.trace_directory, args.session_id)

@@ -1,6 +1,6 @@
 # Controlled graph schema, version 3
 
-[schema.sql](../schema.sql) is the canonical starting model for every new authorized host store. It is a shared EvoMneme architecture contract, not a per-host example. The SQL executor stays generic and does not install or police the schema; agents must follow this contract. Creating an empty database does not initialize it.
+[schema.sql](../schema.sql) is the canonical starting model for every new authorized host store. It is a shared EvoMneme architecture contract, not a per-host example. The SQL executor stays generic and does not create the base graph schema; agents must follow this contract. Creating an empty database does not initialize it. Once a compatible managed v3 store exists, the released [history extension](change-history.md) is installed and maintained automatically unless disabled for the process.
 
 ## One graph
 
@@ -15,6 +15,8 @@
 
 Common summaries, confidence, validity and source locators belong on nodes/edges, so retrieval need not join type-specific tables. Keep detailed attributes in the supported extension tables. Do not create a second node/edge registry for a new language, entity type or project. Extensions must not hide structural relationships in strings, JSON or foreign keys outside `edges`.
 
+The separately versioned `evomneme_change_*` history tables contain operational recording metadata and saved changes, not another knowledge graph. Their graph references identify observed elements; they do not replace semantic `edges`. History format upgrades preserve v3 and existing entries. Generic/non-v3 stores are not force-converted, and initializing the base schema remains an explicit agent operation.
+
 Use stable qualified node IDs within a scope; types do not establish separate identity namespaces. A function and a decision cannot share an ID in the same scope. IDs survive ordinary updates; source line numbers are locators, not identity. Viewer IDs are `json_array(scope_id,id)` for both nodes and edges, in separate viewer namespaces. `layer` is stored data: use `code` and `knowledge`, with `cross` for cross-layer edges. Existing v3 stores may contain other values, including `unresolved`; the viewer renders all values without a schema edit. Open kind/layer fields do not relax the [entity and relationship selection rules](code-graph.md).
 
 Use `contains` only from an immediate owner to its members: file → class → method/field. Do not add parallel `declared_in` edges or connect every descendant to the file. Store a consistent `source_path` and source locations on each entity; the viewer retrieves file inspection state from its own `file_details` or matching file locators in the same scope. A one-file module normally uses its file node as owner rather than duplicating it as a module.
@@ -27,7 +29,7 @@ Record important facts and uncertainty in the entity summary, file inspection st
 
 1. Verify the authorized host, excluded local storage and installed EvoMneme revision. Inspect the existing file before any DDL.
 2. For a new empty database, apply the exact released `schema.sql` using an authorized native SQLite script facility, or author a command array with one complete statement per command and explicit transaction boundaries. Do not split SQL with a home-made parser. The generic `execute_sql` and CLI `--sql-file` accept one native statement per string, not this whole script.
-3. Verify `PRAGMA user_version` and `metadata.schema_version` are both 3, compare tables/columns/constraints/indexes with the release, and run `PRAGMA integrity_check` and `PRAGMA foreign_key_check`. Check the matching viewer on a synthetic fixture before declaring the integration compatible.
+3. Verify `PRAGMA user_version` and `metadata.schema_version` are both 3, compare base tables/columns/constraints/indexes with the release (plus any compatible published history extension), and run `PRAGMA integrity_check` and `PRAGMA foreign_key_check`. Check the matching viewer on a synthetic fixture before declaring the integration compatible.
 4. Create a scope before its nodes, nodes before edges, and attach supported details/evidence using bound values. Record the schema version and tool revision in the host connection receipt.
 
 Never overwrite an existing database with the bootstrap script. The viewer supports only v3 and rejects older/unversioned databases before any inspection or journal installation. A custom projection does not bypass this check. Apply a compatible published migration before opening an existing older store.

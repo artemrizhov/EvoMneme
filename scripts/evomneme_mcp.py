@@ -11,7 +11,7 @@ PROTOCOL_VERSION = '2025-11-25'
 SUPPORTED_PROTOCOLS = {PROTOCOL_VERSION, '2025-06-18'}
 TOOL = {
     'name': 'execute_sql',
-    'description': 'Execute one native SQLite statement or an explicit array of {sql,params} commands on the bound database. Callers own SQL transactions; unclosed ones roll back at request end. Earlier autocommitted effects remain. Check has_more for bounded rows. For configured activity tracing, pass known chat_id/chat_title, session_id/session_title, agent_id/agent_name in activity_context; keep the main chat identity across subagents, and omit unknown identities or titles.',
+    'description': 'Execute one native SQLite statement or an explicit array of {sql,params} commands on the bound database. Callers own SQL transactions; unclosed ones roll back at request end. Earlier autocommitted effects remain. Check has_more for bounded rows. Calls on recognized v3 stores are recorded automatically. Pass known chat_id/chat_title, session_id/session_title, agent_id/agent_name in activity_context; keep the main chat identity across subagents, and omit unknown identities or titles.',
     'inputSchema': INPUT_SCHEMA,
 }
 
@@ -51,13 +51,12 @@ class Server:
             if not isinstance(params.get('protocolVersion'), str) or not isinstance(params.get('capabilities'), dict) or not isinstance(params.get('clientInfo'), dict):
                 return protocol_error(request_id, -32602, 'initialize requires protocolVersion, capabilities and clientInfo')
             version = params['protocolVersion'] if params['protocolVersion'] in SUPPORTED_PROTOCOLS else PROTOCOL_VERSION
+            # MCP supplies client metadata, never a main-chat ID or title.
+            info = params['clientInfo']
+            self.executor.client = {key: value[:200] for key in ('name', 'version')
+                                    if isinstance((value := info.get(key)), str)} or None
             if self.executor.activity_log:
-                # MCP supplies a client name/version, but no main-chat ID or title.
-                info = params['clientInfo']
-                self.executor.activity_log.client = {
-                    key: value[:200] for key in ('name', 'version')
-                    if isinstance((value := info.get(key)), str)
-                } or None
+                self.executor.activity_log.client = self.executor.client
             self.negotiated = True
             result = {'protocolVersion': version, 'capabilities': {'tools': {}},
                       'serverInfo': {'name': 'evomneme-sqlite', 'version': '1.0.0'}}
@@ -108,12 +107,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', required=True)
     parser.add_argument('--create', action='store_true')
+    parser.add_argument('--no-history', action='store_true', help='Disable setup/call recording; existing history and triggers remain')
     parser.add_argument('--trace-directory', help='Optional absolute host-local activity directory')
     parser.add_argument('--session-id', help='Explicit chat/session identity for optional activity tracing')
     args = parser.parse_args(argv)
     executor = None
     try:
-        executor = Executor(args.database, args.create)
+        executor = Executor(args.database, args.create, history=not args.no_history)
+        executor.client = {'name': 'EvoMneme MCP'}
         if args.trace_directory or args.session_id:
             from evomneme_trace import configure_trace
             configure_trace(executor, args.trace_directory, args.session_id)

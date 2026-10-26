@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 REPOSITORY = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPOSITORY / 'scripts'))
 SCRIPT = REPOSITORY / 'scripts' / 'evomneme.py'
 MCP_SCRIPT = REPOSITORY / 'scripts' / 'evomneme_mcp.py'
 SPEC = importlib.util.spec_from_file_location('evomneme_sql_test', SCRIPT)
