@@ -69,4 +69,57 @@ try {
   assertSeparated(large);
 } finally {large.destroy();}
 
-console.log('Graph layout regressions passed: live growth, label separation, manual positions, landscape and portrait orientation.');
+// Drive renderer frames explicitly to verify intermediate geometry, cancellation
+// and reduced motion without wall-clock sleeps or a browser dependency.
+const animated=graph();
+try {
+  animated.add([{data:{id:'a',label:'A'},position:{x:0,y:0}},
+    {data:{id:'b',label:'B'},position:{x:100,y:0}},
+    {data:{id:'ab',source:'a',target:'b'}}]);
+  const frames=new Map();let nextFrame=0,reduced=false;
+  animated.window=()=>({requestAnimationFrame:fn=>{frames.set(++nextFrame,fn);return nextFrame;},
+    cancelAnimationFrame:id=>frames.delete(id),matchMedia:()=>({matches:reduced})});
+  const step=time=>{const pending=[...frames.values()];frames.clear();pending.forEach(fn=>fn(time));};
+  const a=animated.getElementById('a'),b=animated.getElementById('b');
+  graphLayout.transition(animated,()=>{
+    a.position({x:200,y:100});b.position({x:300,y:100});
+    animated.viewport({zoom:2,pan:{x:100,y:50}});
+  },{newIds:new Set(['b'])});
+  assert.deepEqual(a.position(),{x:0,y:0},'Destination must not flash before animation');
+  assert.equal(animated.zoom(),1);
+  assert.equal(Number(b.style('opacity')),0);
+  step(0);step(200);
+  assert.deepEqual(a.position(),{x:100,y:50});
+  assert.equal(animated.zoom(),1.5);
+  assert.deepEqual(animated.pan(),{x:50,y:25});
+  assert.equal(Number(b.style('opacity')),.5);
+  // A new destination starts at the displayed midpoint, cancelling the old one.
+  graphLayout.transition(animated,()=>a.position({x:400,y:50}));
+  assert.equal(frames.size,1);
+  assert.deepEqual(a.position(),{x:100,y:50});
+  assert.equal(Number(b.style('opacity')),1);
+  step(300);step(500);
+  assert.deepEqual(a.position(),{x:250,y:50});
+  step(700);
+  assert.deepEqual(a.position(),{x:400,y:50});
+  assert.equal(frames.size,0);
+  graphLayout.transition(animated,()=>a.position({x:800,y:50}));
+  step(800);step(1000);graphLayout.stop(animated);
+  assert.deepEqual(a.position(),{x:600,y:50});
+  assert.equal(frames.size,0,'Pointer interruption must leave no queued frame');
+  reduced=true;
+  graphLayout.transition(animated,()=>a.position({x:900,y:50}));
+  assert.deepEqual(a.position(),{x:900,y:50});
+  assert.equal(frames.size,0);
+  reduced=false;
+  graphLayout.arrange(animated,{name:'grid',width:900,height:600,fit:false});
+  assert.deepEqual(a.position(),{x:900,y:50},'All layout stages must restore the initial frame');
+  step(1100);step(1500);
+  assertSeparated(animated);
+  graphLayout.transition(animated,()=>a.position({x:1500,y:200}));
+  step(1600);step(10000);
+  assert.deepEqual(a.position(),{x:1500,y:200},'A stalled renderer skips missed frames and finishes immediately');
+  assert.equal(frames.size,0,'Slow frames must not create an animation backlog');
+} finally {graphLayout.stop(animated);animated.destroy();}
+
+console.log('Graph layout regressions passed: geometry, animated transitions, interruption and reduced motion.');

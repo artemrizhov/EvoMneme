@@ -303,6 +303,7 @@ async function draw(data, resetLayout, key) {
       return;
     }
   }
+  MemoryGraphLayout.stop(cy);
   const oldPositions = new Map(),oldIds=new Set();
   let sumX=0,sumY=0;
   await graphChunks(cy.elements(),el=>{
@@ -312,6 +313,16 @@ async function draw(data, resetLayout, key) {
   const selected = state.selected?.id();
   const ids = new Set(),newIds=new Set();
   const center = oldPositions.size ? {x:sumX/oldPositions.size,y:sumY/oldPositions.size} : {x:0,y:0};
+  const neighbors=new Map();
+  await graphChunks(data.edges,edge=>{
+    for (const [id,other] of [[edge.source,edge.target],[edge.target,edge.source]]) {
+      const p=oldPositions.get('n:'+other);
+      if (!p) continue;
+      const key='n:'+id, sum=neighbors.get(key) || {x:0,y:0,count:0};
+      sum.x+=p.x;sum.y+=p.y;sum.count++;
+      neighbors.set(key,sum);
+    }
+  },'Locating new node neighbors');
   let added = 0;
   const elements=[];
   await graphChunks(data.nodes,n => {
@@ -320,7 +331,9 @@ async function draw(data, resetLayout, key) {
     if (!position) {
       newIds.add(id);
       const angle = ++added * 2.4, radius = 50 + 12 * Math.sqrt(added);
-      position = {x:center.x+Math.cos(angle)*radius, y:center.y+Math.sin(angle)*radius};
+      const near=neighbors.get(id);
+      const origin=near ? {x:near.x/near.count,y:near.y/near.count} : center;
+      position = {x:origin.x+Math.cos(angle)*radius, y:origin.y+Math.sin(angle)*radius};
     }
     ids.add(id);
     elements.push({group:'nodes', data:{id,label:String(n.label)+(n._aggregate?` · ${n.member_count} nodes`:''),displayLabel:'',attributes:n,color:palette[0],size:24},position});
@@ -373,10 +386,11 @@ async function draw(data, resetLayout, key) {
   }
   if (resetLayout || !oldPositions.size || (topologyChanged && $('followGraph').checked)) {
     await graphStage('Laying out graph');
-    layout({seed:resetLayout || !oldPositions.size,fit:!state.selectedActivity&&!state.selectedSession});
+    layout({seed:resetLayout || !oldPositions.size,fit:!state.selectedActivity&&!state.selectedSession,
+      animate:oldPositions.size>0,newIds});
   } else if (added) {
     await graphStage('Positioning new nodes');
-    MemoryGraphLayout.separate(cy.nodes(),newIds);
+    MemoryGraphLayout.transition(cy,()=>MemoryGraphLayout.separate(cy.nodes(),newIds),{newIds});
   }
   state.previous=next;state.filterKey=key;
   await graphStage('Rendering graph');
@@ -876,8 +890,8 @@ $('olderChanges').onclick=graphControl(()=>pollEvents(true));
 
 // Pointer interaction opts out of following growth; programmatic fit/layout does not.
 let pointerStart=null;
-$('cy').addEventListener('wheel',()=>{$('followGraph').checked=false;},{passive:true});
-$('cy').addEventListener('pointerdown',event=>{pointerStart={x:event.clientX,y:event.clientY};});
+$('cy').addEventListener('wheel',()=>{MemoryGraphLayout.stop(cy);$('followGraph').checked=false;},{passive:true});
+$('cy').addEventListener('pointerdown',event=>{MemoryGraphLayout.stop(cy);pointerStart={x:event.clientX,y:event.clientY};});
 $('cy').addEventListener('pointermove',event=>{
   if (pointerStart && Math.hypot(event.clientX-pointerStart.x,event.clientY-pointerStart.y)>5) $('followGraph').checked=false;
 });

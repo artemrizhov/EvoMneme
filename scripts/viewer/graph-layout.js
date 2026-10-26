@@ -5,6 +5,62 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const transitions = new WeakMap();
+
+  function stop(cy) {
+    const active=transitions.get(cy);
+    if (!active) return;
+    active.cancel();
+    active.fading.removeStyle('opacity');
+    transitions.delete(cy);
+  }
+
+  // Compute the entire destination synchronously in one batch, then restore the
+  // displayed geometry before the renderer paints. All layout stages share one
+  // interpolation, including collision correction and viewport fitting.
+  function transition(cy, update, options = {}) {
+    stop(cy);
+    const win=cy.window();
+    if (options.animate===false || !win?.requestAnimationFrame ||
+        win.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      update();
+      return;
+    }
+    const nodes=cy.nodes();
+    const from=new Map(nodes.map(n=>[n.id(),{...n.position()}]));
+    const viewport={zoom:cy.zoom(),pan:{...cy.pan()}};
+    let targets, destination;
+    cy.startBatch();
+    try {
+      update();
+      targets=new Map(nodes.map(n=>[n.id(),{...n.position()}]));
+      destination={zoom:cy.zoom(),pan:{...cy.pan()}};
+      nodes.positions(n=>from.get(n.id()));
+      cy.viewport(viewport);
+    } finally {cy.endBatch();}
+    const fading=nodes.filter(n=>options.newIds?.has(n.id()));
+    fading.style('opacity',0);
+    let frame, started;
+    const duration=options.duration || 400;
+    const mix=(a,b,t)=>a+(b-a)*t;
+    const point=(a,b,t)=>({x:mix(a.x,b.x,t),y:mix(a.y,b.y,t)});
+    const tick=now=>{
+      if (cy.destroyed()) {stop(cy);return;}
+      if (started===undefined) started=now;
+      const progress=Math.min(1,(now-started)/duration);
+      const t=progress*progress*(3-2*progress);
+      cy.batch(()=>{
+        nodes.positions(n=>point(from.get(n.id()),targets.get(n.id()),t));
+        cy.viewport({zoom:mix(viewport.zoom,destination.zoom,t),pan:point(viewport.pan,destination.pan,t)});
+        fading.style('opacity',t);
+      });
+      if (progress<1) frame=win.requestAnimationFrame(tick);
+      else {fading.removeStyle('opacity');transitions.delete(cy);}
+    };
+    transitions.set(cy,{cancel:()=>win.cancelAnimationFrame(frame),fading});
+    frame=win.requestAnimationFrame(tick);
+  }
+
   function boxes(nodes) {
     return nodes.map(node => {
       const p = node.position();
@@ -130,7 +186,7 @@
     if (cy.zoom()>1) {cy.zoom(1);cy.center(elements);}
   }
 
-  function arrange(cy, options = {}) {
+  function arrangeNow(cy, options = {}) {
     const elements=cy.elements(':visible'), nodes=elements.nodes();
     if (!nodes.length) return;
     const width=Math.max(100,options.width || cy.width());
@@ -162,5 +218,9 @@
     if (options.fit!==false) fit(cy,elements);
   }
 
-  return {arrange,fit,separate,boxes};
+  function arrange(cy, options = {}) {
+    transition(cy,()=>arrangeNow(cy,options),options);
+  }
+
+  return {arrange,fit,separate,boxes,transition,stop};
 });
