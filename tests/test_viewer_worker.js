@@ -124,6 +124,21 @@ async function main() {
     await assert.rejects(timeout.arrange(cy,{fit:false}),/timed out/);
     timeout.cancel();
   } finally {controller.cancel();cy.destroy();}
+  const largeElements=[];
+  for(let i=0;i<6000;i++) {
+    largeElements.push({data:{id:'large'+i},position:{x:(i%80)*180,y:Math.floor(i/80)*110}});
+    if(i)largeElements.push({data:{id:'large-edge'+i,source:'large'+(i-1),target:'large'+i}});
+  }
+  const large=cytoscape({headless:true,styleEnabled:true,layout:{name:'preset'},elements:largeElements});
+  const largeController=layout.createWorkerLayout(realWorker,15000);
+  try {
+    assert.equal(await largeController.arrange(large,{name:'cose',seed:false,width:1200,height:400,fit:false}),true,
+      'A representative 6000-node connected component must complete a bounded background pass');
+    assert.equal(large.nodes().length,6000);assert.equal(large.edges().length,5999);
+    for(const n of large.nodes())assert.ok(Number.isFinite(n.position('x')) && Number.isFinite(n.position('y')));
+    const bounds=large.nodes().boundingBox();
+    assert.ok(bounds.w>1200 || bounds.h>400,'A large force pass must not squeeze thousands of nodes into viewport coordinates');
+  } finally {largeController.cancel();large.destroy();}
   console.log('Background layout passed: real worker computation, geometry, cancellation, replacement, failure and timeout.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

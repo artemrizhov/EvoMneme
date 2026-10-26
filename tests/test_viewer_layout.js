@@ -68,109 +68,96 @@ try {
   assertSeparated(large);
 } finally {large.destroy();}
 
-// Drive renderer frames explicitly to verify intermediate geometry, cancellation
-// and reduced motion without wall-clock sleeps or a browser dependency.
-const animated=graph();
-try {
-  animated.add([{data:{id:'a',label:'A'},position:{x:0,y:0}},
-    {data:{id:'b',label:'B'},position:{x:100,y:0}},
-    {data:{id:'ab',source:'a',target:'b'}}]);
-  const frames=new Map();let nextFrame=0,reduced=false;
-  animated.window=()=>({requestAnimationFrame:fn=>{frames.set(++nextFrame,fn);return nextFrame;},
-    cancelAnimationFrame:id=>frames.delete(id),matchMedia:()=>({matches:reduced})});
-  const step=time=>{const pending=[...frames.values()];frames.clear();pending.forEach(fn=>fn(time));};
-  const a=animated.getElementById('a'),b=animated.getElementById('b');
-  graphLayout.transition(animated,()=>{
-    a.position({x:200,y:100});b.position({x:300,y:100});
-    animated.viewport({zoom:2,pan:{x:100,y:50}});
-  },{newIds:new Set(['b'])});
-  assert.deepEqual(a.position(),{x:0,y:0},'Destination must not flash before animation');
-  assert.equal(animated.zoom(),1);
-  assert.equal(Number(b.style('opacity')),0);
-  let now=0;
-  const advance=ms=>{for(let remaining=ms;remaining>0;){const dt=Math.min(16,remaining);now+=dt;step(now);remaining-=dt;}};
-  step(now);advance(160);
-  assert.ok(a.position('x')>0 && a.position('x')<200);
-  const oldMotionAt32ms=200*(1-(1+12*.032)*Math.exp(-12*.032));
-  assert.ok(Math.abs(a.position('x')-oldMotionAt32ms)<1e-6,
-    '160 ms of wall time must advance geometry by 32 ms of the original animation');
-  assert.ok(animated.zoom()>1 && animated.zoom()<2);
-  assert.ok(animated.pan('x')>0 && animated.pan('x')<100);
-  assert.ok(Math.abs(Number(b.style('opacity'))-.4)<.001);
-  // Retarget to the displayed position itself: movement can continue only if
-  // the old velocity survives. A fresh easing transition would stop instantly.
-  const current={...a.position()},opacity=Number(b.style('opacity'));
-  graphLayout.transition(animated,()=>a.position(current));
-  assert.equal(frames.size,1);
-  assert.deepEqual(a.position(),current);
-  assert.equal(Number(b.style('opacity')),opacity,'Retargeting must preserve the ongoing fade');
-  advance(5);
-  assert.ok(a.position('x')>current.x,'Retargeting must retain node momentum');
-  const turning=a.position('x');
-  graphLayout.transition(animated,()=>a.position({x:-300,y:50}));
-  advance(5);
-  assert.ok(a.position('x')>turning,'Direction changes must decelerate before reversing');
-  advance(20000);
-  assert.deepEqual(a.position(),{x:-300,y:50});
-  assert.equal(Number(b.style('opacity')),1);
-  assert.equal(frames.size,0);
-  graphLayout.transition(animated,()=>a.position({x:800,y:50}));
-  step(now);advance(160);graphLayout.stop(animated);
-  const stopped={...a.position()};advance(1000);
-  assert.deepEqual(a.position(),stopped);
-  assert.equal(frames.size,0,'Pointer interruption must leave no queued frame');
-  graphLayout.transition(animated,()=>a.position({x:1200,y:50}));
-  step(now);advance(160);
-  assert.ok(a.position('x')<1200);
-  graphLayout.arrange(animated,{name:'grid',incremental:true,affected:[],fit:false});
-  assert.equal(graphLayout.targetPositions(animated).get('a').x,1200,
-    'New calculations must retain the previous destination rather than an intermediate frame');
-  graphLayout.arrange(animated,{name:'grid',runLayout:false,fit:false});
-  assert.equal(graphLayout.targetPositions(animated).get('a').x,1200,
-    'Resize or fit-only updates must not replace a destination with an intermediate frame');
-  let workerInput;
-  const controller=graphLayout.createWorkerLayout(()=>({postMessage(message){workerInput=message;},terminate(){}}));
-  void controller.arrange(animated,{incremental:true,fit:false});
-  assert.equal(workerInput.elements.find(n=>n.data.id==='a').position.x,1200,
-    'Background calculations must also receive target coordinates');
-  controller.cancel();
-  graphLayout.stop(animated);
-  reduced=true;
-  graphLayout.transition(animated,()=>a.position({x:900,y:50}));
-  assert.deepEqual(a.position(),{x:900,y:50});
-  assert.equal(frames.size,0);
-  reduced=false;
-  graphLayout.arrange(animated,{name:'grid',width:900,height:600,fit:false});
-  assert.deepEqual(a.position(),{x:900,y:50},'All layout stages must restore the initial frame');
-  step(now);advance(20000);
-  assertSeparated(animated);
-  graphLayout.transition(animated,()=>a.position({x:1500,y:200}));
-  const beforeStall={...a.position()};
-  step(now);now+=10000;step(now);
-  assert.ok(Math.abs(a.position('x')-beforeStall.x)<Math.abs(1500-beforeStall.x)*.1,
-    'A stalled renderer resumes with a bounded physics step instead of teleporting');
-  assert.equal(frames.size,1,'Only one animation loop exists after a stall');
-  for(let i=0;i<100;i++)graphLayout.transition(animated,()=>a.position({x:1600+i,y:200}));
-  assert.equal(frames.size,1,'Rapid retargeting must not queue animation frames');
-  advance(20000);
-  assert.deepEqual(a.position(),{x:1699,y:200});
-  assert.equal(frames.size,0);
-  // Manual Fit interrupts both node and camera inertia, including when the
-  // camera was still heading towards a very different layout destination.
-  for(const zoom of [.2,4]) {
-    graphLayout.transition(animated,()=>{
-      a.position({x:a.position('x')+500,y:200});
-      animated.viewport({zoom,pan:{x:800,y:-200}});
-    });
-    step(now);advance(160);
-    graphLayout.fit(animated,animated.elements());
-    const fitted={zoom:animated.zoom(),pan:{...animated.pan()},position:{...a.position()}};
-    assert.equal(frames.size,0,'Fit must cancel the previous animation frame');
-    advance(20000);
-    assert.deepEqual({zoom:animated.zoom(),pan:{...animated.pan()},position:{...a.position()}},fitted,
-      'A previous layout must not change the fitted viewport afterwards');
-  }
-} finally {graphLayout.stop(animated);animated.destroy();}
+// Exercise the actual bundled Cytoscape animation engine, including its own
+// timing loop. The viewer must never schedule an additional animation loop.
+async function checkNativeAnimation() {
+  const animated=graph();
+  let reduced=false;
+  animated.window=()=>({requestAnimationFrame(){throw new Error('Viewer scheduled a custom animation frame');},
+    matchMedia:()=>({matches:reduced})});
+  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  const until=async(predicate,message)=>{
+    for(let i=0;i<250;i++){if(predicate())return;await wait(10);}
+    throw new Error(message);
+  };
+  try {
+    animated.add([{data:{id:'a',label:'A'},position:{x:0,y:0}},
+      {data:{id:'b',label:'B'},position:{x:100,y:0}},
+      {data:{id:'ab',source:'a',target:'b'}}]);
+    const a=animated.$id('a'),b=animated.$id('b');
+    const nativeNodeAnimation=a.animation,nativeCoreAnimation=animated.animation;
+    let nodeCalls=0,cameraCalls=0;
+    a.animation=function(...args){nodeCalls++;return nativeNodeAnimation.apply(this,args);};
+    animated.animation=function(...args){cameraCalls++;return nativeCoreAnimation.apply(this,args);};
+    const updateA=position=>{
+      a.position(position);b.position({x:300,y:100});
+      animated.viewport({zoom:2,pan:{x:100,y:50}});
+    };
+    graphLayout.transition(animated,()=>updateA({x:200,y:100}),{duration:1000,newIds:new Set(['b'])});
+    assert.deepEqual(a.position(),{x:0,y:0},'Destination must not flash before native animation');
+    assert.equal(animated.zoom(),1);assert.equal(Number(b.style('opacity')),0);
+    assert.ok(nodeCalls>0 && cameraCalls>0,'Nodes and camera must use native animation objects');
+    const bMotion=b._private.animation.current[0];
+    await until(()=>a.position('x')>0 && animated.zoom()>1,'Native animation did not advance');
+    assert.ok(a.position('x')<200 && animated.zoom()<2);
+    const current={...a.position()},opacity=Number(b.style('opacity'));
+    graphLayout.transition(animated,()=>updateA({x:-300,y:50}),{duration:100});
+    assert.deepEqual(a.position(),current,'Retargeting must begin at the displayed position');
+    assert.equal(Number(b.style('opacity')),opacity,'Retargeting must preserve the displayed fade');
+    assert.equal(b._private.animation.current[0],bMotion,'Unrelated native motion must not restart');
+    for(let i=0;i<100;i++)graphLayout.transition(animated,()=>updateA({x:500+i,y:50}),{duration:100});
+    assert.ok(a._private.animation.current.length<=1,'Rapid retargeting must replace current native motion');
+    assert.equal(a._private.animation.queue.length,0,'Rapid updates must not accumulate a native queue');
+    assert.ok(b._private.animation.current.length<=2,'Position and fade are the only node animations');
+    assert.ok(animated._private.animation.current.length<=1,'Camera animation must not accumulate');
+    await until(()=>!a.animated() && !b.animated() && !animated.animated(),'Native animations did not finish');
+    assert.deepEqual(a.position(),{x:599,y:50});assert.equal(Number(b.style('opacity')),1);
+
+    graphLayout.transition(animated,()=>a.position({x:800,y:50}),{duration:500});
+    await until(()=>a.position('x')>599,'Second motion did not begin');
+    graphLayout.stop(animated);
+    const stopped={...a.position()};await wait(60);
+    assert.deepEqual(a.position(),stopped);assert.equal(a.animated(),false);
+
+    graphLayout.transition(animated,()=>a.position({x:1200,y:50}),{duration:500});
+    await until(()=>a.position('x')>stopped.x,'Target preservation motion did not begin');
+    graphLayout.arrange(animated,{name:'grid',incremental:true,affected:[],fit:false,duration:500});
+    assert.equal(graphLayout.targetPositions(animated).get('a').x,1200,
+      'New calculations must retain native destinations rather than intermediate frames');
+    graphLayout.arrange(animated,{name:'grid',runLayout:false,fit:false,duration:500});
+    assert.equal(graphLayout.targetPositions(animated).get('a').x,1200,
+      'Resize or fit-only updates must retain native destinations');
+    let workerInput;
+    const controller=graphLayout.createWorkerLayout(()=>({postMessage(message){workerInput=message;},terminate(){}}));
+    void controller.arrange(animated,{incremental:true,fit:false});
+    assert.equal(workerInput.elements.find(n=>n.data.id==='a').position.x,1200);
+    controller.cancel();graphLayout.stop(animated);
+    reduced=true;
+    graphLayout.transition(animated,()=>a.position({x:900,y:50}));
+    assert.deepEqual(a.position(),{x:900,y:50});assert.equal(a.animated(),false);
+    reduced=false;
+
+    graphLayout.arrange(animated,{name:'grid',width:900,height:600,fit:false,duration:80});
+    assert.deepEqual(a.position(),{x:900,y:50},'Layout must restore the initial frame before native motion');
+    await until(()=>!a.animated() && !b.animated(),'Native layout motion did not finish');
+    assertSeparated(animated);
+    for(const zoom of [.2,4]) {
+      graphLayout.transition(animated,()=>{
+        a.position({x:a.position('x')+500,y:200});animated.viewport({zoom,pan:{x:800,y:-200}});
+      },{duration:200});
+      await wait(40);graphLayout.fit(animated,animated.elements());
+      const fitted={zoom:animated.zoom(),pan:{...animated.pan()},position:{...a.position()}};
+      await wait(60);
+      assert.deepEqual({zoom:animated.zoom(),pan:{...animated.pan()},position:{...a.position()}},fitted,
+        'Fit must cancel native node and camera motion');
+      assert.equal(a.animated(),false);assert.equal(animated.animated(),false);
+    }
+    const calls=nodeCalls+cameraCalls;
+    graphLayout.transition(animated,()=>{});
+    assert.equal(nodeCalls+cameraCalls,calls,'Stationary nodes and camera must not receive native animations');
+  } finally {graphLayout.stop(animated);animated.destroy();}
+}
+
 
 const islands=graph();
 try {
@@ -407,4 +394,5 @@ function fillEstablishedLayout(portrait) {
 }
 fillEstablishedLayout(false);fillEstablishedLayout(true);
 
-console.log('Graph layout regressions passed: geometry, inertia, native layout and reduced motion.');
+checkNativeAnimation().then(()=>console.log('Graph layout regressions passed: geometry, native animation, cancellation and reduced motion.'))
+  .catch(error=>{console.error(error);process.exitCode=1;});

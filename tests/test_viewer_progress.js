@@ -30,6 +30,13 @@ assert.ok(!source.endsWith('},2000);\n'),'automatic polling disabled in harness'
 vm.runInContext(source,context);
 vm.runInContext('const shippedApi=api;',context);
 const run=code=>vm.runInContext(code,context);
+async function settleLiveLayout() {
+  for(let i=0;i<500;i++) {
+    if(run('!state.busy && !liveLayout.layoutRunning && !liveLayout.layoutPending && liveLayout.layoutTimer==null'))return;
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  throw new Error('Live background layout did not settle');
+}
 $('layout').value='grid';$('perspective').value='kind';$('limit').value='100';$('depth').value='1';
 $('followGraph').checked=true;
 const fixture=(nodes,edges=[])=>({nodes:nodes.map(id=>({graph_id:id,label:id,kind:'item'})),
@@ -248,9 +255,11 @@ async function main(){
   assert.equal(run('cy.nodes().map(n=>n.id()+":"+n.position("x")).join(",")'),beforeToggle);
   run('setWorkerLayout(true)');
   await run('graphAction(()=>requestedLayout({fit:false}))');
+  await settleLiveLayout();
   assert.equal(run('state.acceleration'),true);
   workerFailure=true;
   await run('graphAction(()=>requestedLayout({fit:false}))');
+  await settleLiveLayout();
   assert.equal(run('state.workerLayoutEnabled'),false);
   assert.equal($('experimentalWorker').checked,false);
   assert.equal(run('state.acceleration'),true,'A worker failure must not disable GPU rendering');
@@ -275,11 +284,21 @@ async function main(){
   assert.match($('workerStatus').textContent,/Enable background layout/);
   let stoppedWorkers=0;
   context.Worker=class {postMessage(){}terminate(){stoppedWorkers++;}};
-  run('setWorkerLayout(true)');
-  const pendingLargeLayout=run('graphAction(()=>requestedLayout({fit:false}))');
-  await new Promise(resolve=>setTimeout(resolve,20));
-  run('setWorkerLayout(false)');
+  $('experimentalWorker').checked=true;
+  const stopMotion=context.MemoryGraphLayout.stop;let stoppedMotion=0;
+  context.MemoryGraphLayout.stop=cy=>{stoppedMotion++;stopMotion(cy);};
+  const pendingLargeLayout=$('experimentalWorker').onchange();
   await pendingLargeLayout;
+  context.MemoryGraphLayout.stop=stopMotion;
+  assert.equal(stoppedMotion,0,'Changing the calculation thread must preserve an animation already in progress');
+  assert.equal(run('state.busy'),false,'Enabling background layout must not wait for a worker result');
+  await new Promise(resolve=>setTimeout(resolve,20));
+  assert.equal(run('liveLayout.layoutRunning'),true);
+  await run('graphAction(()=>{state.responsiveWhileCalculating=true;})');
+  assert.equal(run('state.responsiveWhileCalculating'),true,'Graph actions must run while the worker is calculating');
+  assert.equal(run('liveLayout.layoutRunning'),true,'Unrelated work must not cancel the background calculation');
+  run('setWorkerLayout(false)');
+  await settleLiveLayout();
   assert.equal(run('state.busy'),false,'Disabling a pending worker must release startup work');
   assert.equal(run('cy.scratch("memory-layout")'),'grid-overview');
   run('setWorkerLayout(true)');
@@ -288,7 +307,7 @@ async function main(){
   const beforeFilterCancel=stoppedWorkers;
   // Disable only the replacement worker so the filtered redraw can finish.
   run('state.workerLayoutEnabled=false');
-  $('apply').onclick();await staleFilterLayout;
+  $('apply').onclick();await staleFilterLayout;await settleLiveLayout();
   assert.ok(stoppedWorkers>beforeFilterCancel,'Applying filters must terminate the old calculation');
   assert.equal(run('state.busy'),false);assert.equal($('error').textContent,'');
   delete context.Worker;
@@ -385,7 +404,9 @@ async function main(){
   };
   const replyLayout=({worker,message})=>worker.onmessage({data:{id:message.id,layout:message.options.name,
     positions:message.elements.filter(e=>e.group==='nodes').map(e=>[e.data.id,e.position])}});
-  run('setWorkerLayout(true);seekReplay(2)');await settleReplay();
+  run('seekReplay(2)');await settleReplay();
+  $('experimentalWorker').checked=true;await $('experimentalWorker').onchange();
+  assert.equal(run('state.busy'),false,'Enabling a worker during Replay must release the render queue');
   await waitFor(()=>layoutMessages.length===1,'Background layout did not start');
   assert.equal(run('state.replay.index'),2);
   assert.equal(run('state.busy'),false,'The logical graph must not wait for layout computation');

@@ -10,13 +10,14 @@ const state = { snapshot: null, offset: 0, root: '', selected: null, pathStart: 
   journal:null,changeAfter:null,changeBefore:null,changeOlder:false,changeBusy:false,seenChanges:new Set(),
   activityAfter:null,activityBefore:null,activityOlder:false,seenActivities:new Set(),expandedSessions:new Set(),sessionLimits:new Map(),selectedSession:null,
   components:new Map(),componentCount:0,graphActions:[],progress:null,replay:null,acceleration:false,workerLayoutEnabled:false,graphMutation:false,workerError:'' };
+const liveLayout={layoutEpoch:0,layoutPending:null,layoutRunning:false,layoutTimer:null};
 const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c8d889','#88cdd7','#ccab91','#b0a3d4'];
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
 function setConnectionStatus(value) { const el=$('connection');el.textContent=value;el.title=value; }
 function showError(error, persistent=false) { $('error').textContent = error.message || String(error); $('error').classList.remove('hidden'); clearTimeout(showError.timer); if (!persistent) showError.timer = setTimeout(() => $('error').classList.add('hidden'), 12000); }
 const graphCancelled=new Error('Graph work superseded');
 function checkGraphWork(work=state.activeWork) {if(work?.cancelled)throw graphCancelled;}
-function interruptGraphWork() {
+function interruptGraphWork(stopMotion=true) {
   const work=state.activeWork;
   if(work) {
     work.cancelled=true;
@@ -25,8 +26,8 @@ function interruptGraphWork() {
     state.previous=null;state.revision=null;
   }
   state.graphActions=[];state.refreshQueued=state.resetQueued=false;
-  cancelReplayLayout(state.replay);backgroundLayout.cancel();
-  MemoryGraphLayout.stop(cy);
+  cancelReplayLayout(state.replay);cancelReplayLayout(liveLayout);backgroundLayout.cancel();
+  if(stopMotion)MemoryGraphLayout.stop(cy);
 }
 async function api(route, values = {}) {
   const work=state.activeWork;
@@ -126,7 +127,7 @@ async function graphAction(fn) {
     await drainGraphWork();
   }
 }
-function graphControl(fn) {return guarded((...args)=>{interruptGraphWork();return graphAction(()=>fn(...args));});}
+function graphControl(fn,stopMotion=true) {return guarded((...args)=>{interruptGraphWork(stopMotion);return graphAction(()=>fn(...args));});}
 
 // Reversible row deltas retain entities deleted since recording began. The
 // baseline and all deltas come from one server-side read transaction.
@@ -387,8 +388,13 @@ $('replaySpeed').onchange=()=>{if(state.replay?.playing){pauseReplay();playRepla
 $('replayExit').onclick=guarded(exitReplay);
 
 async function requestedLayout(options={}) {
-  cancelReplayLayout(state.replay);
-  await graphStage('Laying out graph');await layout(options);
+  cancelReplayLayout(state.replay);cancelReplayLayout(liveLayout);
+  await graphStage('Laying out graph');
+  if(state.workerLayoutEnabled) {
+    queueGraphLayout(state.replay || liveLayout,options);
+    return;
+  }
+  await layout(options);
 }
 function cancelReplayLayout(r) {
   if(!r)return;
@@ -397,38 +403,54 @@ function cancelReplayLayout(r) {
   backgroundLayout.cancel();
 }
 function queueReplayLayout(options) {
-  const r=state.replay;if(!r || r.exiting)return;
+  queueGraphLayout(state.replay,options);
+}
+function layoutOwnerActive(r) {
+  return r && !r.exiting && (r===state.replay || (r===liveLayout && !state.replay));
+}
+function queueGraphLayout(r,options) {
+  if(!layoutOwnerActive(r))return;
   if(options.incremental) {
     // The running job already owns its changes. Carry forward only work
     // queued since dispatch, otherwise dirty/new flags survive indefinitely
     // whenever playback keeps the worker continuously occupied.
     for(const key of ['affected','newNodes'])
       options[key]=[...new Set([...(r.layoutPending?.[key] || []),...(options[key] || [])])];
+    if(r.layoutPending && !r.layoutPending.incremental) {
+      options.incremental=false;options.seed ||= r.layoutPending.seed;
+    }
   }
   r.layoutPending=options;
   startReplayLayout(r);
 }
 function startReplayLayout(r) {
-  if(state.replay!==r || r.exiting || r.layoutRunning || r.layoutTimer!=null || !r.layoutPending)return;
+  if(!layoutOwnerActive(r) || r.layoutRunning || r.layoutTimer!=null || !r.layoutPending)return;
   r.layoutTimer=setTimeout(()=>void runReplayLayout(r),0);
 }
 async function runReplayLayout(r) {
   r.layoutTimer=null;
-  if(state.replay!==r || r.exiting || !r.layoutPending)return;
+  if(!layoutOwnerActive(r) || !r.layoutPending)return;
   if(state.graphMutation){r.layoutTimer=setTimeout(()=>void runReplayLayout(r),16);return;}
   const options=r.layoutPending,epoch=r.layoutEpoch || 0;
   r.layoutPending=null;r.layoutRunning=true;
   replayStatus();
+  if(state.workerLayoutEnabled)$('workerStatus').textContent='On · calculating layout in background…';
   const beforeApply=async()=>{
-    while((state.graphMutation || pointerStart) && state.replay===r && !r.exiting && (r.layoutEpoch || 0)===epoch)
+    while((state.graphMutation || pointerStart) && layoutOwnerActive(r) && (r.layoutEpoch || 0)===epoch)
       await graphYield();
-    if(state.replay!==r || r.exiting || (r.layoutEpoch || 0)!==epoch)return false;
-    if(!$('followGraph').checked)options.fit=false;
+    if(!layoutOwnerActive(r) || (r.layoutEpoch || 0)!==epoch)return false;
+    if(state.replay && !$('followGraph').checked)options.fit=false;
     return true;
   };
-  try {await layout(options,beforeApply);}
-  catch(error){if(error!==graphCancelled){pauseReplay();showError(error,true);}}
-  finally {r.layoutRunning=false;replayStatus();startReplayLayout(r);}
+  try {await layout(options,beforeApply,null);}
+  catch(error){if(error!==graphCancelled){if(r===state.replay)pauseReplay();showError(error,true);}}
+  finally {
+    r.layoutRunning=false;replayStatus();startReplayLayout(r);
+    if(layoutOwnerActive(r) && state.workerLayoutEnabled && !r.layoutPending)
+      $('workerStatus').textContent=cy.nodes().length>800 && $('layout').value==='cose'
+        ?'On · large components use short background force passes; later updates refine positions.'
+        :'On · layout calculated in background.';
+  }
 }
 async function drainGraphWork() {
   if (state.refreshQueued) {
@@ -527,7 +549,7 @@ function setAcceleration(enabled) {
   saveVisualPreferences();
 }
 function setWorkerLayout(enabled) {
-  backgroundLayout.cancel();
+  cancelReplayLayout(state.replay);cancelReplayLayout(liveLayout);backgroundLayout.cancel();
   state.workerError='';
   if(enabled && typeof Worker!=='function') {
     state.workerLayoutEnabled=false;$('experimentalWorker').checked=false;
@@ -544,8 +566,8 @@ function setWorkerLayout(enabled) {
 $('experimentalAcceleration').onchange=graphControl(()=>setAcceleration($('experimentalAcceleration').checked));
 $('experimentalWorker').onchange=graphControl(()=>{
   setWorkerLayout($('experimentalWorker').checked);
-  if(state.workerLayoutEnabled)return requestedLayout({seed:true});
-});
+  if(state.workerLayoutEnabled)return requestedLayout({seed:false});
+},false);
 $('cy').addEventListener('webglcontextlost',event=>{
   if(!state.acceleration)return;
   event.preventDefault();backgroundLayout.cancel();
@@ -679,8 +701,8 @@ async function decorate() {
   }
   if (values.length > 30) $('legend').append(text('span',`+${values.length-30} categories`));
 }
-async function layout(options = {},beforeApply=null) {
-  const work=state.activeWork;checkGraphWork(work);
+async function layout(options = {},beforeApply=null,work=state.activeWork) {
+  checkGraphWork(work);
   const bounds=$('cy').getBoundingClientRect();
   if (bounds.width<1 || bounds.height<1) {state.pendingLayout=true;return;}
   state.pendingLayout=false;
@@ -875,7 +897,8 @@ async function draw(data, resetLayout, key) {
       fit:!state.selectedActivity&&!state.selectedSession && (!state.replay || $('followGraph').checked),
       animate:oldPositions.size>0 && (!state.replay || state.replay.index>=0),newIds,
       incremental:!resetLayout && oldPositions.size>0,affected:[...affected],newNodes:[...newIds],placementOrigin:spawn.origin};
-    if(state.replay?.index>=0)queueReplayLayout(settings);
+    if(state.workerLayoutEnabled)queueGraphLayout(state.replay || liveLayout,settings);
+    else if(state.replay?.index>=0)queueReplayLayout(settings);
     else await layout(settings);
   } else if (added) {
     await graphStage('Positioning new nodes');

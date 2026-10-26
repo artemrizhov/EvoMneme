@@ -7,6 +7,24 @@
 
   const transitions = new WeakMap();
 
+  // CoSE repulsion compares node pairs. Keep a pass bounded as a component
+  // grows, rather than multiplying thousands of nodes by hundreds of iterations.
+  function forceIterations(count,preferred) {
+    if(count<=800)return preferred;
+    return Math.min(preferred,Math.max(1,Math.floor(20000000/(count*count))));
+  }
+
+  function runForce(cy,options) {
+    const solver=cy.layout(options);
+    // The bundled CoSE calls components() during initialization. Its general
+    // collection traversal is expensive on large connected graphs, independently
+    // of the iteration count. Supply the same components from our linear walk
+    // on this solver-owned collection; leave Cytoscape's global prototype alone.
+    const components=connectedRegions(solver.options.eles);
+    solver.options.eles.components=()=>components;
+    solver.run();
+  }
+
   function directionFor(key) {
     let hash=2166136261;
     for(let i=0;i<key.length;i++)hash=Math.imul(hash^key.charCodeAt(i),16777619);
@@ -37,14 +55,16 @@
   function stop(cy) {
     const active=transitions.get(cy);
     if (!active) return;
-    active.cancel();
-    for (const item of active.items.values()) if(item.opacity<1)item.node.removeStyle('opacity');
+    for(const item of active.items.values()) {
+      item.node.stop(true,false);
+      if(item.fadeEnd)item.node.removeStyle('opacity');
+    }
+    if(active.viewport)cy.stop(true,false);
     transitions.delete(cy);
   }
 
-  // Compute the entire destination synchronously in one batch, then restore the
-  // displayed geometry before the renderer paints. All layout stages share one
-  // spring motion, including collision correction and viewport fitting.
+  // Compute a destination in one batch, restore the displayed frame, and let
+  // Cytoscape own interpolation and its renderer animation loop.
   function transition(cy, update, options = {}) {
     const win=cy.window();
     if (options.animate===false || !win?.requestAnimationFrame ||
@@ -55,7 +75,7 @@
     const nodes=cy.nodes();
     const from=new Map(nodes.map(n=>[n.id(),{...n.position()}]));
     const viewport={zoom:cy.zoom(),pan:{...cy.pan()}};
-    let targets, destination;
+    let targets,destination;
     cy.startBatch();
     try {
       update();
@@ -64,64 +84,72 @@
       nodes.positions(n=>from.get(n.id()));
       cy.viewport(viewport);
     } finally {cy.endBatch();}
-    let active=transitions.get(cy);
-    const items=new Map(nodes.map(node=>{
-      const old=active?.items.get(node.id());
-      const item=old?.node===node ? old : {node,vx:0,vy:0,opacity:options.newIds?.has(node.id())?0:1};
-      item.target=targets.get(node.id());
-      if(item.opacity<1)node.style('opacity',item.opacity);
-      return [node.id(),item];
-    }));
-    if (active) {active.items=items;active.destination=destination;return;}
-    active={items,destination,velocity:{zoom:0,x:0,y:0},last:undefined};
-    let frame;
-    // Exact critically damped spring integration. Cap simulation time per
-    // renderer frame so a stalled tab resumes slowly without a catch-up jump.
-    const spring=(value,target,velocity,dt,tolerance=.1)=>{
-      const omega=12, offset=value-target, c=velocity+omega*offset, decay=Math.exp(-omega*dt);
-      const position=target+(offset+c*dt)*decay;
-      const speed=(velocity-omega*c*dt)*decay;
-      const settled=Math.abs(position-target)<tolerance && Math.abs(speed)<tolerance*5;
-      return settled?[target,0,true]:[position,speed,false];
-    };
-    const tick=now=>{
-      if (cy.destroyed()) {stop(cy);return;}
-      const dt=active.last===undefined?0:Math.min(32,Math.max(0,now-active.last))/1000;
-      // Geometry runs at one fifth of real time. Keep appearances responsive
-      // while retaining the existing spring state when a new target arrives.
-      const motionDt=dt/5;
-      active.last=now;
-      let settled=true;
-      cy.batch(()=>{
-        for (const item of active.items.values()) {
-          const node=item.node;
-          if(node.removed())continue;
-          if(!node.locked()) {
-            const p=node.position();
-            const [x,vx,sx]=spring(p.x,item.target.x,item.vx,motionDt);
-            const [y,vy,sy]=spring(p.y,item.target.y,item.vy,motionDt);
-            item.vx=vx;item.vy=vy;node.position({x,y});
-            settled &&= sx && sy;
-          } else {item.vx=item.vy=0;}
-          if(item.opacity<1) {
-            item.opacity=Math.min(1,item.opacity+dt/.4);
-            if(item.opacity===1)node.removeStyle('opacity');
-            else {node.style('opacity',item.opacity);settled=false;}
-          }
-        }
-        const pan=cy.pan(),velocity=active.velocity,target=active.destination;
-        const [zoom,vz,sz]=spring(cy.zoom(),target.zoom,velocity.zoom,motionDt,.00001);
-        const [x,vx,sx]=spring(pan.x,target.pan.x,velocity.x,motionDt);
-        const [y,vy,sy]=spring(pan.y,target.pan.y,velocity.y,motionDt);
-        active.velocity={zoom:vz,x:vx,y:vy};
-        cy.viewport({zoom,pan:{x,y}});settled &&= sz && sx && sy;
-      });
-      if (!settled) frame=win.requestAnimationFrame(tick);
-      else transitions.delete(cy);
-    };
-    active.cancel=()=>win.cancelAnimationFrame(frame);
+
+    const active=transitions.get(cy) || {items:new Map(),viewport:null};
     transitions.set(cy,active);
-    frame=win.requestAnimationFrame(tick);
+    const duration=options.duration ?? 5000,easing='ease-out-cubic';
+    const samePosition=(a,b)=>Math.abs(a.x-b.x)<1e-6 && Math.abs(a.y-b.y)<1e-6;
+    const sameViewport=(a,b)=>Math.abs(a.zoom-b.zoom)<1e-9 && samePosition(a.pan,b.pan);
+    const retire=()=>{
+      if(!active.items.size && !active.viewport && transitions.get(cy)===active)transitions.delete(cy);
+    };
+    const retireItem=item=>{
+      if(!item.motion && !item.fade && active.items.get(item.node.id())===item)
+        active.items.delete(item.node.id());
+      retire();
+    };
+    for(const [id,item] of active.items) {
+      if(item.node.removed() || cy.getElementById(id)!==item.node) {
+        item.node.stop(true,false);
+        if(item.fadeEnd)item.node.removeStyle('opacity');
+        active.items.delete(id);
+      }
+    }
+    for(const node of nodes) {
+      const id=node.id(),target=targets.get(id),previous=active.items.get(id);
+      // Unrelated nodes keep their existing native transition and its end time.
+      if(previous && samePosition(previous.target,target))continue;
+      const fadeEnd=previous?.fadeEnd || (options.newIds?.has(id)?Date.now()+400:0);
+      node.stop(true,false); // Clear both current animations and the queue.
+      if(fadeEnd && !previous)node.style('opacity',0);
+      const item={node,target,fadeEnd,motion:null,fade:null};
+      active.items.set(id,item);
+      if(!node.locked() && !samePosition(from.get(id),target)) {
+        const motion=node.animation({position:target,duration,easing,queue:false});
+        item.motion=motion;
+        motion.promise().then(()=>{
+          if(active.items.get(id)!==item || item.motion!==motion)return;
+          item.motion=null;retireItem(item);
+        });
+        motion.play();
+      }
+      if(fadeEnd>Date.now()) {
+        const fade=node.animation({style:{opacity:1},duration:fadeEnd-Date.now(),easing:'linear',queue:false});
+        item.fade=fade;
+        fade.promise().then(()=>{
+          if(active.items.get(id)!==item || item.fade!==fade)return;
+          item.fade=null;item.fadeEnd=0;node.removeStyle('opacity');retireItem(item);
+        });
+        fade.play();
+      } else if(fadeEnd) {node.removeStyle('opacity');item.fadeEnd=0;}
+      retireItem(item);
+    }
+    if(!active.viewport || !sameViewport(active.viewport.target,destination)) {
+      cy.stop(true,false);
+      active.viewport=null;
+      if(!sameViewport(viewport,destination)) {
+        const animation=cy.animation({...destination,duration,easing,queue:false});
+        const entry={animation,target:destination};active.viewport=entry;
+        animation.promise().then(()=>{
+          if(active.viewport!==entry)return;
+          active.viewport=null;retire();
+        });
+        animation.play();
+      }
+    }
+    // retireItem may have temporarily emptied the map while constructing it.
+    if(active.items.size || active.viewport)transitions.set(cy,active);
+    else retire();
   }
 
   function boxes(nodes) {
@@ -301,19 +329,27 @@
     }
     cy.scratch('memory-layout',options.name || 'cose');
     if (options.runLayout!==false) {
-      const common={eles:elements,animate:false,fit:false,padding:36,boundingBox:{x1:0,y1:0,w:width,h:height},
+      const largeForce=(options.name || 'cose')==='cose' && nodes.length>800;
+      const common={eles:elements,animate:false,fit:false,padding:36,
+        boundingBox:largeForce?undefined:{x1:0,y1:0,w:width,h:height},
         nodeDimensionsIncludeLabels:true,avoidOverlap:true};
       if (options.seed) {
-        cy.layout({...common,name:'grid',cols:Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height))),
+        const cols=Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height)));
+        cy.layout({...common,name:'grid',cols,
+          boundingBox:largeForce?{x1:0,y1:0,w:Math.max(width,cols*180),
+            h:Math.max(height,Math.ceil(nodes.length/cols)*110)}:common.boundingBox,
           avoidOverlapPadding:28,condense:true}).run();
       }
-      cy.layout({...common,name:options.name || 'cose',randomize:false,
+      const settings={...common,name:options.name || 'cose',randomize:false,
         nodeRepulsion:()=>6500,nodeOverlap:24,idealEdgeLength:()=>120,
-        componentSpacing:100,gravity:.2,numIter:nodes.length>800?120:nodes.length>250?350:800,minNodeSpacing:28,
+        componentSpacing:100,gravity:.2,numIter:forceIterations(nodes.length,nodes.length>250?350:800),minNodeSpacing:28,
+        ...(nodes.length>800?{initialTemp:200,coolingFactor:.99}:{}),
         // Cytoscape's spacing transform expects a layout position for every
         // node; locked nodes have none in grid layouts and can produce NaNs.
-        spacingFactor:nodes.some(n=>n.locked())?1:1.25,
-        cols:Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height)))}).run();
+        spacingFactor:largeForce || nodes.some(n=>n.locked())?1:1.25,
+        cols:Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height)))};
+      if(settings.name==='cose')runForce(cy,settings);
+      else cy.layout(settings).run();
     }
     if (options.fit!==false) fitViewport(cy,elements);
   }
@@ -504,10 +540,10 @@
         // Allow the entire connected structure to settle. Artificially locking
         // its outer nodes or clipping every step prevents new links from forming
         // a coherent layout after the nodes were initially unconnected.
-        cy.layout({name:'cose',eles:region,animate:false,fit:false,randomize:false,
+        runForce(cy,{name:'cose',eles:region,animate:false,fit:false,randomize:false,
           nodeDimensionsIncludeLabels:true,nodeRepulsion:()=>6500,nodeOverlap:24,
           idealEdgeLength:()=>120,componentSpacing:100,gravity:.2,
-          numIter:members.length>800?120:350,initialTemp:200,minTemp:1,coolingFactor:.99}).run();
+          numIter:forceIterations(members.length,350),initialTemp:200,minTemp:1,coolingFactor:.99});
         // Existing members need room too when a component grows or reconnects.
         separate(members);
         if(!members.some(n=>n.locked())) {
