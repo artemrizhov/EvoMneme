@@ -7,6 +7,14 @@
 
   const transitions = new WeakMap();
 
+  function targetPositions(cy) {
+    const active=transitions.get(cy);
+    return new Map(cy.nodes().map(node=>{
+      const item=active?.items.get(node.id());
+      return [node.id(),{...(item?.node===node?item.target:node.position())}];
+    }));
+  }
+
   function stop(cy) {
     const active=transitions.get(cy);
     if (!active) return;
@@ -116,6 +124,48 @@
     });
   }
 
+  function vacantPositions(nodes,movable,origin,targets=new Map(),gap=16) {
+    const items=boxes(nodes);
+    for(const item of items) {
+      const target=targets.get(item.node.id());
+      if(target){item.x=target.x;item.y=target.y;}
+    }
+    const cellSize=Math.max(32,...items.map(b=>Math.max(b.w,b.h)+gap));
+    const occupied=new Map(),result=new Map(),cursors=new Map();
+    const insert=b=>{
+      const key=Math.floor((b.x+b.dx)/cellSize)+','+Math.floor((b.y+b.dy)/cellSize);
+      if(!occupied.has(key))occupied.set(key,[]);
+      occupied.get(key).push(b);
+    };
+    const free=b=>{
+      const gx=Math.floor((b.x+b.dx)/cellSize),gy=Math.floor((b.y+b.dy)/cellSize);
+      for(let x=gx-1;x<=gx+1;x++)for(let y=gy-1;y<=gy+1;y++) {
+        for(const a of occupied.get(x+','+y) || []) {
+          if(Math.abs(a.x+a.dx-b.x-b.dx)<(a.w+b.w)/2+gap &&
+             Math.abs(a.y+a.dy-b.y-b.dy)<(a.h+b.h)/2+gap)return false;
+        }
+      }
+      return true;
+    };
+    const canPlace=b=>movable.has(b.node.id()) && !b.locked;
+    items.filter(b=>!canPlace(b)).forEach(insert);
+    for(const b of items.filter(canPlace)) {
+      // Restart from the center on every update, so deleted or relocated
+      // nodes leave reusable holes. Share scans for equally sized new nodes
+      // within a batch; occupancy can only grow during this call.
+      const shape=[b.w,b.h,b.dx,b.dy].join(',');
+      let index=cursors.get(shape) || 0;
+      do {
+        const radius=70*Math.sqrt(index),angle=index*2.399963229728653;
+        b.x=origin.x+Math.cos(angle)*radius;b.y=origin.y+Math.sin(angle)*radius;
+        index++;
+      } while(!free(b));
+      cursors.set(shape,index);insert(b);
+      result.set(b.node.id(),{x:b.x,y:b.y});
+    }
+    return result;
+  }
+
   function separate(nodes, movable, gap = 16) {
     const items = boxes(nodes);
     const cellSize = Math.max(32,...items.map(b => Math.max(b.w,b.h)+gap));
@@ -194,27 +244,6 @@
     nodes.positions(node => positions.get(node.id()));
   }
 
-  function orient(nodes, width, height) {
-    if (nodes.length<2 || nodes.some(n=>n.locked())) return;
-    const items=boxes(nodes);
-    const cx=items.reduce((s,b)=>s+b.x,0)/items.length;
-    const cy=items.reduce((s,b)=>s+b.y,0)/items.length;
-    const score = rotate => {
-      let x1=Infinity,y1=Infinity,x2=-Infinity,y2=-Infinity;
-      for (const b of items) {
-        const x=(rotate?b.y-cy:b.x-cx)+b.dx;
-        const y=(rotate?cx-b.x:b.y-cy)+b.dy;
-        x1=Math.min(x1,x-b.w/2);x2=Math.max(x2,x+b.w/2);
-        y1=Math.min(y1,y-b.h/2);y2=Math.max(y2,y+b.h/2);
-      }
-      return Math.min(width/Math.max(1,x2-x1),height/Math.max(1,y2-y1));
-    };
-    // Rotate rigidly, preserving topology and distances instead of stretching nodes.
-    if (score(true)>score(false)*1.05) {
-      nodes.positions(node => {const p=node.position();return {x:cx+p.y-cy,y:cy+cx-p.x};});
-    }
-  }
-
   function fit(cy, elements, padding = 36) {
     // An explicit fit owns the viewport immediately; an old spring must not
     // pull it back towards a layout destination on the next renderer frame.
@@ -229,105 +258,116 @@
     if (cy.zoom()>1) {cy.zoom(1);cy.center(elements);}
   }
 
-  function connectedGroups(elements) {
-    // Cytoscape's general components() repeatedly filters collections. Use
-    // union-find to keep thousands of isolated islands linear as well.
-    const parents=new Map(),sizes=new Map();
-    for(const node of elements.nodes()){parents.set(node.id(),node.id());sizes.set(node.id(),1);}
-    const root=id=>{
-      while(parents.get(id)!==id){parents.set(id,parents.get(parents.get(id)));id=parents.get(id);}
-      return id;
-    };
-    for(const edge of elements.edges()) {
-      const source=edge.data('source'),target=edge.data('target');
-      if(!parents.has(source)||!parents.has(target))continue;
-      let a=root(source),b=root(target);
-      if(a===b)continue;
-      if(sizes.get(a)<sizes.get(b))[a,b]=[b,a];
-      parents.set(b,a);sizes.set(a,sizes.get(a)+sizes.get(b));
-    }
-    const groups=new Map();
-    for(const node of elements.nodes()) {
-      const id=root(node.id());
-      if(!groups.has(id))groups.set(id,[]);
-      groups.get(id).push(node);
-    }
-    for(const edge of elements.edges()) {
-      const source=edge.data('source'),target=edge.data('target');
-      if(parents.has(source)&&parents.has(target))groups.get(root(source)).push(edge);
-    }
-    return [...groups.values()].map(group=>elements.cy().collection(group));
-  }
-
-  function packComponents(groups,width,height,gap=90) {
-    if(groups.length<2)return;
-    const items=groups.map(group=>{
-      const nodes=group.nodes(),bounds=boxes(nodes);
-      const x1=Math.min(...bounds.map(b=>b.x+b.dx-b.w/2)),y1=Math.min(...bounds.map(b=>b.y+b.dy-b.h/2));
-      const x2=Math.max(...bounds.map(b=>b.x+b.dx+b.w/2)),y2=Math.max(...bounds.map(b=>b.y+b.dy+b.h/2));
-      return {nodes,x1,y1,w:x2-x1,h:y2-y1};
-    });
-    const area=items.reduce((sum,b)=>sum+(b.w+gap)*(b.h+gap),0);
-    const rowWidth=Math.max(...items.map(b=>b.w),Math.sqrt(area*width/height));
-    let x=0,y=0,rowHeight=0;
-    for(const item of items) {
-      if(x && x+item.w>rowWidth){x=0;y+=rowHeight+gap;rowHeight=0;}
-      const dx=x-item.x1,dy=y-item.y1;
-      item.nodes.positions(node=>{const p=node.position();return {x:p.x+dx,y:p.y+dy};});
-      x+=item.w+gap;rowHeight=Math.max(rowHeight,item.h);
-    }
-  }
-
   function arrangeNow(cy, options = {}) {
     const elements=cy.elements(':visible').not('.replayRemoved'), nodes=elements.nodes();
     if (!nodes.length) return;
     const width=Math.max(100,options.width || cy.width());
     const height=Math.max(100,options.height || cy.height());
-    // Layout disconnected graphs independently. A global circle/grid scatters
-    // the members of each component among unrelated nodes and hides islands.
-    const groups=nodes.some(n=>n.locked())?[elements]:connectedGroups(elements);
+    if(options.incremental) {
+      arrangeIncremental(cy,elements,options);
+      if(options.fit!==false)fitViewport(cy,elements);
+      return;
+    }
+    // Let Cytoscape place the complete visible graph, including components.
+    // Automatic updates must not rotate or repack its result afterwards.
     if (options.overview || nodes.length>10000) {
       // Full stores can contain tens of thousands of symbols. Keep this overview
       // linear rather than running an O(n²) force simulation or collision pass.
-      for(const group of groups) {
-        const members=group.nodes();
-        const cols=Math.max(1,Math.ceil(Math.sqrt(members.length*width/height*110/180)));
-        members.positions((node,i)=>({x:(i%cols)*180,y:Math.floor(i/cols)*110}));
-      }
-      packComponents(groups,width,height);
+      const cols=Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height*110/180)));
+      if(options.runLayout!==false)cy.layout({name:'grid',eles:elements,animate:false,fit:false,cols,
+        avoidOverlap:false,boundingBox:{x1:0,y1:0,w:Math.max(width,cols*180),
+          h:Math.max(height,Math.ceil(nodes.length/cols)*110)}}).run();
       cy.scratch('memory-layout',options.overview?'grid-overview':'grid-large');
       if (options.fit!==false) fitViewport(cy,elements);
       return;
     }
     cy.scratch('memory-layout',options.name || 'cose');
-    for(const group of groups) {
-      const members=group.nodes();
-      const localWidth=groups.length>1?Math.min(width,Math.max(180,Math.sqrt(members.length*width/height)*140)):width;
-      const localHeight=groups.length>1?Math.min(height,Math.max(150,Math.sqrt(members.length*height/width)*140)):height;
-      if (options.runLayout!==false) {
-        const common={eles:group,animate:false,fit:false,padding:36,boundingBox:{x1:0,y1:0,w:localWidth,h:localHeight},
-          nodeDimensionsIncludeLabels:true,avoidOverlap:true};
-        if (options.seed) {
-          cy.layout({...common,name:'grid',cols:Math.max(1,Math.ceil(Math.sqrt(members.length*localWidth/localHeight))),
-            avoidOverlapPadding:28,condense:true}).run();
-        }
-        cy.layout({...common,name:options.name || 'cose',randomize:false,
-          nodeRepulsion:()=>6500,nodeOverlap:24,idealEdgeLength:()=>120,
-          componentSpacing:100,gravity:.2,numIter:members.length>800?120:members.length>250?350:800,minNodeSpacing:28,
-          // Cytoscape's spacing transform expects a layout position for every
-          // node; locked nodes have none in grid layouts and can produce NaNs.
-          spacingFactor:members.some(n=>n.locked())?1:1.25,
-          cols:Math.max(1,Math.ceil(Math.sqrt(members.length*localWidth/localHeight)))}).run();
+    if (options.runLayout!==false) {
+      const common={eles:elements,animate:false,fit:false,padding:36,boundingBox:{x1:0,y1:0,w:width,h:height},
+        nodeDimensionsIncludeLabels:true,avoidOverlap:true};
+      if (options.seed) {
+        cy.layout({...common,name:'grid',cols:Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height))),
+          avoidOverlapPadding:28,condense:true}).run();
       }
-      orient(members,Math.max(1,localWidth-72),Math.max(1,localHeight-72));
-      separate(members);
+      cy.layout({...common,name:options.name || 'cose',randomize:false,
+        nodeRepulsion:()=>6500,nodeOverlap:24,idealEdgeLength:()=>120,
+        componentSpacing:100,gravity:.2,numIter:nodes.length>800?120:nodes.length>250?350:800,minNodeSpacing:28,
+        // Cytoscape's spacing transform expects a layout position for every
+        // node; locked nodes have none in grid layouts and can produce NaNs.
+        spacingFactor:nodes.some(n=>n.locked())?1:1.25,
+        cols:Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height)))}).run();
     }
-    packComponents(groups,width,height);
     if (options.fit!==false) fitViewport(cy,elements);
   }
 
   function arrange(cy, options = {}) {
-    transition(cy,()=>arrangeNow(cy,options),options);
+    const targets=options.incremental || options.runLayout===false?targetPositions(cy):null;
+    transition(cy,()=>{
+      if(targets)cy.nodes().positions(n=>targets.get(n.id()));
+      arrangeNow(cy,options);
+    },options);
+  }
+
+  // Traverse only connected regions touched by a topology change. Each is
+  // solved natively; there is no shelf packing or rotation of other regions.
+  function changedRegions(elements,changed) {
+    const nodes=new Map(elements.nodes().map(n=>[n.id(),n]));
+    const adjacent=new Map([...nodes.keys()].map(id=>[id,[]]));
+    for(const edge of elements.edges()) {
+      const a=edge.data('source'),b=edge.data('target');
+      if(!nodes.has(a) || !nodes.has(b))continue;
+      adjacent.get(a).push([b,edge]);adjacent.get(b).push([a,edge]);
+    }
+    const seen=new Set(),regions=[];
+    for(const id of changed) {
+      if(seen.has(id) || !nodes.has(id))continue;
+      const stack=[id],members=[],edges=new Map();seen.add(id);
+      while(stack.length) {
+        const current=stack.pop();members.push(nodes.get(current));
+        for(const [other,edge] of adjacent.get(current)) {
+          edges.set(edge.id(),edge);
+          if(!seen.has(other)){seen.add(other);stack.push(other);}
+        }
+      }
+      if(edges.size)regions.push(elements.cy().collection([...members,...edges.values()]));
+    }
+    return regions;
+  }
+
+  function arrangeIncremental(cy,elements,options) {
+    const nodes=elements.nodes(),newNodes=new Set(options.newNodes || []);
+    const before=new Map(nodes.map(n=>[n.id(),{...n.position()}]));
+    const changed=new Set([...(options.affected || []),...newNodes]);
+    const name=options.name || 'cose';
+    if(name==='cose' && !options.overview) {
+      for(const region of changedRegions(elements,changed)) {
+        const members=region.nodes();
+        const anchors=members.filter(n=>!newNodes.has(n.id()));
+        const reference=anchors.length?anchors:members;
+        const center=reference.reduce((s,n)=>{
+          const p=before.get(n.id());return {x:s.x+p.x/reference.length,y:s.y+p.y/reference.length};
+        },{x:0,y:0});
+        // Allow the entire connected structure to settle. Artificially locking
+        // its outer nodes or clipping every step prevents new links from forming
+        // a coherent layout after the nodes were initially unconnected.
+        cy.layout({name:'cose',eles:region,animate:false,fit:false,randomize:false,
+          nodeDimensionsIncludeLabels:true,nodeRepulsion:()=>6500,nodeOverlap:24,
+          idealEdgeLength:()=>120,componentSpacing:100,gravity:.2,
+          numIter:members.length>800?120:350,initialTemp:200,minTemp:1,coolingFactor:.99}).run();
+        if(!members.some(n=>n.locked())) {
+          const destination=reference.reduce((s,n)=>{
+            const p=n.position();return {x:s.x+p.x/reference.length,y:s.y+p.y/reference.length};
+          },{x:0,y:0});
+          // Preserve the region's location without rotating or squeezing it.
+          members.positions(n=>{const p=n.position();return {
+            x:p.x+center.x-destination.x,y:p.y+center.y-destination.y};});
+        }
+      }
+    }
+    // Discrete layouts retain their slots on automatic updates. Only new
+    // nodes need a vacant position; explicit Relayout still runs the full solver.
+    if(newNodes.size)separate(nodes,newNodes);
+    cy.scratch('memory-layout',options.overview?'grid-overview':nodes.length>10000?'grid-large':name);
   }
 
   function createWorkerLayout(createWorker, timeout=45000) {
@@ -343,12 +383,13 @@
       // building an unbounded queue or applying an obsolete destination.
       if(pending)cancel();
       if(!worker)worker=createWorker();
+      const targets=options.incremental || options.runLayout===false?targetPositions(cy):null;
       const id=++serial,elements=cy.elements(':visible').not('.replayRemoved').map(el=>{
         if(el.isEdge())return {group:'edges',data:{id:el.id(),source:el.data('source'),target:el.data('target')}};
         const style={};
         for(const key of ['width','height','border-width','padding','label','font-size','text-valign',
           'text-halign','text-margin-x','text-margin-y','text-max-width','text-wrap'])style[key]=el.style(key);
-        return {group:'nodes',data:{id:el.id()},position:{...el.position()},locked:el.locked(),style};
+        return {group:'nodes',data:{id:el.id()},position:{...(targets?.get(el.id()) || el.position())},locked:el.locked(),style};
       });
       const result=await new Promise((resolve,reject)=>{
         const fail=message=>{
@@ -384,5 +425,5 @@
     return {arrange:arrangeAsync,cancel};
   }
 
-  return {arrange,fit,separate,boxes,transition,stop,createWorkerLayout};
+  return {arrange,fit,separate,boxes,vacantPositions,transition,stop,targetPositions,createWorkerLayout};
 });

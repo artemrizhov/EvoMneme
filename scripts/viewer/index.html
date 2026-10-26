@@ -24,6 +24,7 @@
 <div id="notice" role="status"></div>
 <div class="replay-controls" aria-label="Saved graph history">
 <button id="replayOpen">Replay graph history</button><button id="replayPlay" disabled>Play</button>
+<button id="replayBack" disabled aria-label="Previous history change">← Step</button><button id="replayForward" disabled aria-label="Next history change">Step →</button>
 <label>Speed <select id="replaySpeed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option></select></label>
 <input id="replayPosition" type="range" min="0" max="0" value="0" disabled aria-label="History position">
 <button id="replayExit" disabled>Return to current graph</button><span id="replayStatus" role="status">Saved node and relationship changes · whole database</span>

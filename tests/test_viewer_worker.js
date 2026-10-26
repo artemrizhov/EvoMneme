@@ -64,12 +64,14 @@ async function main() {
     cy.$id('c').unlock();cy.$id('bc').remove();
     cy.add({data:{id:'removed-bc',source:'b',target:'c'},classes:'replayRemoved'});
     assert.equal(await controller.arrange(cy,{name:'grid',width:900,height:600,fit:false}),true);
-    const group=layout.boxes(cy.nodes().filter(n=>n.id()!=='c'));
-    const isolated=layout.boxes(cy.$id('c'))[0];
-    const bounds={x1:Math.min(...group.map(b=>b.x+b.dx-b.w/2)),x2:Math.max(...group.map(b=>b.x+b.dx+b.w/2)),
-      y1:Math.min(...group.map(b=>b.y+b.dy-b.h/2)),y2:Math.max(...group.map(b=>b.y+b.dy+b.h/2))};
-    assert.ok(isolated.x+isolated.dx-isolated.w/2>=bounds.x2+80 || isolated.y+isolated.dy-isolated.h/2>=bounds.y2+80,
-      'Worker must separate islands and ignore historical removal markers');
+    assert.equal(cy.nodes().length,3,'Worker must retain disconnected nodes');
+    assert.equal(cy.elements('.replayRemoved').length,1,'Historical removal markers must remain intact');
+    const oldPositions=new Map(cy.nodes().map(n=>[n.id(),{...n.position()}]));
+    cy.add({data:{id:'new-first',label:'New isolated node'},position:{...cy.$id('a').position()}});
+    assert.equal(await controller.arrange(cy,{name:'grid',incremental:true,newNodes:['new-first'],affected:['new-first'],fit:false}),true);
+    for(const [id,p] of oldPositions)assert.deepEqual(cy.$id(id).position(),p,
+      'A worker update must not reshuffle existing nodes when an isolated node appears');
+    cy.$id('new-first').remove();
     let releaseApply,enterApply;
     const applyGate=new Promise(resolve=>releaseApply=resolve),entered=new Promise(resolve=>enterApply=resolve);
     const guarded=controller.arrange(cy,{name:'circle',width:900,height:600,fit:false},()=>{enterApply();return applyGate;});

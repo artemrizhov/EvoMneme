@@ -232,6 +232,8 @@ function replayStatus() {
   const r=state.replay;if(!r)return;
   $('replayPosition').max=r.engine.events.length;
   $('replayPosition').value=r.desired;
+  $('replayBack').disabled=r.desired<=0;
+  $('replayForward').disabled=r.desired>=r.engine.events.length;
   $('replayPlay').textContent=r.playing?'Pause':r.index===r.engine.events.length?'Replay':'Play';
   const event=r.engine.events[r.index-1];
   $('replayStatus').textContent=`${r.playing?'Playing':'Paused'} · ${r.index} / ${r.engine.events.length} changes · `
@@ -362,6 +364,7 @@ async function exitReplay() {
     state.replay=null;state.previous=null;state.revision=null;state.filterKey='';
     $('replayOpen').disabled=false;$('replayPlay').disabled=true;
     $('replayExit').disabled=true;$('replayPosition').disabled=true;
+    $('replayBack').disabled=$('replayForward').disabled=true;
     $('replayStatus').textContent='Saved node and relationship changes · whole database';
     $('replayStatus').title=$('replayStatus').textContent;
     $('replayBoundary').textContent='';
@@ -370,6 +373,12 @@ async function exitReplay() {
 }
 $('replayOpen').onclick=graphControl(openReplay);
 $('replayPlay').onclick=playReplay;
+function stepReplay(direction) {
+  const r=state.replay;if(!r || r.exiting)return;
+  pauseReplay();interruptGraphWork();seekReplay(r.desired+direction);
+}
+$('replayBack').onclick=()=>stepReplay(-1);
+$('replayForward').onclick=()=>stepReplay(1);
 $('replayPosition').oninput=()=>{
   const target=$('replayPosition').value;
   pauseReplay();interruptGraphWork();seekReplay(target);
@@ -389,6 +398,10 @@ function cancelReplayLayout(r) {
 }
 function queueReplayLayout(options) {
   const r=state.replay;if(!r || r.exiting)return;
+  if(options.incremental) {
+    for(const key of ['affected','newNodes'])
+      options[key]=[...new Set([...(r.layoutOptions?.[key] || []),...(r.layoutPending?.[key] || []),...(options[key] || [])])];
+  }
   r.layoutPending=options;
   startReplayLayout(r);
 }
@@ -401,6 +414,7 @@ async function runReplayLayout(r) {
   if(state.replay!==r || r.exiting || !r.layoutPending)return;
   if(state.graphMutation){r.layoutTimer=setTimeout(()=>void runReplayLayout(r),16);return;}
   const options=r.layoutPending,epoch=r.layoutEpoch || 0;
+  r.layoutOptions=options;
   r.layoutPending=null;r.layoutRunning=true;
   replayStatus();
   const beforeApply=async()=>{
@@ -412,7 +426,7 @@ async function runReplayLayout(r) {
   };
   try {await layout(options,beforeApply);}
   catch(error){if(error!==graphCancelled){pauseReplay();showError(error,true);}}
-  finally {r.layoutRunning=false;replayStatus();startReplayLayout(r);}
+  finally {r.layoutRunning=false;r.layoutOptions=null;replayStatus();startReplayLayout(r);}
 }
 async function drainGraphWork() {
   if (state.refreshQueued) {
@@ -736,16 +750,25 @@ async function draw(data, resetLayout, key) {
       return;
     }
   }
-  const oldPositions = new Map(),oldIds=new Set();
+  const oldPositions = MemoryGraphLayout.targetPositions(cy),oldIds=new Set(),affected=new Set();
   let sumX=0,sumY=0;
   await graphChunks(cy.elements(),el=>{
     oldIds.add(el.id());
-    if(el.isNode()) {const p=el.position();oldPositions.set(el.id(),{x:p.x,y:p.y});sumX+=p.x;sumY+=p.y;}
+    if(el.isNode()) {const p=oldPositions.get(el.id());sumX+=p.x;sumY+=p.y;}
+    if(el.isEdge() && !next.has(el.id())) {
+      affected.add(el.data('source'));affected.add(el.data('target'));
+    }
   },'Preserving graph positions');
   const ids = new Set(),newIds=new Set();
   const center = oldPositions.size ? {x:sumX/oldPositions.size,y:sumY/oldPositions.size} : {x:0,y:0};
-  const neighbors=new Map();
+  let spawn=cy.scratch('memory-spawn');
+  if(!spawn || resetLayout || !sameView || !oldPositions.size) {
+    spawn={origin:{...center}};
+    cy.scratch('memory-spawn',spawn);
+  }
+  const neighbors=new Map(),linkedIds=new Set();
   await graphChunks(data.edges,edge=>{
+    linkedIds.add('n:'+edge.source);linkedIds.add('n:'+edge.target);
     for (const [id,other] of [[edge.source,edge.target],[edge.target,edge.source]]) {
       const p=oldPositions.get('n:'+other);
       if (!p) continue;
@@ -761,9 +784,12 @@ async function draw(data, resetLayout, key) {
     let position = oldPositions.get(id);
     if (!position) {
       newIds.add(id);
-      const angle = ++added * 2.4, radius = 50 + 12 * Math.sqrt(added);
+      affected.add(id);
+      added++;
       const near=neighbors.get(id);
-      const origin=near ? {x:near.x/near.count,y:near.y/near.count} : center;
+      const angle=added*2.399963229728653;
+      const radius=near || linkedIds.has(id)?50+12*Math.sqrt(added):0;
+      const origin=near ? {x:near.x/near.count,y:near.y/near.count} : spawn.origin;
       position = {x:origin.x+Math.cos(angle)*radius, y:origin.y+Math.sin(angle)*radius};
     }
     ids.add(id);
@@ -771,6 +797,11 @@ async function draw(data, resetLayout, key) {
   },'Preparing nodes');
   await graphChunks(data.edges,e=>{
     if (ids.has('n:'+e.source)&&ids.has('n:'+e.target)) {
+      const old=cy.getElementById('e:'+e.graph_id);
+      if(!old.length || old.data('source')!=='n:'+e.source || old.data('target')!=='n:'+e.target) {
+        affected.add('n:'+e.source);affected.add('n:'+e.target);
+        if(old.length){affected.add(old.data('source'));affected.add(old.data('target'));}
+      }
       ids.add('e:'+e.graph_id);
       elements.push({group:'edges',data:{id:'e:'+e.graph_id,source:'n:'+e.source,target:'n:'+e.target,
         label:e._aggregate?`${e.member_count} links`:String(e.kind||''),displayLabel:'',attributes:e,color:'#506984',curve:data.nodes.length>10000?'straight':'bezier'}});
@@ -810,6 +841,17 @@ async function draw(data, resetLayout, key) {
   }
   await countComponents();
   await decorate();
+  if(newIds.size && !resetLayout && oldPositions.size) {
+    const visible=cy.elements(':visible').not('.replayRemoved');
+    const linked=new Set();
+    for(const edge of visible.edges()){linked.add(edge.data('source'));linked.add(edge.data('target'));}
+    const isolated=new Set([...newIds].filter(id=>!linked.has(id)));
+    if(isolated.size) {
+      const positions=MemoryGraphLayout.vacantPositions(visible.nodes(),isolated,spawn.origin,
+        MemoryGraphLayout.targetPositions(cy));
+      for(const [id,p] of positions)cy.getElementById(id).position(p);
+    }
+  }
   if (!state.replay) await applyHighlight();
   if (!state.selectedActivity&&!state.selectedSession) await graphChunks(cy.elements(),el=>{if(state.changes.has(el.id()))el.addClass('changed');},'Marking changes',true);
   // A click may arrive during cooperative rendering; use the latest selection
@@ -829,7 +871,8 @@ async function draw(data, resetLayout, key) {
     await graphStage('Laying out graph');
     const settings={seed:resetLayout || !oldPositions.size,
       fit:!state.selectedActivity&&!state.selectedSession && (!state.replay || $('followGraph').checked),
-      animate:oldPositions.size>0 && (!state.replay || state.replay.index>=0),newIds};
+      animate:oldPositions.size>0 && (!state.replay || state.replay.index>=0),newIds,
+      incremental:!resetLayout && oldPositions.size>0,affected:[...affected],newNodes:[...newIds]};
     if(state.replay?.index>=0)queueReplayLayout(settings);
     else await layout(settings);
   } else if (added) {

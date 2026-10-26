@@ -267,7 +267,7 @@ async function main(){
   $('layout').value='cose';
   $('onlyTouched').checked=false;
   $('error').textContent='';
-  run('const blockingLayout=cy.layout;cy.layout=()=>{throw new Error("Force layout blocked the UI thread")};');
+  run('const blockingLayout=cy.layout;cy.layout=options=>{if(options.name!=="grid")throw new Error("Force layout blocked the UI thread");return blockingLayout.call(cy,options);};');
   await draw(fixture(Array.from({length:4644},(_,i)=>String(i)),Array.from({length:4643},(_,i)=>['edge'+i,String(i),String(i+1)])));
   assert.equal(run('cy.nodes().length'),4644);assert.equal(run('cy.edges().length'),4643);
   assert.equal(run('cy.scratch("memory-layout")'),'grid-overview');
@@ -357,6 +357,14 @@ async function main(){
   delete context.Worker;
   context.document.querySelectorAll=querySelectorAll;
   assert.equal(run('state.replay.index'),0);
+  assert.equal($('replayBack').disabled,true);
+  assert.equal($('replayForward').disabled,false);
+  $('replayForward').onclick();await settleReplay();
+  assert.equal(run('state.replay.index'),1,'Forward must apply exactly one saved change');
+  assert.equal(run('state.replay.playing'),false);
+  $('replayBack').onclick();await settleReplay();
+  assert.equal(run('state.replay.index'),0,'Back must undo exactly one saved change');
+  assert.equal($('replayBack').disabled,true);
   assert.equal($('live').checked,false);
   assert.match($('notice').textContent,/whole database/);
   assert.match($('replayBoundary').textContent,/Baseline: 1 nodes, 0 relationships, 1 components/);
@@ -467,6 +475,7 @@ async function main(){
   await settleReplay();run('draw=replayDraw');
   assert.equal(run('state.replay.playing'),false);
   assert.equal(run('state.replay.index'),5);
+  assert.equal($('replayForward').disabled,true,'Forward must stop at the end of saved history');
   assert.equal(run('playbackSteps.join(",")'),'1,5','Accrued changes must be rendered as one batch instead of an animation backlog');
   assert.equal(run('state.replay.delta.count'),4);
   assert.match($('replayStatus').textContent,/4 saved changes applied in one batch/);
@@ -475,6 +484,38 @@ async function main(){
   await run('exitReplay()');await settleReplay();
   assert.equal(run('state.replay'),null);assert.equal($('live').checked,true);
   assert.equal($('replayPlay').disabled,true);assert.equal(run('state.snapshot.replay'),undefined);
+  assert.equal($('replayBack').disabled,true);assert.equal($('replayForward').disabled,true);
+  // Reproduce the actual history pattern: many isolated nodes, one INSERT at
+  // a time, followed by links. Reusing the same spawn offset on every draw
+  // used to grow a long strip; a tightly constrained solver kept it stretched.
+  $('onlyTouched').checked=false;$('layout').value='cose';$('followGraph').checked=true;
+  await draw(fixture([]));
+  const isolated=[];
+  for(let i=0;i<48;i++) {
+    const before=run('MemoryGraphLayout.targetPositions(cy)');
+    isolated.push('isolated'+i);
+    await draw(fixture(isolated),false);
+    const after=run('MemoryGraphLayout.targetPositions(cy)');
+    for(const [id,p] of before)assert.deepEqual(after.get(id),p,'Isolated INSERT must preserve all previous destinations');
+  }
+  const points=[...run('MemoryGraphLayout.targetPositions(cy)').values()];
+  const width=Math.max(...points.map(p=>p.x))-Math.min(...points.map(p=>p.x));
+  const height=Math.max(...points.map(p=>p.y))-Math.min(...points.map(p=>p.y));
+  assert.ok(Math.max(width/height,height/width)<2,'Sequential isolated INSERTs must spread in two dimensions');
+  const central=run('cy.nodes().sort((a,b)=>{const origin=cy.scratch("memory-spawn").origin;return Math.hypot(a.position("x")-origin.x,a.position("y")-origin.y)-Math.hypot(b.position("x")-origin.x,b.position("y")-origin.y);})[0]');
+  const hole={...central.position()},removed=central.data('attributes').graph_id;
+  isolated.splice(isolated.indexOf(removed),1);
+  await draw(fixture(isolated),false);
+  const frozen=run('MemoryGraphLayout.targetPositions(cy)');
+  isolated.push('replacement');
+  await draw(fixture(isolated),false);
+  assert.deepEqual({...run('cy.$id("n:replacement").position()')},hole,'A later INSERT must reuse the freed central slot');
+  const filled=run('MemoryGraphLayout.targetPositions(cy)');
+  for(const [id,p] of frozen)assert.deepEqual(filled.get(id),p,'Filling the center must preserve existing positions');
+  const links=isolated.slice(1,17).map((id,i)=>['new-link'+i,isolated[0],id]);
+  await draw(fixture(isolated,links),false);
+  const mean=run('cy.edges().reduce((sum,e)=>{const a=e.source().position(),b=e.target().position();return sum+Math.hypot(a.x-b.x,a.y-b.y)/cy.edges().length;},0)');
+  assert.ok(mean<600,'Adding connections must gather initially dispersed nodes');
   run('clearTimeout(showError.timer);cy.destroy()');
   console.log('Viewer lifecycle, component, highlighting, retry and queue regressions passed');
 }

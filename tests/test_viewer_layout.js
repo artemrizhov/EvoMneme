@@ -36,8 +36,9 @@ try {
   for (const [start,end] of [[0,1],[1,12],[12,35],[35,65]]) {
     addBatch(cy,start,end);
     graphLayout.arrange(cy,{width:1200,height:500,seed:start===0});
-    assertSeparated(cy);
+    for(const n of cy.nodes())assert.ok(Number.isFinite(n.position('x')) && Number.isFinite(n.position('y')));
   }
+  graphLayout.separate(cy.nodes());
   const firstPositions=cy.nodes().map(n=>({...n.position()}));
   const frozen=new Map(cy.nodes().map(n=>[n.id(),{...n.position()}]));
   addBatch(cy,65,70);
@@ -50,14 +51,12 @@ try {
 const chain=graph();
 try {
   for (let i=0;i<18;i++) chain.add({data:{id:'n'+i,label:'Node '+i},position:{x:0,y:i*110}});
+  const positions=chain.nodes().map(n=>({...n.position()}));
   graphLayout.arrange(chain,{width:1200,height:400,runLayout:false,fit:false});
-  let bounds=chain.nodes().boundingBox();
-  assert.ok(bounds.w>bounds.h*2,'Portrait graph should rotate to use a landscape viewport');
-  assertSeparated(chain);
+  assert.deepEqual(chain.nodes().map(n=>({...n.position()})),positions,
+    'Fit-only updates must not rotate or reposition nodes');
   graphLayout.arrange(chain,{width:400,height:1200,runLayout:false,fit:false});
-  bounds=chain.nodes().boundingBox();
-  assert.ok(bounds.h>bounds.w*2,'Landscape graph should rotate to use a portrait viewport');
-  assertSeparated(chain);
+  assert.deepEqual(chain.nodes().map(n=>({...n.position()})),positions);
 } finally {chain.destroy();}
 
 const large=graph();
@@ -120,6 +119,22 @@ try {
   const stopped={...a.position()};advance(1000);
   assert.deepEqual(a.position(),stopped);
   assert.equal(frames.size,0,'Pointer interruption must leave no queued frame');
+  graphLayout.transition(animated,()=>a.position({x:1200,y:50}));
+  step(now);advance(160);
+  assert.ok(a.position('x')<1200);
+  graphLayout.arrange(animated,{name:'grid',incremental:true,affected:[],fit:false});
+  assert.equal(graphLayout.targetPositions(animated).get('a').x,1200,
+    'New calculations must retain the previous destination rather than an intermediate frame');
+  graphLayout.arrange(animated,{name:'grid',runLayout:false,fit:false});
+  assert.equal(graphLayout.targetPositions(animated).get('a').x,1200,
+    'Resize or fit-only updates must not replace a destination with an intermediate frame');
+  let workerInput;
+  const controller=graphLayout.createWorkerLayout(()=>({postMessage(message){workerInput=message;},terminate(){}}));
+  void controller.arrange(animated,{incremental:true,fit:false});
+  assert.equal(workerInput.elements.find(n=>n.data.id==='a').position.x,1200,
+    'Background calculations must also receive target coordinates');
+  controller.cancel();
+  graphLayout.stop(animated);
   reduced=true;
   graphLayout.transition(animated,()=>a.position({x:900,y:50}));
   assert.deepEqual(a.position(),{x:900,y:50});
@@ -162,22 +177,83 @@ try {
   islands.add(Array.from({length:7},(_,i)=>({data:{id:'i'+i,label:'Island '+i}})));
   islands.add([{data:{id:'ia',source:'i0',target:'i1'}},{data:{id:'ib',source:'i1',target:'i2'}},
     {data:{id:'ic',source:'i3',target:'i4'}},{data:{id:'id',source:'i4',target:'i5'}}]);
+  const nativeLayout=islands.layout;
+  let nativePositions,calls;
+  islands.layout=options=>{
+    calls++;
+    assert.equal(options.eles.nodes().length,7,'Native layout must receive all components together');
+    assert.equal(options.eles.edges().length,4);
+    const solver=nativeLayout.call(islands,options),nativeRun=solver.run;
+    solver.run=function(){
+      const result=nativeRun.call(this);
+      nativePositions=islands.nodes().map(n=>({...n.position()}));
+      return result;
+    };
+    return solver;
+  };
   for(const name of ['grid','circle','concentric','breadthfirst','cose','overview']) {
+    calls=0;
     graphLayout.arrange(islands,{name:name==='overview'?'cose':name,overview:name==='overview',width:1200,height:600,fit:false,seed:true});
-    assertSeparated(islands);
-    const groups=[['i0','i1','i2'],['i3','i4','i5'],['i6']].map(ids=>{
-      const boxes=graphLayout.boxes(islands.nodes().filter(n=>ids.includes(n.id())));
-      return {x1:Math.min(...boxes.map(b=>b.x+b.dx-b.w/2)),x2:Math.max(...boxes.map(b=>b.x+b.dx+b.w/2)),
-        y1:Math.min(...boxes.map(b=>b.y+b.dy-b.h/2)),y2:Math.max(...boxes.map(b=>b.y+b.dy+b.h/2))};
-    });
-    for(let i=0;i<groups.length;i++)for(let j=0;j<i;j++) {
-      const a=groups[i],b=groups[j];
-      assert.ok(a.x1>=b.x2+80 || b.x1>=a.x2+80 || a.y1>=b.y2+80 || b.y1>=a.y2+80,
-        name+' must keep disconnected components in separate islands');
-    }
+    assert.equal(calls,name==='overview'?1:2,'Only native seed and selected layout should run');
+    assert.deepEqual(islands.nodes().map(n=>({...n.position()})),nativePositions,
+      'Native coordinates must not be rotated, separated or repacked afterwards');
+    for(const n of islands.nodes())assert.ok(Number.isFinite(n.position('x')) && Number.isFinite(n.position('y')));
     assert.equal(islands.edges().length,4);
     assert.equal(islands.elements().components().length,3);
   }
 } finally {islands.destroy();}
 
-console.log('Graph layout regressions passed: geometry, inertia, disconnected islands and reduced motion.');
+const stable=graph();
+try {
+  stable.add([{data:{id:'b',label:'B'},position:{x:0,y:0}},
+    {data:{id:'c',label:'C'},position:{x:240,y:0}},
+    {data:{id:'d',label:'D'},position:{x:480,y:0}},
+    {data:{id:'e',label:'E'},position:{x:720,y:0}},
+    {data:{id:'cd',source:'c',target:'d'}},{data:{id:'de',source:'d',target:'e'}},
+    {data:{id:'remote',label:'Remote'},position:{x:1000,y:500}}]);
+  const old=new Map(stable.nodes().map(n=>[n.id(),{...n.position()}]));
+  // An ID that sorts before existing nodes must not reshuffle their slots.
+  stable.add({data:{id:'a',label:'A'},position:{x:0,y:0}});
+  graphLayout.arrange(stable,{name:'grid',incremental:true,newNodes:['a'],affected:['a'],fit:false});
+  for(const [id,p] of old)assert.deepEqual(stable.$id(id).position(),p,'New isolated nodes must preserve old positions');
+  assertSeparated(stable);
+  stable.add({data:{id:'bc',source:'b',target:'c'}});
+  graphLayout.arrange(stable,{name:'cose',incremental:true,affected:['b','c'],fit:false});
+  assert.deepEqual(stable.$id('remote').position(),old.get('remote'),'An unrelated node must remain fixed');
+  const center=stable.nodes().filter(n=>['b','c','d','e'].includes(n.id())).reduce((s,n)=>s+n.position('x')/4,0);
+  assert.ok(Math.abs(center-360)<1e-6,'The changed connected structure must retain its center');
+  assert.notDeepEqual(stable.$id('e').position(),old.get('e'),'The whole connected structure must be free to settle');
+  assert.equal(stable.nodes(':locked').length,0,'Layout must not introduce permanent locks');
+} finally {stable.destroy();}
+
+const star=graph();
+try {
+  star.add({data:{id:'hub',label:'Hub'},position:{x:0,y:0}});
+  for(let i=0;i<16;i++)star.add({data:{id:'leaf'+i,label:'Leaf '+i},
+    position:{x:1200*Math.cos(i*Math.PI/8),y:1200*Math.sin(i*Math.PI/8)}});
+  for(let i=0;i<16;i++)star.add({data:{id:'link'+i,source:'hub',target:'leaf'+i}});
+  graphLayout.arrange(star,{name:'cose',incremental:true,affected:['hub'],fit:false});
+  const mean=star.edges().reduce((s,e)=>{
+    const a=e.source().position(),b=e.target().position();return s+Math.hypot(a.x-b.x,a.y-b.y)/16;
+  },0);
+  assert.ok(mean<600,'New links must actually gather dispersed nodes into a connected structure');
+} finally {star.destroy();}
+
+const vacancies=graph();
+try {
+  vacancies.add([{data:{id:'moving',label:'X'},position:{x:1000,y:1000}},
+    {data:{id:'first',label:'X'},position:{x:2000,y:2000}}]);
+  const targets=new Map([['moving',{x:0,y:0}]]);
+  const first=graphLayout.vacantPositions(vacancies.nodes(),new Set(['first']),{x:0,y:0},targets);
+  assert.notDeepEqual(first.get('first'),{x:0,y:0},'An occupied destination must not be mistaken for free space');
+  vacancies.$id('first').position(first.get('first'));
+  vacancies.add({data:{id:'second',label:'X'},position:{x:3000,y:3000}});
+  const frozen=vacancies.nodes().not('#second').map(n=>[n.id(),{...n.position()}]);
+  const second=graphLayout.vacantPositions(vacancies.nodes(),new Set(['second']),{x:0,y:0});
+  assert.deepEqual(second.get('second'),{x:0,y:0},'New nodes must reuse the center after it becomes free');
+  vacancies.$id('second').position(second.get('second'));
+  for(const [id,p] of frozen)assert.deepEqual(vacancies.$id(id).position(),p,'Reusing holes must not move previous nodes');
+  assertSeparated(vacancies);
+} finally {vacancies.destroy();}
+
+console.log('Graph layout regressions passed: geometry, inertia, native layout and reduced motion.');
