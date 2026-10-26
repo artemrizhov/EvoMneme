@@ -70,11 +70,13 @@ A single request accepts a string plus top-level positional/named `params`, or a
 }
 ```
 
-For a version-3 store, a compact lookup can use:
+For a version-3 store, an exact compact lookup can use:
 
 ```json
-{"sql":"SELECT id,title,summary,confidence,source_path FROM nodes WHERE scope_id=:scope AND validity='current' AND title LIKE :query LIMIT 8","params":{"scope":"verified-scope-id","query":"%session%"},"max_rows":8}
+{"sql":"SELECT id,title,summary,confidence,source_path,line_start FROM nodes WHERE scope_id=:scope AND validity='current' AND title=:title ORDER BY id LIMIT 9","params":{"scope":"verified-scope-id","title":"Session.commit"},"max_rows":8}
 ```
+
+The ninth candidate provides one lookahead for `has_more`; a SQL limit of eight would hide later matches from the executor. For literal prefix/path selection, stable paging, direct incoming/outgoing contracts and selective provenance, use the executable recipes in [task retrieval and handoff](retrieval.md). Prefer narrow identifiers/responsibilities before broad substring discovery; a missing match or edge is not proof of absence. Reuse verified schema/scope context across subagents instead of repeating discovery.
 
 ### Initialize the released schema
 
