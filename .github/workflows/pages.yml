@@ -1,0 +1,59 @@
+name: Website · GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - 'assets/videos/evomneme-graph.mp4'
+      - 'scripts/viewer/**'
+      - 'scripts/build_website.py'
+      - 'scripts/export_website_demo.py'
+      - 'scripts/evomneme_graph.py'
+      - 'schema.sql'
+      - 'tests/test_website*'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m unittest discover -s tests -p test_website_export.py
+      - run: node tests/test_website_static.js
+      - run: node tests/test_viewer_history.js
+      - run: python scripts/build_website.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .website-build
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

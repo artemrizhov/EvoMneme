@@ -1,0 +1,38 @@
+/* Public chrome for the unmodified local viewer. No external fonts or assets. */
+:root{--line:#2d3d3a;--panel:#14201f;--muted:#9aaea7;--accent:#a6edcc;color:#f1eee3;background:#101a19;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+body{height:100vh;display:flex;flex-direction:column;overflow:hidden}
+a{color:#a6edcc;text-underline-offset:4px}a:hover{color:#f5f0df}
+.demo-chrome{position:relative;z-index:5;display:flex;align-items:center;gap:30px;padding:17px 24px;background:#eeeadd;color:#14201c;border-bottom:1px solid #b7c9bc}
+.demo-chrome>a{font-size:16px;font-weight:700;white-space:nowrap;color:#173e30;text-decoration:none}
+.demo-chrome strong{font:normal 24px/1.15 Georgia,serif;letter-spacing:-.5px}.demo-chrome p{margin:5px 0 0;font-size:11px;line-height:1.5}
+.demo-chrome details{margin-left:auto;font-size:11px;white-space:nowrap}.demo-chrome summary{cursor:pointer;text-decoration:underline;text-underline-offset:4px;padding:8px}
+.demo-provenance{position:absolute;right:24px;top:calc(100% - 1px);width:min(460px,calc(100vw - 48px));white-space:normal;background:#eeeadd;border:1px solid #bac9bd;padding:18px;box-shadow:0 14px 30px #0004;overflow-wrap:anywhere;max-height:65vh;overflow:auto}.demo-provenance a{color:#21553e;display:inline-block;margin-top:12px}
+body>header{height:58px;min-height:58px;background:#14201f}body>header .brand strong{font-size:17px}.mark{border-radius:50%;background:#24483a}.subtitle{font-size:8px}.badge{color:#b4d6c5;border-color:#405b4d}
+#overview{padding:12px 24px;gap:18px}.metric{border-color:#5d9d80}.metric strong{font-size:24px;color:#eeeadd}.metric:nth-child(n+5){display:none}
+main{grid-template-columns:220px minmax(300px,1fr) 280px;min-height:0;flex:1;overflow:hidden}
+aside{background:#14201f}.sidebar,.inspector{overflow:auto;max-height:none;padding:16px}h2{color:#e4eddf}.sidebar{font-size:12px}.sidebar label{color:#b1c5ba}.sidebar select,.sidebar input{background:#101b19;border-color:#3a5046;color:#eeeadd}.sidebar button{border-color:#3a5046;background:#1e3229}.sidebar button.primary{background:#a6edcc;color:#173024}
+.workspace{min-height:0}#graphView{height:auto;min-height:180px;flex:1}#cy{background:radial-gradient(ellipse at center,#172b27 0,#101a19 80%)}nav{background:#14201f;padding:8px 10px}nav button{background:#1d3028;border-color:#3a5046}.tab.active{background:#244e3c;color:#b5f2d2;border-color:#416d54}#notice{background:#202b22;color:#c5ceaa;font-size:10px}.graph-caption{background:#101a19ed;color:#b5c6ba}
+footer{flex-wrap:wrap;gap:7px;padding:8px}#performance{display:none}.hint{color:#9db2a5}#detail a{font-size:12px}#detail dt{color:#a0baac}
+.activity,[data-view="tables"],[data-view="query"],#tablesView,#queryView,#live,#live+label,.header-actions>label{display:none!important}
+.demo-history:not(.demo-embed) .activity{display:block!important;flex:1 1 0;min-height:0;overflow:auto}
+.replay-controls{background:#14201f;border-color:var(--line)}
+.sidebar>p.hint{font-size:0}.sidebar>p.hint:after{content:'Labels appear as you zoom in. Select relationships for their type. Paths and connectivity describe the loaded selection.';font-size:11px}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid #6ed7a2;outline-offset:3px}
+@media(max-width:1100px){main{grid-template-columns:190px minmax(260px,1fr) 240px}.inspector{grid-column:auto;border-top:0}.demo-chrome{gap:18px}.demo-chrome strong{font-size:21px}.demo-chrome p{max-width:460px}}
+@media(max-width:850px){body{height:auto;min-height:100vh;overflow:auto}main{display:grid;grid-template-columns:190px minmax(0,1fr);overflow:visible;min-height:70vh}.workspace{min-width:0}#graphView{height:65vh;flex:auto}.inspector{grid-column:1/-1;max-height:50vh;border-top:1px solid var(--line)}.demo-chrome{flex-wrap:wrap;padding:14px 16px;gap:10px 18px}.demo-chrome>div{flex:1;min-width:200px}.demo-chrome details{margin-left:0}.demo-provenance{right:16px}.badge{display:none}#overview{padding:12px 16px}.metric{min-width:80px}.metric span{font-size:9px}}
+@media(max-width:550px){main{display:flex;flex-direction:column}.sidebar{max-height:340px;border-bottom:1px solid var(--line)}.sidebar #filters{display:grid;grid-template-columns:1fr 1fr}body>header{padding:0 16px}.demo-chrome strong{font-size:20px}.demo-chrome p{font-size:10px}.header-actions #connection{display:block;font-size:10px}.header-actions #refresh{display:none}#overview{gap:8px}.metric{min-width:60px;padding-left:8px}.metric strong{font-size:20px}.inspector{max-height:none}#graphView{height:65vh}}
+/* The landing page supplies the title, provenance and full-viewer link around
+   this opt-in preview. Preserve the actual shared canvas and all its gestures. */
+body.demo-embed{height:100vh;height:100dvh;min-height:0;overflow:hidden}
+.demo-embed>.demo-chrome,.demo-embed>header,.demo-embed>#overview,
+.demo-embed .sidebar,.demo-embed .inspector,.demo-embed #notice,
+.demo-embed footer,.demo-embed nav .tab,.demo-embed #export,.demo-embed #png{display:none!important}
+.demo-embed main{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+.demo-embed .workspace{width:100%;height:100%;min-height:0;flex:1}
+.demo-embed nav{flex-shrink:0;padding:7px 12px;gap:8px}
+.demo-embed nav button{font-size:12px;padding:6px 12px}
+.demo-embed #graphView{height:auto;min-height:0;flex:1;overflow:hidden}
+.demo-embed .graph-caption{font-size:11px;padding:8px 12px}
+.demo-embed .replay-controls{gap:6px;padding:6px 10px}
+.demo-embed .replay-controls button{font-size:12px;padding:6px 8px}
+.demo-embed #replayBoundary{display:none}

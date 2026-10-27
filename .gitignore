@@ -2,3 +2,4 @@
 .evomneme-tests/
 __pycache__/
 *.py[cod]
+.website-build/
