@@ -1122,7 +1122,7 @@ function updateSessionOptions() {
     ? 'Caller metadata comes from recorded calls and attributed changes. Process identities are shown when chat or agent identity was not reported. Unassigned changes remain separate.'
     : 'No caller metadata loaded. Unassigned changes and observations cannot identify a chat or agent.';
 }
-async function ingest(events,highlight=true) {
+async function ingest(events,highlight=true,older=false) {
   // Empty Live polls do not change highlights. Avoid restyling every element
   // of a large graph merely to redisplay the same empty activity response.
   if (!events.length) {
@@ -1153,7 +1153,10 @@ async function ingest(events,highlight=true) {
   if (events.length) state.history.sort((a,b)=>a.time-b.time || (a.change_id || 0)-(b.change_id || 0));
   for (const collection of [state.history,state.recorded]) {
     if (collection.length > 10000) {
-      collection.splice(0,collection.length-10000);
+      // Retain the requested older page instead of immediately discarding it.
+      // Live polling and accumulated browser highlights retain their recent end.
+      if (collection===state.history && older) collection.splice(10000);
+      else collection.splice(0,collection.length-10000);
       state.missed = true;
     }
   }
@@ -1178,7 +1181,7 @@ async function pollEvents(older=false) {
       state.activityBefore=data.before_id??null;state.activityOlder=!!data.has_older;
     }
     if(!older)state.activityAfter=data.after_id??state.activityAfter;
-    await ingest(data.events || []);
+    await ingest(data.events || [],true,older);
     $('traceStatus').textContent = (data.storage==='database' || data.enabled ? 'Database call history available' : 'Call history unavailable')
       + (data.has_more ? ' · catching up' : '')
       + (state.missed ? ' · browser history limited to 10,000 loaded activities' : '');
@@ -1213,7 +1216,7 @@ async function pollChanges(older=false) {
         state.changeOlder=data.has_older;
       }
       if (!older) state.changeAfter=data.after_id;
-      await ingest(data.events || []);
+      await ingest(data.events || [],true,older);
       more=data.has_more;
       if (!more || older) break;
     }
