@@ -2,6 +2,19 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-10-27 — Combine viewer facet values
+
+Single-choice facet dropdowns prevented selecting several node types, scopes or
+relationship attributes together. Expandable checkbox lists now retain explicit
+selections and expanded state across refreshes. Empty selections mean all values;
+values within one field match by OR and separate fields combine by AND. The local
+SQL projection and public snapshot adapter accept the same bounded string arrays,
+while retaining scalar-string request compatibility. Group drilldown replaces a
+field's selection; clearing filters resets both node and relationship facets.
+Regression checks cover combined fields, relationship filters, grouping, malformed
+requests and checkbox state across refresh/reset. Category discovery remains capped
+at 200 values per field; SQL inspection remains available for larger vocabularies.
+
 ## 2026-10-27 — CLI-first population and source-backed quality controls
 
 Population feedback exposed a mismatch between an existing atomic maintenance CLI

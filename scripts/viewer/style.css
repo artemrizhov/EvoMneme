@@ -8,6 +8,14 @@
 .header-actions>label,.header-actions>button{flex-shrink:0;white-space:nowrap}
 @media(max-width:700px){header{height:auto;min-height:76px;flex-wrap:wrap;padding-top:10px;padding-bottom:10px}.header-actions{flex-basis:100%}#connection{display:block}}
 
+.facet{border:1px solid var(--line);border-radius:6px;margin:10px 0;min-width:0}
+.facet>summary{cursor:pointer;padding:8px;font-size:12px;color:var(--text);overflow-wrap:anywhere}
+.facet>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.facet-options{max-height:240px;overflow:auto;padding:0 8px 6px;scrollbar-gutter:stable}
+.facet-options label{display:flex;align-items:flex-start;gap:7px;margin:7px 0;overflow-wrap:anywhere}
+.facet-options input{flex-shrink:0;margin-top:2px}
+.facet-options span{min-width:0;font-size:11px}
+
 /* Keep the viewport fixed; each panel owns its overflowing content. */
 html,body{height:100%;overflow:hidden}
 body{height:100vh;height:100dvh;display:flex;flex-direction:column}

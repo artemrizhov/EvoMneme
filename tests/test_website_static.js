@@ -20,6 +20,14 @@ assert.equal(api.snapshot({offset: 99}).nodes.length, 0);
 assert.deepEqual(ids(api.snapshot({search: 'ENTRY'})), ['a']);
 assert.deepEqual(ids(api.snapshot({source_path: 'src/main.py', kind: 'claim'})), ['d']);
 assert.deepEqual(ids(api.snapshot({null_field: 'source_path'})), ['c']);
+assert.deepEqual(ids(api.snapshot({kind: ['function', 'claim'], validity: ['stale']})), ['d']);
+assert.deepEqual(ids(api.snapshot({kind: [], scope_id: ['v1']})), ['a', 'b', 'c', 'd', 'z']);
+assert.equal(api.snapshot({edge_kind: ['calls', 'supports']}).edges.length, 4);
+assert.equal(api.snapshot({edge_kind: ['supports', 'missing']}).edges.length, 1);
+assert.equal(api.snapshot({aggregate: 'kind', kind: ['function', 'claim']}).grouped_members, 5);
+for (const kind of [false, 5, {}, [null], ['function', 7], Array(1001).fill('x'), ['x'.repeat(10001)]]) {
+  assert.throws(() => api.snapshot({kind}), /Invalid filter/);
+}
 assert.deepEqual(ids(api.snapshot({focus: 'isolated'})), ['z']);
 assert.deepEqual(ids(api.snapshot({focus: 'unsupported'})), ['d', 'z']);
 assert.equal(api.snapshot({}).isolated_total, 1);

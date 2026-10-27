@@ -63,6 +63,31 @@ def code_fixture(path):
 
 
 class ViewerTests(unittest.TestCase):
+    def test_multiselect_facets_combine_values_and_fields(self):
+        result = self.explorer.snapshot({'scope_id': ['main'], 'kind': ['module', 'function'],
+                                         'confidence': ['confirmed', 'inferred'], 'whole_graph': True})
+        self.assertEqual({(n['scope_id'], n['id']) for n in result['nodes']}, {('main', '0'), ('main', '1')})
+        self.assertEqual(len(result['edges']), 1)
+        result = self.explorer.snapshot({'kind': [], 'scope_id': ['main', 'branch'],
+                                         'validity': ['stale', 'superseded']})
+        self.assertEqual(len(result['nodes']), 4)
+        result = self.explorer.snapshot({'edge_confidence': ['confirmed', 'uncertain']})
+        self.assertEqual(result['edges'], [])
+        result = self.explorer.snapshot({'edge_confidence': ['confirmed', 'inferred']})
+        self.assertEqual(len(result['edges']), 4)
+        result = self.explorer.snapshot({'aggregate': 'kind', 'kind': ['module', 'function']})
+        self.assertEqual(result['grouped_members'], 4)
+        result = self.explorer.snapshot({'scope_id': ['main'], 'kind': ["module') OR 1=1 --"]})
+        self.assertEqual(result['nodes'], [])
+        for value in (False, 5, {}, [None], ['function', 7], ['x'] * 1001, ['x' * 10001]):
+            with self.subTest(value_type=type(value).__name__), self.assertRaises(ValueError):
+                self.explorer.snapshot({'kind': value})
+
+    @unittest.skipUnless(shutil.which('node'), 'Checkbox facet regression needs an existing Node.js')
+    def test_checkbox_facet_selection_and_refresh(self):
+        result = subprocess.run([shutil.which('node'), str(ROOT/'tests/test_viewer_filters.js')], capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', 'replace'))
+
     @unittest.skipUnless(shutil.which('node'), 'Optional viewer regression needs an existing Node.js')
     def test_graph_progress_lifecycle_components_and_retry(self):
         result = subprocess.run([shutil.which('node'),str(ROOT/'tests/test_viewer_progress.js')],capture_output=True,timeout=30)

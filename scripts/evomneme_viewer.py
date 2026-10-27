@@ -249,9 +249,16 @@ class Explorer:
         if values.get('null_field') in {'scope_id', 'kind', 'validity', 'confidence', 'source_path'} and values['null_field'] in columns:
             terms.append(quote(values['null_field']) + ' IS NULL')
         for field in ('scope_id', 'kind', 'validity', 'confidence', 'source_path'):
-            if values.get(field) and field in columns:
-                terms.append(quote(field) + '=?')
-                params.append(values[field])
+            selected = values.get(field)
+            if selected is None or selected == '':
+                continue
+            if isinstance(selected, str):
+                selected = [selected]
+            if not isinstance(selected, list) or len(selected) > 1000 or any(not isinstance(v, str) or len(v) > 10000 for v in selected):
+                raise ValueError(field + ' requires at most 1000 string values (10000 characters each)')
+            if selected and field in columns:
+                terms.append(quote(field) + ' IN (' + ','.join('?' for _ in selected) + ')')
+                params.extend(selected)
         if values.get('search'):
             searchable = [c for c in ('label', 'graph_id', 'summary', 'source_path') if c in columns]
             terms.append('(' + ' OR '.join('CAST(' + quote(c) + ' AS TEXT) LIKE ?' for c in searchable) + ')')

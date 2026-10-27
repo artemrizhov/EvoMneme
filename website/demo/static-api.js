@@ -61,9 +61,18 @@
       const limit = whole ? 100000 : Math.max(1, bounded(values.limit, 500, 2000));
       const offset = whole ? 0 : bounded(values.offset, 0, 100000000);
       const visible = new Set(nodes.filter(n => !hidden.has(n.layer)).map(n => n.graph_id));
-      const matchingEdges = edges.filter(e => !hidden.has(e.layer) && visible.has(e.source) && visible.has(e.target) && ['kind', 'validity', 'confidence'].every(f => !values['edge_' + f] || e[f] === values['edge_' + f]));
+      const selections = {};
+      for (const key of [...fields, 'edge_kind', 'edge_validity', 'edge_confidence']) {
+        let selected = values[key];
+        if (selected == null || selected === '') selected = [];
+        if (typeof selected === 'string') selected = [selected];
+        if (!Array.isArray(selected) || selected.length > 1000 || selected.some(v => typeof v !== 'string' || v.length > 10000)) throw new Error('Invalid filter values: ' + key);
+        selections[key] = new Set(selected);
+      }
+      const matches = (key, value) => !selections[key].size || selections[key].has(value);
+      const matchingEdges = edges.filter(e => !hidden.has(e.layer) && visible.has(e.source) && visible.has(e.target) && ['kind', 'validity', 'confidence'].every(f => matches('edge_' + f, e[f])));
       const search = String(values.search || '').toLowerCase();
-      let matching = nodes.filter(n => visible.has(n.graph_id) && fields.every(f => !values[f] || n[f] === values[f]) &&
+      let matching = nodes.filter(n => visible.has(n.graph_id) && fields.every(f => matches(f, n[f])) &&
         (!fields.includes(values.null_field) || n[values.null_field] == null) &&
         (!search || ['label', 'graph_id', 'summary', 'source_path'].some(f => String(n[f] ?? '').toLowerCase().includes(search))) &&
         (values.focus !== 'unsupported' || n.evidence_count === 0) && (values.focus !== 'isolated' || !endpoints.has(n.graph_id)));

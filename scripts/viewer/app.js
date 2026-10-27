@@ -587,12 +587,12 @@ function filters() {
     depth:Number($('depth').value), search:$('search').value.trim(), focus:$('focus').value, aggregate:$('aggregate').value,
     whole_graph:$('wholeGraph').checked,excluded_layers:[...state.disabledLayers]};
   for (const key of ['scope_id','kind','validity','confidence','source_path']) {
-    result[key] = $('filter-' + key)?.value || '';
+    result[key] = facetValues($('filter-' + key));
   }
   for (const key of ['kind','validity','confidence']) {
-    result['edge_' + key] = $('edge-' + key)?.value || '';
+    result['edge_' + key] = facetValues($('edge-' + key));
   }
-  if (state.nullField && result[state.nullField]) state.nullField = '';
+  if (state.nullField && result[state.nullField]?.length) state.nullField = '';
   result.null_field = state.nullField;
   return result;
 }
@@ -618,14 +618,53 @@ function syncSelect(select, choices, preserveMissing=true, force=false) {
   if (next.some(([value])=>value===selected)) select.value=selected;
   select._optionsKey=key;
 }
-function facetSelect(container,field,label,prefix) {
-  let select=$(prefix+field);
-  if (!select) {
-    const wrapper=text('label',label);
-    select=document.createElement('select');select.id=prefix+field;select.dataset.field=field;
-    wrapper.append(select);container.append(wrapper);
+function facetValues(facet) {
+  return [...(facet?._selected || [])].sort();
+}
+function setFacetValues(facet,values) {
+  facet._selected=new Set(values);
+  syncFacet(facet,facet._choices || []);
+}
+function syncFacet(facet,choices) {
+  facet._choices=choices;
+  const selected=facet._selected;
+  const next=new Map(choices.filter(v=>v.value!=null).map(v=>[String(v.value),v.count]));
+  for(const value of selected)if(!next.has(value))next.set(value,0);
+  // Keep existing inputs in place during polling, including keyboard focus.
+  for(const [value,row] of facet._rows)if(!next.has(value)) {
+    row.remove();facet._rows.delete(value);
   }
-  return select;
+  for(const [value,count] of next) {
+    let row=facet._rows.get(value);
+    if(!row) {
+      row=document.createElement('label');
+      const input=document.createElement('input');input.type='checkbox';input.value=value;
+      row.append(input,text('span',''));facet._list.append(row);facet._rows.set(value,row);
+      input.onchange=()=>{
+        if(input.checked)facet._selected.add(value);else facet._selected.delete(value);
+        syncFacet(facet,facet._choices);
+      };
+    }
+    row.firstChild.checked=selected.has(value);
+    row.lastChild.textContent=`${value || '(empty)'} (${count})`;
+  }
+  facet._all.checked=selected.size===0;
+  facet._summary.textContent=`${facet._label} · ${selected.size ? selected.size+' selected' : 'All'}`;
+}
+function facetCheckboxes(container,field,label,prefix) {
+  let facet=$(prefix+field);
+  if(!facet) {
+    facet=document.createElement('details');facet.id=prefix+field;facet.className='facet';facet.dataset.field=field;
+    facet._label=label;facet._selected=new Set();facet._rows=new Map();
+    facet._summary=text('summary',label);
+    facet._list=text('div','','facet-options');
+    facet._list.setAttribute('role','group');facet._list.setAttribute('aria-label',label);
+    const all=text('label','');facet._all=document.createElement('input');facet._all.type='checkbox';
+    all.append(facet._all,text('span','All values'));
+    facet._all.onchange=()=>setFacetValues(facet,[]);
+    facet._list.append(all);facet.append(facet._summary,facet._list);container.append(facet);
+  }
+  return facet;
 }
 function renderLayers(layers = []) {
   const labels={code:'Code entities',knowledge:'Knowledge',cross:'Cross-layer relationships',unresolved:'Unresolved / ambiguous references',custom:'Custom graph'};
@@ -648,15 +687,13 @@ function renderLayers(layers = []) {
 function renderEdgeFilters(facets) {
   const container = $('edgeFilters');
   for (const [field, values] of Object.entries(facets)) {
-    const select=facetSelect(container,field,'Relationship '+field,'edge-');
-    syncSelect(select,[['','All'],...values.filter(v=>v.value!=null).map(v=>[v.value,`${v.value} (${v.count})`])]);
+    syncFacet(facetCheckboxes(container,field,'Relationship '+field,'edge-'),values);
   }
 }
 function renderFilters(facets) {
   const labels={scope_id:'Scope / version',kind:'Node type',validity:'Validity',confidence:'Confidence',source_path:'Source file'};
   for (const [field,values] of Object.entries(facets)) {
-    const select=facetSelect($('filters'),field,labels[field] || field,'filter-');
-    syncSelect(select,[['','All'],...values.filter(v=>v.value!=null).map(v=>[v.value,`${v.value} (${v.count})`])]);
+    syncFacet(facetCheckboxes($('filters'),field,labels[field] || field,'filter-'),values);
   }
 }
 function metrics(data) {
@@ -1342,12 +1379,7 @@ function openGroup(el) {
     $('aggregate').value='';state.root='';state.offset=0;refresh(true);return;
   }
   state.nullField = attrs.group_value == null ? attrs._aggregate : '';
-  if (attrs.group_value == null) select.value = '';
-  else {
-    const value = String(attrs.group_value);
-    if (![...select.options].some(o => o.value === value)) select.add(new Option(value,value));
-    select.value = value;
-  }
+  setFacetValues(select,attrs.group_value == null ? [] : [String(attrs.group_value)]);
   $('aggregate').value = '';
   state.root = '';
   state.offset = 0;
@@ -1380,7 +1412,7 @@ $('clearFilters').onclick = () => {
   state.nullField = '';
   $('search').value = '';
   $('focus').value = '';
-  document.querySelectorAll('#filters select, #edgeFilters select').forEach(s => s.value='');
+  document.querySelectorAll('#filters .facet, #edgeFilters .facet').forEach(facet=>setFacetValues(facet,[]));
   refresh(true);
 };
 $('previous').onclick = () => { state.offset=Math.max(0,state.offset-Number($('limit').value)); refresh(true); };
