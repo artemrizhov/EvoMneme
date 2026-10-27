@@ -75,6 +75,37 @@ Before handing off affected context, apply the [write checkpoints and file-wide 
 
 This packet does not replace loading the live skill or authorize a new integration. When the recipient discovers a mismatch, reverify the affected context, including displaced references in changed files. For substantial maintenance, send changed files/entities and the observed semantic changes, not the whole exploration history. Reconcile changed declarations, direct relationships, contracts and evidence together; a small patch can alter a class's behavior without changing its declaration line. Record unfinished analysis on the existing owner/file. Do not spend more on routine graph bookkeeping than the task warrants.
 
+## Repeatable retrieval control
+
+After a material population or retrieval change, run a small fixed control using
+an isolated fixture or sanitized task descriptions and an unchanged source snapshot.
+Use the same binding, budgets, starting information and stop rule before/after.
+
+1. Pick four concrete questions: an error and its handler; cancellation/lifecycle
+   cleanup; rollback/commit behavior; and reconciliation after a file edit. Establish
+   required source anchors and a correct answer from source independently of the graph.
+2. Retrieve through the normal root/responsibility/relationship route until the answer
+   is supported or the fixed budget is exhausted. Preserve the first attempt, errors,
+   misses, stale locators and unresolved dynamic targets; label reruns separately.
+3. Record correct required anchors found versus expected, lookup count (including
+   failures/retries), and total UTF-8 bytes actually returned. Count all graph calls;
+   state separately whether instructions, source reads, requests and wrappers are
+   excluded. Validate the answer against source, not just successful traversal.
+4. Repair missing knowledge or query choices within scope and repeat on the same
+   controls. Report measured deltas and remaining misses. More bytes can buy needed
+   context; fewer bytes with wrong anchors is a regression. Fixture success does not
+   prove fresh-agent adoption, a correct application change or general savings.
+
+Keep private detailed results in local feedback and only sanitized reusable findings
+in evolution history. Do not invent savings, extrapolate record counts into outcomes,
+or discard an inconvenient first result.
+
+The isolated repository controls run with `python tests/test_retrieval_controls.py`.
+They check error/handler, callback cancellation, rollback and reconciliation anchors
+and print measured lookup/segment counts and returned UTF-8 bytes. Mutation output
+is excluded. These repeatable fixture checks are not a real-project efficiency
+comparison or a fresh-agent adoption test.
+
 ## Check usefulness without assuming it
 
 Use isolated fixtures and record relevant contracts, missing knowledge, all necessary calls/output, instruction and source-reading costs. Good SQL and a completed graph walk do not establish a correct code change or lower total cost. Preserve the first result, errors and uncertainty; label clarifications or reruns separately. Keep private host data out of reusable fixtures and reports.

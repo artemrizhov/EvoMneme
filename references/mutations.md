@@ -5,8 +5,10 @@ later segments see earlier writes and any failure rolls back the entire chain.
 
 Use these commands in an authorized host with a verified connection receipt.
 Each command targets one selected record, plus the explicitly limited dependent
-closure for delete with `--cascade`; use the selected authorized SQL route for
-advanced queries or transactions spanning several records.
+closure for delete with `--cascade`. Use `--next` for transactions spanning
+several supported mutations, including initial population. Reserve the selected
+authorized SQL route for advanced operations the CLI does not express; do not
+write temporary SQL importers for existing CLI features.
 
 Syntax: `[]` marks optional parameters; arguments outside brackets are required.
 `(A | B)` requires exactly one choice. Do not type the notation brackets,
@@ -131,9 +133,56 @@ Delete verification rejects unusually long IDs if released history truncates
 their identity; the entire command rolls back. Such IDs may require the selected
 authorized SQL route.
 
+## Symbol and file details
+
+`NODE` uses the ordinary node selector and must already exist in the bound scope.
+Details use composite `(scope_id,node_id)` identity, with no separate ID or timestamp.
+
+```text
+evomneme add symbol-details NODE --qualified_name NAME [--signature TEXT] [--language TEXT]
+evomneme update symbol-details NODE [--qualified_name NAME] [--signature TEXT] [--language TEXT] [--clear FIELD]
+evomneme delete symbol-details NODE
+evomneme add file-details NODE [--declaration_status STATUS] [--relationship_status STATUS] [--inspected_hash HASH] [--exclusion_reason TEXT] [--remaining_work TEXT]
+evomneme update file-details NODE [--declaration_status STATUS] [--relationship_status STATUS] [--inspected_hash HASH] [--exclusion_reason TEXT] [--remaining_work TEXT] [--clear FIELD]
+evomneme delete file-details NODE
+```
+
+Statuses are `pending`, `partial`, `verified`, `stale`, `blocked`, `excluded`;
+both default to `pending` on add. Record exclusions with a reason, never disguise
+blocked reading as excluded. Nullable fields accept repeatable `--clear` on update:
+symbol `signature`, `language`; file `inspected_hash`, `exclusion_reason`, `remaining_work`.
+Omitted update fields retain their values. Deleting details leaves the parent node.
+
+## Optional write controls
+
+Each mutation accepts `--compact`, which omits full payloads while retaining
+identity, changed fields, timestamp where present and warnings. Use it for large
+population batches when full row echoes are unnecessary. Deletions are already concise.
+
+Each mutation also accepts `--chat-id`, `--chat-title`, `--session-id`,
+`--session-title`, `--agent-id`, `--agent-name` (each at most 200 characters).
+Supply actual known identities/labels consistently, omit unknowns and pass known
+parent-chat context to subagents. These describe activity; they do not authorize it
+or discover ancestry. Default database history remains on.
+
+Node/edge/evidence updates and deletes accept `--expect-updated-at VALUE`.
+Copy the exact stored timestamp from the read being reconciled; mismatch fails
+the transaction. It guards concurrent row replacement, not semantic correctness.
+Details have no `updated_at` guard; coordinate overlapping detail work explicitly.
+
+All mutations accept `--verify-source`. It requires the final retained/supplied
+`source_path` and expected raw-byte SHA256 `source_hash`, confines relative paths to
+the scope worktree including symlinks, validates the hash and node/edge line bounds,
+and rechecks source bytes/path before commit. Details use the parent node's locator;
+file details use their final `inspected_hash` when supplied, otherwise the parent's
+`source_hash`. Missing expected hashes fail; no hash is computed and stamped silently.
+The flag does not prove that the cited code supports the claim. A guard failure
+requires rereading affected source/records before preparing a corrected batch.
+
 ## Shared rules
 
-- Flags use schema names with underscores. Quote text for the selected shell;
+- Field flags use schema names with underscores; optional write-control flags use
+  the hyphenated names shown above. Quote text for the selected shell;
   use `--field=value` for values beginning with a dash and `--` before positional
   names beginning with a dash. Append `--help` to any selected command for its
   detailed reference.
@@ -151,8 +200,9 @@ authorized SQL route.
   including retained endpoints, are validated even for `unresolved`/`ambiguous`
   resolution. An evidence edge parent must also have both endpoints in scope.
 - Required text and supplied kinds/layers must be nonempty. Kinds/layers use the
-  host vocabulary. Locators/hashes are recorded literally; no source files are
-  read, hashes computed, or truth/confidence/freshness inferred.
+  host vocabulary. Without `--verify-source`, locators/hashes are recorded
+  literally and source files are not read. Neither mode infers truth,
+  confidence, freshness or semantic completeness.
 - Line values are positive 1-based integers. The final merged row, including
   retained bounds, must have `line_start` whenever `line_end` is set and satisfy
   `line_end >= line_start`. Clear both bounds together when removing a range.

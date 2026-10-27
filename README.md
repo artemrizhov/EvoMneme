@@ -19,7 +19,7 @@ Ordinary graph exploration uses [name-based shell commands](references/navigatio
 ```mermaid
 flowchart TB
     Source[Project source] <-->|"Inspect and verify<br/>Authorized code changes"| Agent[AI development agent]
-    Agent <-->|"Record and reconcile via SQL<br/>Retrieve compact context"| Memory[(Local SQLite knowledge)]
+    Agent <-->|"Record and reconcile via bound commands<br/>Retrieve compact context"| Memory[(Local SQLite knowledge)]
 ```
 
 The agent drives this loop during active development sessions. SQLite stores knowledge; bound graph commands and the SQL executor carry operations and results. The agent interprets code and maintains the graph.
@@ -56,6 +56,10 @@ evomneme nodes root
 evomneme links root
 ```
 
+For ordinary writes, use the [maintenance commands](references/mutations.md), including symbol and file inspection details. Combine related writes with `--next` to commit together or roll back together. Optional source and record guards reject stale updates; `--compact` reduces write output while retaining the atomic output limit. Supply known chat, session and agent identities to attribute activity without changing client configuration.
+
+Use the read-only [diagnostics](references/diagnostics.md) to inspect graph components, leaves, evidence coverage, source freshness and storage use. Structural warnings guide source review; they do not prove missing relationships or semantic completeness. Activity recording remains enabled by default.
+
 For SQL maintenance and advanced queries, the existing optional SQL CLI uses Python 3.11+ and SQLite support; it installs no SDK or third-party package. With a previously selected, excluded host database and reviewed query file:
 
 ```text
@@ -74,7 +78,7 @@ The agent consults knowledge when useful, records meaningful discoveries and dec
 
 The primary focus is software development across languages and frameworks; other project types may use the same mechanism. No external analyzer, service, agent framework, additional skill, or installed dependency beyond SQLite and its libraries is required. The optional Python executor does not load the skill by itself.
 
-This is an evolving project, not a guarantee of complete code understanding, correct dependency detection, automatic source invalidation, or proven efficiency gains. SQL execution success proves neither a fact's truth nor a host's identity: the agent is responsible for schema integrity, version filters, source validation, and maintenance. Native SQLite transactions and bounded output support that work; a command batch is atomic only when it explicitly begins and commits a transaction. Actual every-session activation and self-update must be verified in each host environment. See [EVOLUTION.md](EVOLUTION.md) for observed results and design changes.
+This is an evolving project, not a guarantee of complete code understanding, correct dependency detection, automatic source invalidation, or proven efficiency gains. SQL execution success proves neither a fact's truth nor a host's identity: the agent is responsible for schema integrity, version filters, source validation, and maintenance. Native SQLite transactions and bounded output support that work; mutation command chains are atomic, while advanced SQL batches require explicit transaction boundaries. Actual every-session activation and self-update must be verified in each host environment. See [EVOLUTION.md](EVOLUTION.md) for observed results and design changes.
 
 ## Built by AI, open to improvement
 

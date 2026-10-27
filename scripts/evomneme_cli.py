@@ -10,6 +10,7 @@ def build_parser(parser_class=argparse.ArgumentParser):
     from evomneme_install import configure_parser as configure_install
     from evomneme_mutate import configure_parser as configure_mutations
     from evomneme_references import configure_parser as configure_references
+    from evomneme_diagnostics import configure_parser as configure_diagnostics
     parser = parser_class(description='Read and maintain bound project knowledge; source code remains the truth.',
                           epilog='Chain commands with --next before --: reads share a snapshot; mutations commit atomically. '
                                  'Do not mix reads/writes or chain setup/help. -- makes the literal remainder the last segment. '
@@ -25,6 +26,7 @@ def build_parser(parser_class=argparse.ArgumentParser):
     configure_install(subparsers)
     configure_mutations(subparsers)
     configure_references(subparsers)
+    configure_diagnostics(subparsers)
     return parser
 
 
@@ -45,7 +47,10 @@ def main(argv=None):
             if args.command == 'links' and len(args.names) > 2:
                 raise NavigationError('links accepts one or two node names.')
             connection = discover()
-            if getattr(args, 'references', False):
+            if getattr(args, 'diagnostic', False):
+                from evomneme_diagnostics import run as run_diagnostic
+                output = run_diagnostic(connection, args)
+            elif getattr(args, 'references', False):
                 output = run_references(connection, args)
             elif getattr(args, 'mutation', False):
                 output = run_mutation(connection, args)

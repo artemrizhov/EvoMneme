@@ -14,6 +14,7 @@ from evomneme_connection import validate_binding
 from evomneme_journal import CALLS, LOG, ident, install, status
 from evomneme_navigate import fields
 from evomneme_trace import build_event
+from evomneme_write_options import configure as configure_options, context, guard, snapshot, validate_context, verify_unchanged
 
 TABLE_COLUMNS = {
     'node': ('scope_id', 'id', 'kind', 'title', 'summary', 'confidence', 'validity',
@@ -112,6 +113,7 @@ def configure_parser(subparsers):
                 else:
                     kwargs['help'] += ' Omitted: retain existing value.'
                 parser.add_argument('--' + column, **kwargs)
+            configure_options(parser, stale=action == 'update', source=True)
             parser.set_defaults(mutation=True)
     command = subparsers.add_parser('delete', help='Physically delete bound graph records; retain audit history')
     kinds = command.add_subparsers(dest='entity', required=True)
@@ -136,7 +138,10 @@ def configure_parser(subparsers):
                                   if entity == 'node' else 'Exact existing same-scope ID, including stale/superseded rows.'))
         if entity != 'evidence':
             parser.add_argument('--cascade', action='store_true', help='Delete only the documented dependent closure. Default: restrict.')
+        configure_options(parser, stale=True, source=True)
         parser.set_defaults(mutation=True)
+    from evomneme_details import configure_parser as configure_details
+    configure_details(subparsers)
 
 
 def resolve_node(db, connection, selector):
@@ -202,6 +207,8 @@ class MutationSession:
         self.deadline = None if timeout is None else time.monotonic() + timeout
         self.executor = None
         self.history = None
+        self.source_snapshots = []
+        self.source_rows = {}
         try:
             self.check_time()
             self.executor = Executor(connection.database, history=False)
@@ -236,9 +243,21 @@ class MutationSession:
             self.history = DatabaseActivity(self.executor)
         return self.history
 
+    def capture_source(self, row, table='nodes', locator=None):
+        self.source_snapshots.append(snapshot(self.connection, row if locator is None else locator, check=self.check_time))
+        self.source_rows[(table, row['id'])] = {key: row.get(key) for key in ('source_path', 'source_hash', 'line_start', 'line_end')}
+
     def commit(self):
         self.check_time()
         self.executor._check_binding()
+        for (table, id_), expected in self.source_rows.items():
+            current = self.db.execute('SELECT * FROM ' + table + ' WHERE scope_id=? AND id=?', (self.connection.scope, id_)).fetchone()
+            if current is not None and any(dict(current).get(key) != value for key, value in expected.items()):
+                raise ValueError('Stored source locator changed after verification; command rolled back')
+            self.check_time()
+        for expected in self.source_snapshots:
+            verify_unchanged(self.connection, expected, check=self.check_time)
+            self.check_time()
         self.db.execute('COMMIT')
 
     def close(self):
@@ -249,12 +268,16 @@ class MutationSession:
             self.executor.close()
 
 
-def mutate(connection, action, entity, values, selector=None, clear=(), source=None, target=None, session=None):
+def mutate(connection, action, entity, values, selector=None, clear=(), source=None, target=None, session=None,
+           activity_context=None, compact=False, expect_updated_at=None, verify_source=False):
     """Render one write; standalone calls commit, shared sessions own commit."""
     if action not in ('add', 'update') or entity not in TABLES:
         raise ValueError('Unsupported mutation command')
     if session is not None and session.connection != connection:
         raise ValueError('Shared mutation session belongs to another binding')
+    activity_context = validate_context(activity_context)
+    if action == 'add' and expect_updated_at is not None:
+        raise ValueError('updated_at guard requires an existing row')
     columns = TABLE_COLUMNS[entity]
     allowed = set(columns) - {'scope_id', 'updated_at'} - ({'id'} if action == 'update' else set())
     if set(values) - allowed:
@@ -280,6 +303,7 @@ def mutate(connection, action, entity, values, selector=None, clear=(), source=N
         if action == 'update':
             before = (resolve_node(db, connection, selector) if entity == 'node' else
                       exact(db, TABLES[entity], connection.scope, selector))
+            guard(before, expect_updated_at)
             row = dict(before)
         else:
             row = {column: DEFAULTS.get(column) for column in columns}
@@ -301,6 +325,8 @@ def mutate(connection, action, entity, values, selector=None, clear=(), source=N
                 patch['node_id'] = None
         row.update(patch)
         validate_row(db, connection, entity, row)
+        if verify_source:
+            active.capture_source(row, TABLES[entity])
         changed = [key for key in columns if key != 'updated_at' and
                    (before is None or (key in patch and before[key] != row[key]))]
         if action == 'update' and not changed:
@@ -310,7 +336,7 @@ def mutate(connection, action, entity, values, selector=None, clear=(), source=N
         # cannot modify a wrong-bound store or survive a failed graph command.
         history = active.ensure_history()
         event_id = uuid.uuid4().hex
-        event = build_event(empty_result(), [], 0, None, executor.session_id, executor.path,
+        event = build_event(empty_result(), [], 0, activity_context, executor.session_id, executor.path,
                             {'name': 'EvoMneme graph CLI'}, event_id)
         history.scope(event)
         table = TABLES[entity]
@@ -323,6 +349,8 @@ def mutate(connection, action, entity, values, selector=None, clear=(), source=N
                        + ' WHERE scope_id=? AND id=?', [row[key] for key in assigned] + [connection.scope, row['id']])
         actual = exact(db, table, connection.scope, row['id'])
         validate_row(db, connection, entity, actual)
+        if verify_source and any(actual.get(key) != row.get(key) for key in ('source_path', 'source_hash', 'line_start', 'line_end')):
+            raise ValueError('Stored source locator changed after verification; command rolled back')
         final_root = db.execute('SELECT validity FROM nodes WHERE scope_id=? AND id=?',
                                (connection.scope, connection.root_id)).fetchone()
         if final_root is None or final_root['validity'] != 'current':
@@ -335,14 +363,15 @@ def mutate(connection, action, entity, values, selector=None, clear=(), source=N
         response.update(completed_statements=1, autocommit_effects_possible=True, results=[{'columns': list(columns),
             'rows': [[actual[key] for key in columns]], 'has_more': False, 'affected_rows': 1}])
         event = build_event(response, [{'read': {table}, 'write': {table}}],
-                            (time.monotonic() - started) * 1000, None, executor.session_id,
+                            (time.monotonic() - started) * 1000, activity_context, executor.session_id,
                             executor.path, {'name': 'EvoMneme graph CLI'}, event_id)
         event.update(source='graph-cli', command=action, entity=entity, scope_id=connection.scope,
                      id=actual['id'], changed_fields=changed + ['updated_at'])
         db.execute('INSERT INTO ' + ident(CALLS) + '(activity_id,event_json) VALUES(?,?)',
                    (event_id, json.dumps(event, ensure_ascii=True, separators=(',', ':'))))
+        rendered = ({key: actual[key] for key in ('scope_id', 'id', 'updated_at')} if compact else actual)
         output = '\n'.join(fields(dict(action=action, entity=entity,
-                                       changed_fields=', '.join(changed + ['updated_at']), **actual))) + '\n'
+                                       changed_fields=', '.join(changed + ['updated_at']), **rendered))) + '\n'
         for warning in warnings:
             output += '\n' + '\n'.join(fields(dict(warning=warning))) + '\n'
         if len(output.encode('utf-8')) > 65536:
@@ -450,12 +479,14 @@ def verify_delete_history(db, plan, event_id):
         raise ValueError('Actual deleted graph identities differ from the validated plan; command rolled back')
 
 
-def delete(connection, entity, selector, cascade=False, session=None):
+def delete(connection, entity, selector, cascade=False, session=None, activity_context=None,
+           compact=False, expect_updated_at=None, verify_source=False):
     """Delete an exact planned closure and audit it in the same transaction."""
     if entity not in TABLES or (entity == 'evidence' and cascade):
         raise ValueError('Unsupported delete command or cascade option')
     if session is not None and session.connection != connection:
         raise ValueError('Shared mutation session belongs to another binding')
+    activity_context = validate_context(activity_context)
     started = time.monotonic()
     owns_session = session is None
     active = session if session is not None else MutationSession(connection)
@@ -465,6 +496,9 @@ def delete(connection, entity, selector, cascade=False, session=None):
         warnings = list(active.warnings)
         selected = (resolve_node(db, connection, selector) if entity == 'node' else
                     exact(db, TABLES[entity], connection.scope, selector))
+        guard(selected, expect_updated_at)
+        if verify_source:
+            active.source_snapshots.append(snapshot(connection, selected, check=active.check_time))
         if entity == 'node' and selected['id'] == connection.root_id:
             raise ValueError('Configured root cannot be deleted; binding retained, even with --cascade')
         initial_root = db.execute('SELECT validity FROM nodes WHERE scope_id=? AND id=?',
@@ -479,7 +513,7 @@ def delete(connection, entity, selector, cascade=False, session=None):
         before_counts = {table: db.execute('SELECT count(*) FROM ' + table).fetchone()[0] for table in plan}
         history = active.ensure_history()
         event_id = uuid.uuid4().hex
-        event = build_event(empty_result(), [], 0, None, executor.session_id, executor.path,
+        event = build_event(empty_result(), [], 0, activity_context, executor.session_id, executor.path,
                             {'name': 'EvoMneme graph CLI'}, event_id)
         history.scope(event)
         for table, rows in plan.items():
@@ -507,7 +541,7 @@ def delete(connection, entity, selector, cascade=False, session=None):
         response = empty_result()
         response.update(completed_statements=sum(counts.values()), autocommit_effects_possible=True)
         event = build_event(response, [{'read': set(plan), 'write': written}],
-                            (time.monotonic() - started) * 1000, None, executor.session_id, executor.path,
+                            (time.monotonic() - started) * 1000, activity_context, executor.session_id, executor.path,
                             {'name': 'EvoMneme graph CLI'}, event_id)
         event.update(source='graph-cli', command='delete', entity=entity, scope_id=connection.scope,
                      id=selected['id'], cascade=cascade, deleted_counts=counts)
@@ -533,8 +567,13 @@ def delete(connection, entity, selector, cascade=False, session=None):
 
 
 def run(connection, args, session=None):
+    options = dict(activity_context=context(args), compact=getattr(args, 'compact', False),
+                   expect_updated_at=getattr(args, 'expect_updated_at', None), verify_source=getattr(args, 'verify_source', False))
+    if args.entity in ('symbol-details', 'file-details'):
+        from evomneme_details import run as run_details
+        return run_details(connection, args, session=session, **options)
     if args.command == 'delete':
-        return delete(connection, args.entity, args.selector, cascade=getattr(args, 'cascade', False), session=session)
+        return delete(connection, args.entity, args.selector, cascade=getattr(args, 'cascade', False), session=session, **options)
     values = {key: value for key, value in vars(args).items() if key in TABLE_COLUMNS[args.entity]}
     return mutate(connection, args.command, args.entity, values, selector=getattr(args, 'selector', None),
-                  clear=getattr(args, 'clear', ()), source=getattr(args, 'source', None), target=getattr(args, 'target', None), session=session)
+                  clear=getattr(args, 'clear', ()), source=getattr(args, 'source', None), target=getattr(args, 'target', None), session=session, **options)

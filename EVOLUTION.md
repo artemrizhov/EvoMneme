@@ -2,6 +2,37 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-10-27 — CLI-first population and source-backed quality controls
+
+Population feedback exposed a mismatch between an existing atomic maintenance CLI
+and instructions that still prescribed SQL batches. Missing detail commands left
+inspection/signature tables unused; disconnected areas and legitimate leaves also
+hid overlooked errors, handlers, callbacks, inheritance and runtime interactions.
+The workflow now uses ordinary CLI mutation chains for population and maintenance,
+starts with meaningful architecture, saves sequential reading progress and keeps
+declaration/relationship review independent. Temporary SQL importers are unnecessary
+for supported operations. File-wide reconciliation includes all locator records
+and separate textual-citation review, without refreshing unverified claims by hash.
+
+The maintenance interface adds symbol/file details, optional known activity labels,
+compact acknowledgements, expected-update guards and source verification. Read-only
+diagnostics expose structural/source concerns and storage estimates. These controls
+cannot certify semantic coverage or resolve conflicting interpretations; component
+counts and leaves are advisory, never targets for invented links. A small repeated
+retrieval control records correct required anchors, lookup count and returned bytes
+for errors, cancellation, rollback and reconciliation. No efficiency gain follows
+merely from successful commands or a connected graph.
+
+Validation: scoped documentation whitespace checks passed. The four isolated
+retrieval controls passed and report actual lookup/segment/output-byte metrics;
+seven diagnostics tests passed, including source checks and storage-estimate fallback.
+Remaining runtime checks and independent review belong to the implementation checkpoint;
+this instruction change alone does not establish fresh-agent adoption, complete
+host coverage or measured savings. The schema and protected charter are unchanged.
+Database history remains enabled by default. **Undecided TODO:** evaluate whether
+disabling history by default would improve the measured total cost without losing
+required observation; no default change is approved or implemented by this entry.
+
 ## 2026-10-27 — Permit explicitly authorized self-hosting
 
 At the user's request, removed the public prohibition on using EvoMneme for its own repository, forks and worktrees. Self-hosting follows the same explicit user authorization, verified project identity, separate project store and Git exclusions as other hosts; installing or developing the tool does not automatically activate it. Earlier exclusions and isolated evaluations below describe their historical scope. The protected charter is unchanged.

@@ -18,7 +18,7 @@ Existing records that violate these rules are not templates to reproduce. Preser
 
 **Ordinary development:** add and reconcile knowledge from sources actually read while solving the task. Follow relevant dependencies when needed to understand them. Do not inventory or populate the entire repository merely because the skill is active, and do not resume unrelated full-build work during a small task.
 
-**Explicit full build or rebuild:** establish the own-source boundary and read it sequentially in bounded, resumable batches. File/directory listings may establish the traversal order, including local new files; search may locate relevant code. Neither those lists nor grep/static-analysis results are observations to turn into records. Read and understand the sources yourself before preparing SQL. A rebuild request does not by itself require deleting the existing database; reconcile useful data within the agreed scope.
+**Explicit full build or rebuild:** establish the own-source boundary and read it sequentially in bounded, resumable batches. File/directory listings may establish the traversal order, including local new files; search may locate relevant code. Neither those lists nor grep/static-analysis results are observations to turn into records. Read and understand the sources yourself before preparing CLI mutations. A rebuild request does not by itself require deleting the existing database; reconcile useful data within the agreed scope.
 
 Include own application/library code and own scripts/examples under the same selection rules. Tests and foreign dependencies use the shallow boundaries below. Do not traverse dependency trees, vendored implementations, secrets or disposable build outputs. Describe excluded roots/reasons once in the existing project/module summary or private connection receipt; do not create a node per excluded file or generated artifact. For generated code, retain the meaningful generator/source boundary rather than indexing the output mechanically. Documentation/configuration can support facts without becoming code nodes for every file, key or code fence.
 
@@ -37,7 +37,7 @@ A code node must identify an actual eligible entity. Its summary captures respon
 
 ## Establish relationships
 
-Write an edge only after your own source analysis establishes what the connection means and where it is supported. Code search and analyzer output can help navigate, but are not sufficient evidence, even when accompanied by hashes or line numbers. SQL batching is appropriate for already understood observations.
+Write an edge only after your own source analysis establishes what the connection means and where it is supported. Code search and analyzer output can help navigate, but are not sufficient evidence, even when accompanied by hashes or line numbers. Atomic CLI chains persist already understood observations.
 
 - Use `contains` from the immediate owner to a member: file → class → method/field, or file → top-level function. Do not add file → every descendant or a parallel `declared_in` edge. Source paths on nodes provide file lookup without redundant adjacency.
 - Keep direct calls, inheritance and other meaningful interactions you have understood, including callbacks/registrations when their target and mechanism are established. Do not create all-pairs connections, transitive dependencies, name-match references, incidental reads/writes or edges merely because a field has a type annotation.
@@ -47,9 +47,21 @@ Write an edge only after your own source analysis establishes what the connectio
 
 All retained adjacency belongs in `edges`. This requirement applies to meaningful relationships selected above, not to every fact mentioned in a summary. Do not encode a second adjacency model in JSON or private extension tables.
 
+Review this semantic checklist in each relevant source portion:
+
+- Errors raised, typed handlers, propagation, cancellation and rollback paths.
+- Inheritance, framework overrides and inherited guarantees at directly used boundaries; do not copy every inherited member.
+- Callback registration/exposure, events, promises, timers, workers and lifecycle cleanup; distinguish established targets from caller-dependent targets.
+- Runtime wiring across entrypoints, configuration, routes, UI/HTTP handlers and components; follow the actual mechanism, not matching names.
+- Directly used foreign APIs and important validation, encoding or transaction contracts; keep foreign internals outside scope.
+
+No file must exhibit every category. Retain only eligible entities and meaningful direct interactions. Record material uncertainty and unfinished review. Components and leaves are prompts for source review, not quality targets: legitimate constants, fields and terminal boundaries can be leaves. Never add an edge solely to connect a component or eliminate a leaf.
+
 ## Inspection state and full-build completion
 
 Keep per-file inspection state in `file_details`: inspected hash, declaration/relationship status and concise remaining work. Put symbol-specific uncertainty in its summary. Never create coverage-review, gap, exclusion or unresolved-reference nodes to count work. The viewer finds a symbol's file inspection state through its source locator in the same scope; no additional graph edge is required.
+
+Write supported details through the normal CLI. Declaration review and relationship review are independent: verified declarations can coexist with partial relationships. Use truthful pending, partial, verified, stale or blocked state as supported by the schema, and keep the unfinished region, unresolved target or blocker in `remaining_work`. A matching hash identifies reviewed bytes; it does not prove semantic coverage. Containment and obvious calls alone do not justify verified relationship review.
 
 For an explicit full build, maintain a compact traversal cursor and included/excluded roots in the private connection receipt or an existing owning module/project summary. Add file nodes as files are read; do not prepopulate thousands of pending nodes. Save the next file/region at batch boundaries and resume when continuing that full-build task. Distinguish pending, partial, verified, stale and blocked work; unfinished reading is not complete coverage.
 
@@ -70,6 +82,8 @@ During ordinary work, recheck the applicability of knowledge you use. Reconcile 
 
 A file edit can move declarations and relationship evidence that were not changed semantically and are unrelated to the task. For each changed file, review **all existing references to that file in the applicable current source scope**, not just records for the edited method. Include `nodes` and `edges` source paths/line ranges, `evidence` source paths and descriptions containing line citations, and other explicit line citations in the relevant stored summaries. Incoming/cross-file relationships can cite this file even when their owners are elsewhere. Use the established normalized path convention; for renames/deletions include the old path. Do not rewrite historical scopes to the current checkout's line numbers.
 
+Start with `evomneme references PATH` for all matching node/edge/evidence locators, including stale and superseded records, and inspect textual citations separately. `check --sources PATH` can detect hashes and bounds problems; it does not find textual citations or decide whether a claim is still true. Neither a valid line range nor a new hash re-establishes meaning.
+
 Locate records by their stored source references, then re-anchor against the current file using identity, owner/signature and surrounding source. A diff can confirm a purely positional change without reanalyzing an unchanged body. Keep entity identities stable when only lines move. Do not add one offset blindly across a file with multiple insertions/deletions, infer a new location from an ambiguous name match, or update a whole file's record hashes as a substitute for checking their claims. Reconcile new/deleted entities and material behavior/relationship changes separately from positional changes.
 
 Update confirmed locators and supporting evidence together with inspection state in one transaction after rechecking the source identity. If a location cannot be re-established, clear its unsupported `line_start`/`line_end` (or remove the unsupported textual line citation) and record the locator uncertainty on the existing entity/file. Keep a claim current only if its meaning remains verified; otherwise mark the affected claim/edge/evidence stale. The schema has no independent locator-validity field: do not invent one. Retain sufficient original provenance for later verification; do not present an old hash as verification of the new file. Mark file inspection partial/stale as appropriate and record remaining work in `file_details`, rather than asserting a complete sweep when some references remain unresolved.
@@ -86,7 +100,7 @@ Use bounded coherent batches rather than a write for every keystroke. The mandat
 
 These checkpoints apply within host authorization and do not override a read-only request, a frozen store, or a failed configured integration. If writing is forbidden or blocked, pass the affected paths/records, last verified state and pending maintenance to the recipient or final report; do not claim that memory was updated. Continue only independent authorized work. No background maintenance or automatic change detector is implied.
 
-Commit coherent graph/evidence/inspection updates in an explicit transaction after rechecking source identity. Concurrent agents must coordinate overlapping source areas; database locks do not reconcile conflicting interpretations. These selection rules do not automatically clean an existing oversized store: plan destructive cleanup separately within host authorization.
+Commit coherent graph/evidence/inspection updates in an atomic CLI mutation chain after rechecking source identity. Use source and expected-update guards where applicable, but coordinate overlapping source areas: SQLite locks and optimistic guards do not reconcile conflicting interpretations. Only deliberately selected advanced SQL needs explicit transaction statements. These selection rules do not automatically clean an existing oversized store: plan destructive cleanup separately within host authorization.
 
 ## Selection examples
 

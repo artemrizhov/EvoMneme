@@ -6,7 +6,7 @@ The result combines selected code entities with architectural responsibilities, 
 
 ## 1. Verify readiness and existing knowledge
 
-Confirm the authorized host, applicable instructions, live tool revision, configured SQL transport, canonical excluded database path, branch/worktree/revision and local changes. Follow [connection verification](integration.md), [storage practice](storage.md) and [schema compatibility](schema.md#initialization-and-compatibility). Keep connection verification separate from graph coverage; report incomplete setup accurately. A failed configured integration stops affected work unless its repair or another route is already authorized.
+Confirm the authorized host, applicable instructions, live tool revision, configured maintenance CLI, canonical excluded database path, branch/worktree/revision and local changes. Follow [connection verification](integration.md), [storage practice](storage.md) and [schema compatibility](schema.md#initialization-and-compatibility). Keep connection verification separate from graph coverage; report incomplete setup accurately. A failed configured integration stops affected work unless its repair or another route is already authorized.
 
 Inspect an existing store before changing it. Initialize only a new empty store using the released schema and an authorized facility; preserve existing records and use only compatible published migrations. An empty current-scope query does not prove the database is empty. Check relevant history and source applicability before reusing it; never promote old claims automatically or erase the store to begin a build.
 
@@ -17,6 +17,8 @@ Read the private connection receipt and representative compatible records. Estab
 Include own application/library sources, scripts and examples, plus tests at the depth defined by the code selection rules. Include uncommitted/new sources within that boundary. Identify relevant architecture documentation, manifests, entrypoints, configuration and deployment descriptions as evidence sources; they do not each require a code node. Read only non-secret material within the authorized boundary.
 
 Record included roots, exclusions with reasons, scope/snapshot and traversal order in the private receipt. Default to sorted project-relative paths within the included roots and source order within each file; record any deliberate dependency-first detour so it does not skip a file. For generated code, inspect the meaningful generator/source boundary. Do not traverse vendor/dependency implementations or disposable outputs. Inaccessible in-scope sources are blocked work, not successful exclusions.
+
+Before declaration population, read the project purpose, entrypoints and major contracts and establish a meaningful real root and initial architectural responsibilities. Link responsibilities to implementation only as source reading establishes them. A directory catalog or a root attached mechanically to every file does not explain architecture; refine the initial view during the pass.
 
 Listings and searches establish navigation and the source inventory only. Do not populate declarations or relationships from grep, static-analysis output or file lists, or precreate pending nodes for all unread files.
 
@@ -30,9 +32,11 @@ Develop the architectural view alongside this reading using the [architecture pr
 
 Recheck the affected sources and version identity after reading and before writing. If they changed, reread and reconcile the affected observations instead of marking the old snapshot verified. Coordinate overlapping writers; database locks do not lock source files or settle conflicting interpretations.
 
-Use bound values and explicit `BEGIN`/`COMMIT` for related nodes, details, edges, evidence and inspection updates in one request. Create the scope before nodes, then their edges and attachments. Reuse existing compatible identities and relationships, with the normal `code`, `knowledge` and `cross` layers. Apply the same evidence and confidence requirements to initial and later records. Save per-file declaration/relationship status, inspected hash and remaining work in `file_details`; partial reading remains partial.
+Use the connected [maintenance CLI](mutations.md) for nodes, symbol/file details, edges and evidence; combine related mutations with atomic `--next` chains. Population has no separate SQL/import route. Do not create a temporary importer or SQL authoring script for supported operations. Set up the verified scope before population; order nodes before dependent attachments/edges. Reuse existing compatible identities and relationships, with the normal `code`, `knowledge` and `cross` layers. Apply the same evidence and confidence requirements to initial and later records. Save per-file declaration/relationship status, inspected hash and remaining work through file-detail commands; partial reading remains partial. Use compact mutation acknowledgements where full rows add no useful context.
 
-After an SQL error, inspect reported durability and actual records before retrying. A batch alone is not atomic, and an error does not prove earlier commits were undone. Do not advance the saved reading point past unconfirmed writes.
+Coordinate source ownership before reading/writing overlapping areas. Where supported, use expected-update and source-verification guards; a conflict requires rereading the stored row and affected source, not blindly retrying with a new timestamp/hash. Guards detect specific races and locator problems, not incorrect interpretation. Recheck the final source state before declaring the batch verified. For a deliberately selected advanced SQL operation that the CLI cannot express, use bound values and explicit `BEGIN`/`COMMIT`; an SQL command array alone is not atomic.
+
+After a CLI-chain failure, fix its cause and retry the coherent batch: graph writes roll back together. An output-delivery failure can occur after commit, so inspect records before retrying an ambiguous outcome. For advanced SQL errors, inspect reported durability and actual records; an error does not prove earlier autocommitted statements were undone. Do not advance the saved reading point past unconfirmed writes.
 
 ## 5. Save progress and resume safely
 
@@ -45,6 +49,8 @@ On an explicit continuation, reload the live instructions, conventions and curso
 Apply the [code completion checks](code-graph.md#inspection-state-and-full-build-completion) and [architecture checks](architecture-graph.md#completion-and-maintenance) to the agreed scope and snapshot. Reconcile the source inventory with actual reading and exclusions; account for eligible declarations and reviewed meaningful interactions. Verify source lookup, immediate ownership, incoming/outgoing edges and architecture-to-implementation/evidence navigation.
 
 Recheck source identity before declaring the inspected state verified. Explicitly report blocked files, partial regions, unresolved interactions and architectural uncertainty. Reading completion and unresolved dynamic behavior are different claims: report both accurately. Counts, successful SQL, hashes or a few spot checks alone do not establish completeness, and no record quota is a target.
+
+Use [structural and source diagnostics](diagnostics.md) to locate suspicious disconnected areas, leaves and stale/out-of-bounds locators. Review findings against sources: legitimate constants, fields or terminal boundaries can be leaves. A connected graph can omit important semantics; repair only relationships established by reading. Run the small [retrieval control](retrieval.md#repeatable-retrieval-control) and retain observed anchors, lookups and returned bytes rather than claiming savings from record counts.
 
 ## 7. Hand over to ordinary maintenance
 

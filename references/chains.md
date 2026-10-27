@@ -9,10 +9,16 @@ evomneme add node --id parser --kind function --title Parser --summary "Parses i
 
 Choose one category for the entire chain:
 
-- Reads: `nodes`, `links`, `references` share one read-only SQLite snapshot.
+- Reads: `nodes`, `links`, `references`, `check`, `stats` share one read-only SQLite snapshot.
 - Mutations: `add`, `update`, `delete` share one `BEGIN IMMEDIATE` transaction.
   Later segments see earlier writes. Any failure rolls back every graph write,
   history installation, row-history entry and activity entry from the chain.
+
+Use mutation chains for ordinary multi-record maintenance and initial population,
+including symbol/file details. No SQL transaction statements or temporary importer
+are needed. Per-segment `--compact` reduces acknowledgements; known activity context
+and optional source/expected-update guards belong on each applicable segment.
+Inspect [write controls](mutations.md#optional-write-controls) before using them.
 
 Reads and mutations cannot mix. Setup (`connect`, `install`), help and empty
 segments are rejected in chains. Run a selected command's `--help` separately.

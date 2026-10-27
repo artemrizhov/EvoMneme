@@ -43,7 +43,7 @@ def parse_segments(parser, segments):
             if '--help' in options or '-h' in options:
                 raise ValueError('Help is not executable in a chain; run the selected command with --help separately')
             args = parser.parse_args(tokens)
-            if args.command in ('nodes', 'links', 'references'):
+            if args.command in ('nodes', 'links', 'references') or getattr(args, 'diagnostic', False):
                 selected = 'read'
                 if args.command == 'links' and len(args.names) > 2:
                     raise ValueError('links accepts one or two node names')
@@ -94,6 +94,9 @@ def run(connection, parsed, category, segments):
             active.check_time()
             if category == 'write':
                 output = mutate(connection, args, session=active)
+            elif getattr(args, 'diagnostic', False):
+                from evomneme_diagnostics import diagnose
+                output = diagnose(connection, argparse.Namespace(**(vars(args) | {'all_output': True})), shared=active)
             elif args.command == 'references':
                 output = references(connection, args.paths, all_output=True, shared=active)
             else:
