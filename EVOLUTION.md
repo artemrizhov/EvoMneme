@@ -2,6 +2,12 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-10-27 — Permit explicitly authorized self-hosting
+
+At the user's request, removed the public prohibition on using EvoMneme for its own repository, forks and worktrees. Self-hosting follows the same explicit user authorization, verified project identity, separate project store and Git exclusions as other hosts; installing or developing the tool does not automatically activate it. Earlier exclusions and isolated evaluations below describe their historical scope. The protected charter is unchanged.
+
+Validation: public-rule consistency review and scoped whitespace checks passed; runtime implementation and schema definitions are unchanged. The existing binding test now verifies preservation of a sentinel project store in an isolated fixture without accessing a real host store; that changed case passed. The 25-test executor suite had 24 passes and one failure in the unchanged `test_shared_defaults_bounds_and_validation` with `timeout_ms=1` (`False != True`); the same case also failed against HEAD, whose method and setup were textually identical. The cause is not established and no timing fix was made. Fresh-session activation remains unverified.
+
 ## 2026-10-26 — Remove the EvoMneme MCP adapter
 
 The user requested removal of the EvoMneme MCP utility and its project configuration. Ordinary navigation and maintenance use the bound graph CLI; advanced SQL remains available through the existing Python API and SQL CLI. Current instructions no longer request MCP connection, absence notices or project refusal records. The shared request/result contract moves to [references/sql.md](references/sql.md#shared-sql-contract), retaining parameters, limits, errors and native transaction semantics. Configured integration failures still require reporting and an authorized repair or route. Eight configurations containing only EvoMneme MCP setup were removed, and six project instruction files were aligned with graph CLI use. Earlier MCP design and measurement entries below remain historical evidence; the protected charter was unchanged.

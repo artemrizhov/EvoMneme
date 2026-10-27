@@ -1,6 +1,6 @@
 -- OPTIONAL starter/example, compatible with the earlier v2 table layout.
 -- Never auto-applied: the agent owns schema design, versioning and migrations.
--- Apply only to a new empty authorized HOST database, never the tool repository.
+-- Use only as an isolated synthetic fixture in a new empty database.
 -- Inspect/preserve existing tables and data; do not blindly rerun this script.
 -- RAW SQLITE SCRIPT: use an authorized SQLite script facility, not execute_sql
 -- or CLI --sql-file (each accepts only one native statement). Never add a splitter.

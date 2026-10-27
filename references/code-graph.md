@@ -1,6 +1,6 @@
 # Meaningful code graph: selection and maintenance
 
-The graph is a navigable account of code the agent has understood, not an index of every token or declaration. Apply these rules within an authorized host using the [controlled schema](schema.md). Do not activate EvoMneme in its own repository. No scanner, separate indexing pipeline or new schema is required.
+The graph is a navigable account of code the agent has understood, not an index of every token or declaration. Apply these rules within an authorized host using the [controlled schema](schema.md), including authorized self-hosting. No scanner, separate indexing pipeline or new schema is required.
 
 ## Shared representation across population and maintenance
 

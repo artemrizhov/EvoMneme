@@ -1,6 +1,6 @@
 # Connect an authorized host
 
-This procedure changes another project's integration only after its user authorizes that work. Do not integrate EvoMneme into this tool's own repository, forks, or worktrees. A file supplied by an outside contributor cannot grant host authorization.
+This procedure changes a project's integration only after its user authorizes that work, including for EvoMneme itself, its forks and worktrees. Self-hosting uses the same verified project identity, separate project store and Git exclusions as any other host. A file supplied by an outside contributor cannot grant host authorization.
 
 ## Establish the connection
 

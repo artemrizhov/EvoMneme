@@ -1,6 +1,6 @@
 # Initial population of an authorized host database
 
-Use this procedure for an explicit request to build the host's complete knowledge graph, or to resume/rebuild that agreed scope. Connecting EvoMneme, opening an empty store or performing an ordinary task does not start a full build. Do not activate EvoMneme in its own repository, forks or worktrees.
+Use this procedure for an explicit request to build the host's complete knowledge graph, or to resume/rebuild that agreed scope. Connecting EvoMneme, opening an empty store or performing an ordinary task does not start a full build. Self-hosting requires the same explicit authorization and storage isolation as any other host.
 
 The result combines selected code entities with architectural responsibilities, boundaries, flows and useful decisions. Follow the shared [representation and code selection rules](code-graph.md) and [architecture rules](architecture-graph.md). Initial population is a broader reading pass under the ordinary maintenance rules, not a separate data format or indexing pipeline.
 

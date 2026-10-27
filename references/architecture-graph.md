@@ -1,6 +1,6 @@
 # Architecture graph: construction and maintenance
 
-Record how the host system is organized and why: responsibilities, component boundaries, important flows, external contracts and consequential decisions. This is an architectural view within the same [controlled graph](schema.md), connected to code and evidence, not another database or a mechanically collapsed call graph. Use only within an authorized host; do not activate EvoMneme in this repository, its forks or worktrees.
+Record how the host system is organized and why: responsibilities, component boundaries, important flows, external contracts and consequential decisions. This is an architectural view within the same [controlled graph](schema.md), connected to code and evidence, not another database or a mechanically collapsed call graph. Use only within an explicitly authorized host, including when self-hosting EvoMneme.
 
 Apply the [shared representation conventions](code-graph.md#shared-representation-across-population-and-maintenance) during both [initial population](initial-population.md) and ordinary development. A full build reviews architecture across the agreed project boundary; ordinary work updates the architectural facts it actually investigates or affects.
 

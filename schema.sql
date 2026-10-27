@@ -1,5 +1,5 @@
 -- EvoMneme schema v3: the shared storage/viewer contract for new host stores.
--- Apply deliberately to an EMPTY authorized host database, never this repository.
+-- Apply deliberately to an EMPTY authorized host database; preserve existing data.
 -- Raw SQLite script: use a native script facility, not execute_sql/--sql-file.
 -- Schema changes belong in public EvoMneme releases with viewer/tests/migrations.
 PRAGMA foreign_keys = ON;

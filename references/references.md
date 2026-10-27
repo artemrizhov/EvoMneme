@@ -25,4 +25,4 @@ evomneme references src/model.py src/service.py
 evomneme references --all -- '-special.py' > references.txt
 ```
 
-See [connection and navigation](navigation.md) for the existing project receipt and shell launcher setup. Do not connect the EvoMneme repository itself as a host; isolated synthetic development fixtures are permitted.
+See [connection and navigation](navigation.md) for the existing project receipt and shell launcher setup, including the same authorization and isolation requirements for self-hosting. Use isolated synthetic fixtures for development tests.

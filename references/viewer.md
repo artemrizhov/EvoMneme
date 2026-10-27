@@ -1,6 +1,6 @@
 # Local memory explorer
 
-The optional explorer renders an explicitly selected host SQLite database with **Cytoscape.js**. It automatically installs/maintains the published [change and activity history](change-history.md) in a compatible managed v3 database; graph/table/SQL inspection uses read-only connections. No recording flag or trace directory is needed. `--no-history` skips automatic history setup/maintenance for this process while retaining access to saved history. It never activates EvoMneme or migrates the base graph schema. Develop this repository using synthetic fixtures only. Keep host databases, traces, mappings and exports in the host's excluded local working area.
+The optional explorer renders an explicitly selected host SQLite database with **Cytoscape.js**. It automatically installs/maintains the published [change and activity history](change-history.md) in a compatible managed v3 database; graph/table/SQL inspection uses read-only connections. No recording flag or trace directory is needed. `--no-history` skips automatic history setup/maintenance for this process while retaining access to saved history. It never activates EvoMneme or migrates the base graph schema. Use synthetic fixtures for development tests; self-hosting requires the same explicit authorization and storage isolation as any host. Keep host databases, traces, mappings and exports in the host's excluded local working area.
 
 ## Start
 

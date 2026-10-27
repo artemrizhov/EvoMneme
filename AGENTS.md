@@ -1,7 +1,3 @@
-Do not activate or use EvoMneme or its skill when working on the
-EvoMneme project itself, including its forks and worktrees.
-Normal development and isolated testing are allowed.
-
 The user authorizes agents working on this project to create commits, push
 changes, create and review pull requests, and make pull request decisions
 (including approving, requesting changes, merging, or closing) without

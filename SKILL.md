@@ -1,11 +1,11 @@
 ---
 name: evomneme
-description: Maintain a compact, evidence-backed code graph and project knowledge during development in a host project whose user has authorized EvoMneme. Never activate in EvoMneme itself, its forks, or worktrees.
+description: Maintain a compact, evidence-backed code graph and project knowledge during development in a project whose user has authorized EvoMneme, including authorized self-hosting.
 ---
 
 # EvoMneme
 
-Maintain a meaningful graph of the host's code and project knowledge so the development agent can retrieve the smallest sufficient, reliable context. Select entities and relationships through your own source reading and reasoning; record counts are not a goal. This is the live, portable instruction set for **other host projects**; host knowledge belongs in each host's own SQLite store. Do not activate in EvoMneme's tool repository, its forks, or its worktrees. Developing this tool and testing isolated fixtures does not activate it.
+Maintain a meaningful graph of the host's code and project knowledge so the development agent can retrieve the smallest sufficient, reliable context. Select entities and relationships through your own source reading and reasoning; record counts are not a goal. This is the live, portable instruction set for authorized host projects, including EvoMneme itself, its forks and worktrees. Self-hosting requires the same explicit user authorization, verified project identity, separate project store and Git exclusions as any other host; developing the tool or testing isolated fixtures does not grant activation authority.
 
 ## Authority and connection
 

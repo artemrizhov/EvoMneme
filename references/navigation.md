@@ -3,7 +3,7 @@
 Combine related reads with [command chains](chains.md); ordinary returned commands
 omit unnecessary `--`, and leading-dash node names use qualified command arguments.
 
-Use the read-only navigator in an authorized, connected host project. It is separate from the generic SQL executor: ordinary exploration needs names and shell commands, not SQL, JSON requests or per-call database/scope arguments. Developing EvoMneme itself permits isolated fixture tests, not connecting this repository as a host.
+Use the read-only navigator in an authorized, connected host project. It is separate from the generic SQL executor: ordinary exploration needs names and shell commands, not SQL, JSON requests or per-call database/scope arguments. Connecting EvoMneme itself as a host requires the same explicit user authorization, verified identity, separate project store and Git exclusions as any other project.
 
 ## Start with the actual project root
 

@@ -37,7 +37,7 @@ For an explicitly requested full build, follow [initial population](references/i
 - [Graph navigation](references/navigation.md): `nodes`/`links`, a real project root, meaningful names, exact relationship counts and explicit complete-output handling, with one-time launcher/connection setup.
 - [Task retrieval and handoff](references/retrieval.md): source verification and reusable subagent context, with published SQL recipes for advanced access and measured limits.
 
-**Each host project has its own local SQLite file. This repository is not its knowledge store.** Linked worktrees explicitly share one canonical host database; independent clones/projects use separate files. Keep knowledge and associated local state excluded from Git. Never activate EvoMneme in its own repository, forks, or worktrees; isolated development fixtures are allowed.
+**Each host project has its own local SQLite file. Public repository content is not its knowledge store.** Linked worktrees explicitly share one canonical host database; independent clones/projects use separate files. Keep knowledge and associated local state excluded from Git. EvoMneme itself, its forks and worktrees may be hosts with the same explicit user authorization, verified project identity, separate project store and Git exclusions required for other projects.
 
 ## Use it in a host project
 

@@ -24,7 +24,7 @@ TEST_AREA = REPOSITORY / '.evomneme-tests'
 
 
 class ExecutorTests(unittest.TestCase):
-    """Never create a live knowledge index for the tool repository."""
+    """Keep SQL contract checks isolated from every real project store."""
 
     def setUp(self):
         """Bind a new empty isolated database explicitly."""
@@ -52,19 +52,43 @@ class ExecutorTests(unittest.TestCase):
                               input=input_bytes, capture_output=True)
 
     def test_explicit_binding_creation_and_database_separation(self):
-        """No schema, missing-file creation, relative path or implicit project sharing."""
-        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE type='table'"), [])
-        with self.assertRaises(FileNotFoundError):
-            runtime.Executor(self.area / 'missing.sqlite3')
-        with self.assertRaises(FileExistsError):
-            runtime.Executor(self.database, create=True)
-        with self.assertRaises(runtime.RequestError):
-            runtime.Executor('relative.sqlite3')
-        second = runtime.Executor(self.area / 'other.sqlite3', create=True)
-        self.addCleanup(second.close)
-        self.assertTrue(self.execute('CREATE TABLE private(value)')['ok'])
-        self.assertEqual(second.execute_sql(sql="SELECT name FROM sqlite_master WHERE type='table'")['results'][0]['rows'], [])
-        self.assertFalse((REPOSITORY / '.evomneme').exists())
+        """Explicit bindings stay independent of an existing project knowledge store."""
+        knowledge = self.area / '.evomneme' / 'knowledge.sqlite3'
+        knowledge.parent.mkdir()
+        with contextlib.closing(sqlite3.connect(knowledge)) as project_store:
+            project_store.execute('CREATE TABLE sentinel(value TEXT)')
+            project_store.execute("INSERT INTO sentinel VALUES('project knowledge')")
+            project_store.commit()
+        before = knowledge.read_bytes()
+        with contextlib.chdir(self.area):
+            with self.assertRaises(TypeError):
+                runtime.Executor()
+            implicit = subprocess.run([sys.executable, str(SCRIPT), '--sql', 'CREATE TABLE implicit(value)'],
+                                      capture_output=True)
+            self.assertNotEqual(implicit.returncode, 0)
+            self.assertIn(b'--database', implicit.stderr)
+            self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE type='table'"), [])
+            with self.assertRaises(FileNotFoundError):
+                runtime.Executor(self.area / 'missing.sqlite3')
+            with self.assertRaises(FileExistsError):
+                runtime.Executor(self.database, create=True)
+            with self.assertRaises(runtime.RequestError):
+                runtime.Executor('relative.sqlite3')
+            second = runtime.Executor(self.area / 'other.sqlite3', create=True)
+            self.addCleanup(second.close)
+            self.assertTrue(self.execute('CREATE TABLE private(value)')['ok'])
+            self.assertEqual(second.execute_sql(sql="SELECT name FROM sqlite_master WHERE type='table'")['results'][0]['rows'], [])
+            self.assertTrue(second.execute_sql(sql='CREATE TABLE separate(value)')['ok'])
+            self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE type='table'"), [['private']])
+            with contextlib.closing(runtime.Executor(self.database)) as rebound:
+                self.assertEqual(rebound.path, self.database)
+                self.assertEqual(rebound.execute_sql(sql="SELECT name FROM sqlite_master WHERE type='table'")['results'][0]['rows'], [['private']])
+            self.assertFalse((self.area / 'missing.sqlite3').exists())
+            self.assertFalse((self.area / 'relative.sqlite3').exists())
+        self.assertEqual(knowledge.read_bytes(), before)
+        with contextlib.closing(sqlite3.connect(knowledge)) as project_store:
+            self.assertEqual(project_store.execute('SELECT * FROM sentinel').fetchall(), [('project knowledge',)])
+        self.assertEqual(knowledge.read_bytes(), before)
 
     def test_single_and_batch_results_are_identical_on_python_and_cli(self):
         """One named API, defaults and result format span both entry points."""
