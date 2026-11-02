@@ -505,10 +505,13 @@ function zoomTextOpacity(element) {
   const progress=Math.max(0,Math.min(1,(pixels-7)/3));
   return progress*progress*(3-2*progress);
 }
-const compactNodeDiameter=zoomLength(element=>element.data('size')*.65,3,24);
+const compactNodeDiameter=zoomLength(element=>element.data('size')*.325,1.5,12);
 const nodeDiameter=element=>element.cy().scratch('memory-model-dimensions')
   ?Math.min(42,element.data('size')):compactNodeDiameter(element);
-const highlightBorder=zoomLength(5,1,4),highlightLine=zoomLength(4,.8,3);
+const normalNodeBorder=zoomLength(1,.5,1.5),originalHighlightBorder=zoomLength(5,1,4);
+const nodeBorder=element=>normalNodeBorder(element)*(element.cy().scratch('memory-model-dimensions')?1:.5);
+const highlightBorder=element=>originalHighlightBorder(element)*(element.cy().scratch('memory-model-dimensions')?1:.5);
+const highlightLine=zoomLength(4,.8,3);
 const normalLine=zoomLength(1.3,.6,2);
 function zoomArrowScale(element) {
   const width=element.is('edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected')
@@ -536,7 +539,7 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
     {selector:'edge.replayRemoved',style:{width:4}},
     {selector:'node.replayRemoved',style:{'background-color':'#8f3544'}},
     {selector:'node',style:{width:nodeDiameter,height:nodeDiameter,'font-size':zoomLength(10,2,14),
-      'border-width':zoomLength(1,.5,1.5),'text-margin-y':zoomLength(7,2,10)}},
+      'border-width':nodeBorder,'text-margin-y':zoomLength(7,2,10)}},
     {selector:'edge',style:{width:normalLine,'font-size':zoomLength(9,2,14),
       'arrow-scale':zoomArrowScale}},
     {selector:'node, edge',style:{'min-zoomed-font-size':0,'text-opacity':zoomTextOpacity,
@@ -556,6 +559,21 @@ cy.on('zoom',()=>{
   });
 });
 const backgroundLayout=MemoryGraphLayout.createWorkerLayout(()=>new Worker('layout-worker.js'));
+function fixGpuLabelOpacity(renderer) {
+  // WebGL bakes alpha into the atlas, unlike Canvas's per-draw text alpha.
+  // The bundled label key omits it, so stale/shared textures can stay opaque.
+  for(const type of ['label','edge-source-label','edge-target-label']) {
+    const options=renderer.drawing.atlasManager.getRenderTypeOpts(type);
+    const getKey=options.getKey,isVisible=options.isVisible;
+    options.getKey=element=>{
+      const key=getKey(element);
+      const alpha=element.pstyle('text-opacity').value*element.effectiveOpacity();
+      // Keep the trailing _lineIndex intact: the atlas bounds parser reads it.
+      return Array.isArray(key)?key.map(part=>`alpha=${alpha};${part}`):`alpha=${alpha};${key}`;
+    };
+    options.isVisible=element=>isVisible(element) && element.pstyle('text-opacity').value>0;
+  }
+}
 function replaceRenderer(accelerated) {
   // Cytoscape's experimental renderer reads the inline background colour when
   // blending textures; its default white would leave fringes on our dark view.
@@ -564,6 +582,7 @@ function replaceRenderer(accelerated) {
   cy.destroyRenderer();
   cy.initRenderer({name:'canvas',webgl:accelerated,hideEdgesOnViewport:!accelerated,
     textureOnViewport:false});
+  if(accelerated)fixGpuLabelOpacity(cy.renderer());
   cy.startAnimationLoop();cy.style().update();cy.resize();
 }
 function saveVisualPreferences() {

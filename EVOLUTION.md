@@ -2,6 +2,21 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Fade GPU labels and halve node sizes
+
+User observation isolated inconsistent fading and flashing labels to GPU mode.
+The bundled WebGL atlas bakes text opacity into label pixels, but its cache key
+omits that opacity. The viewer now includes effective text opacity in all three
+GPU label texture keys and skips labels at zero opacity. This preserves the
+existing renderer and shader while preventing reuse of an opaque texture for a
+faded label. Regression coverage reproduces the unchanged upstream label key,
+checks the renderer's actual paint alpha and matches cache keys during fade-out
+and fade-in. Full GPU appearance remains unverified in a browser.
+
+A further user adjustment halves visible node diameters and border widths:
+nodes now span 1.5–12 CSS pixels, with 32.5% of the original base diameter.
+Layout dimensions and text readability retain their existing behavior.
+
 ## 2026-11-02 — Identify the project in Memory Explorer
 
 Identical viewer headings made multiple project tabs hard to distinguish. The

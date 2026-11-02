@@ -237,7 +237,7 @@ async function main(){
   assert.equal(run('state.workerLayoutEnabled'),false);
   assert.match($('workerStatus').textContent,/unavailable/);
   $('cy').getBoundingClientRect=()=>({width:900,height:600});
-  run('const realReplaceRenderer=replaceRenderer,rendererInit=cy.initRenderer;const rendererModes=[];cy.initRenderer=options=>rendererInit.call(cy,{...options,name:"null"});replaceRenderer=enabled=>{rendererModes.push(enabled);realReplaceRenderer(enabled);};');
+  run('const realReplaceRenderer=replaceRenderer,rendererInit=cy.initRenderer;const rendererModes=[];cy.initRenderer=options=>{rendererInit.call(cy,{...options,name:"null"});if(options.webgl)cy.renderer().drawing={atlasManager:{getRenderTypeOpts:()=>({getKey:()=>"label_0",isVisible:()=>true})}};};replaceRenderer=enabled=>{rendererModes.push(enabled);realReplaceRenderer(enabled);};');
   const createElement=context.document.createElement;
   context.document.createElement=()=>({...element(),getContext:()=>({getExtension:()=>({loseContext(){}})})});
   let workerFailure=false;

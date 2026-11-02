@@ -32,10 +32,43 @@ function zoom(value) {
 }
 const rendered=(element,property)=>element.numericStyle(property)*cy.zoom();
 const near=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-5,`${actual} != ${expected}`);
+// Reproduce the actual GPU contract: alpha is baked by setupTextStyle, but
+// Cytoscape's labelStyleKey stays unchanged when text-opacity alone changes.
+vm.runInContext(source.slice(source.indexOf('function fixGpuLabelOpacity('),source.indexOf('function replaceRenderer(')),context);
+const labelTypes=new Map(['label','edge-source-label','edge-target-label'].map(type=>[type,{
+  getKey:element=>[`${element._private.labelStyleKey}_0`,`${element._private.labelStyleKey}_1`],isVisible:()=>true
+}]));
+const renderer={drawing:{atlasManager:{getRenderTypeOpts:type=>labelTypes.get(type)}}};
+context.testRenderer=renderer;
+vm.runInContext('fixGpuLabelOpacity(testRenderer)',context);
+const canvas=cytoscape('renderer','canvas').prototype;
+const paint={colorFillStyle(_context,_r,_g,_b,alpha){this.alpha=alpha;},colorStrokeStyle(){}};
+const keys=new Set();let baseKey;
+// Resolve initial function-mapped font/outline styles before comparing atlas keys.
+node.style('text-opacity',1);canvas.setupTextStyle.call(paint,{},node,true);
+for(const alpha of [1,.75,.5,.25,0,.5,1]) {
+  zoom(1);node.style('text-opacity',alpha);
+  canvas.setupTextStyle.call(paint,{},node,true);
+  near(paint.alpha,alpha);
+  const currentBase=node._private.labelStyleKey;
+  if(baseKey===undefined)baseKey=currentBase;else assert.equal(currentBase,baseKey);
+  for(const options of labelTypes.values()) {
+    const parts=options.getKey(node),key=parts[0];
+    assert.ok(key.startsWith(`alpha=${paint.alpha};`),'GPU atlas key must identify the alpha it bakes');
+    // The shipped atlas bounds parser takes the suffix after the first underscore.
+    parts.forEach((part,index)=>assert.equal(Number(part.substring(part.indexOf('_')+1)),index));
+    assert.equal(!!options.isVisible(node),alpha>0);
+    keys.add(key);
+  }
+}
+assert.equal(keys.size,5,'Fade in and out must revisit the matching cached alpha');
+node.style('text-opacity',.5);node.style('opacity',.4);
+assert.ok(labelTypes.get('label').getKey(node)[0].startsWith('alpha=0.2;'));
+node.removeStyle('text-opacity opacity');
 for(const z of [.001,.05,.3,.7,.85,1,1.5,3,5]) {
   zoom(z);
   for(const n of cy.nodes()) {
-    assert.ok(n.renderedWidth()>=3-1e-5&&n.renderedWidth()<=24+1e-5);
+    assert.ok(n.renderedWidth()>=1.5-1e-5&&n.renderedWidth()<=12+1e-5);
     near(n.renderedWidth(),n.renderedHeight());
     assert.ok(rendered(n,'font-size')<=14+1e-5);
   }
@@ -55,7 +88,7 @@ for(const z of [.001,.05,5]) {
   zoom(z);
   const measured=layout.boxes(cy.nodes());
   measured.forEach((box,index)=>{near(box.w,boxes[index].w);near(box.h,boxes[index].h);});
-  near(node.renderedWidth(),Math.max(3,Math.min(24,14*.65*z)));
+  near(node.renderedWidth(),Math.max(1.5,Math.min(12,14*.325*z)));
 }
 zoom(.001);
 node.outerWidth(); // Prime the same compensated style cache that the renderer reads.
@@ -66,13 +99,13 @@ layout.transition(cy,()=>{
   measured.forEach((box,index)=>{near(box.w,boxes[index].w);near(box.h,boxes[index].h);});
 });
 cy.window=originalWindow;
-near(node.renderedWidth(),3);
+near(node.renderedWidth(),1.5);
 let workerInput;
 const worker=layout.createWorkerLayout(()=>({postMessage(message){workerInput=message;},terminate(){}}));
 void worker.arrange(cy,{fit:false});
 near(parseFloat(workerInput.elements.find(el=>el.data.id==='small').style.width),14);
 worker.cancel();
-near(node.renderedWidth(),3);
+near(node.renderedWidth(),1.5);
 zoom(.7);near(node.numericStyle('text-opacity'),0);
 zoom(.85);near(node.numericStyle('text-opacity'),.5);near(rendered(node,'font-size'),8.5);
 zoom(1);near(node.numericStyle('text-opacity'),1);
@@ -80,27 +113,27 @@ zoom(7/9);near(edge.numericStyle('text-opacity'),0);
 zoom(8.5/9);near(edge.numericStyle('text-opacity'),.5);
 edge.addClass('hovered');near(edge.numericStyle('text-opacity'),.5);
 edge.select();zoom(.1);near(edge.numericStyle('text-opacity'),0);
-zoom(1);near(node.renderedWidth(),9.1);near(cy.$id('hub').renderedWidth(),19.5);
-zoom(5);near(rendered(node,'font-size'),14);near(node.renderedWidth(),24);
+zoom(1);near(node.renderedWidth(),4.55);near(cy.$id('hub').renderedWidth(),9.75);
+zoom(5);near(rendered(node,'font-size'),14);near(node.renderedWidth(),12);
 for(const className of ['touched','path','replayChanged','replayRemoved','changed','recordedChange']) {
   node.addClass(className);edge.addClass(className);
-  near(node.renderedWidth(),24);
-  assert.ok(rendered(node,'border-width')<=4+1e-5);
+  near(node.renderedWidth(),12);
+  assert.ok(rendered(node,'border-width')<=2+1e-5);
   assert.ok(rendered(edge,'width')<=3+1e-5);
   assert.ok(arrowPixels()>=6-1e-5&&arrowPixels()<=12+1e-5);
   node.removeClass(className);edge.removeClass(className);
 }
-node.select();near(node.renderedWidth(),24);near(rendered(node,'border-width'),4);
+node.select();near(node.renderedWidth(),12);near(rendered(node,'border-width'),2);
 // Newly loaded and redecorated nodes must inherit the current zoom without another gesture.
 zoom(.001);
 const added=cy.add({data:{id:'new',size:24,color:'#79b8e8',displayLabel:'New'}});
-near(added.renderedWidth(),3);
-added.data('size',58);near(added.renderedWidth(),3);
-zoom(2);near(added.renderedWidth(),24);
+near(added.renderedWidth(),1.5);
+added.data('size',58);near(added.renderedWidth(),1.5);
+zoom(2);near(added.renderedWidth(),12);
 const before=node.renderedPosition().x;
 node.position({x:100,y:0});
 near(node.renderedPosition().x-before,200);
 cy.zoom(3);cy.zoom(4);cy.zoom(5);assert.equal(frames.length,1);frames.shift()();
-near(node.renderedWidth(),24);
+near(node.renderedWidth(),12);
 cy.destroy();
 console.log('Graph zoom: bounded screen sizes, smooth label fade, highlights, new nodes and camera spacing passed.');
