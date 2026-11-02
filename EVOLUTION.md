@@ -2,6 +2,15 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Reduce node crowding
+
+User feedback found nodes too large relative to their placement density even
+after zoom clamping. Visible diameters now use 65% of the base size and a tighter
+3–24 CSS pixel range. Layout measurements retain their previous dimensions so
+smaller nodes create breathing room rather than pulling the layout closer.
+Label readability and fading remain unchanged. The shipped Cytoscape regression
+checks representative diameters, screen limits and stable model measurements.
+
 ## 2026-11-02 — Keep graph zoom readable
 
 Camera zoom previously enlarged nodes, labels and strokes up to fivefold,

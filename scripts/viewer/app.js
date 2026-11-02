@@ -505,7 +505,9 @@ function zoomTextOpacity(element) {
   const progress=Math.max(0,Math.min(1,(pixels-7)/3));
   return progress*progress*(3-2*progress);
 }
-const nodeDiameter=zoomLength(element=>element.data('size'),4,42);
+const compactNodeDiameter=zoomLength(element=>element.data('size')*.65,3,24);
+const nodeDiameter=element=>element.cy().scratch('memory-model-dimensions')
+  ?Math.min(42,element.data('size')):compactNodeDiameter(element);
 const highlightBorder=zoomLength(5,1,4),highlightLine=zoomLength(4,.8,3);
 const normalLine=zoomLength(1.3,.6,2);
 function zoomArrowScale(element) {

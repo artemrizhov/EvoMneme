@@ -35,7 +35,7 @@ const near=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-5,`${actual
 for(const z of [.001,.05,.3,.7,.85,1,1.5,3,5]) {
   zoom(z);
   for(const n of cy.nodes()) {
-    assert.ok(n.renderedWidth()>=4-1e-5&&n.renderedWidth()<=42+1e-5);
+    assert.ok(n.renderedWidth()>=3-1e-5&&n.renderedWidth()<=24+1e-5);
     near(n.renderedWidth(),n.renderedHeight());
     assert.ok(rendered(n,'font-size')<=14+1e-5);
   }
@@ -55,7 +55,7 @@ for(const z of [.001,.05,5]) {
   zoom(z);
   const measured=layout.boxes(cy.nodes());
   measured.forEach((box,index)=>{near(box.w,boxes[index].w);near(box.h,boxes[index].h);});
-  near(node.renderedWidth(),Math.max(4,Math.min(42,14*z)));
+  near(node.renderedWidth(),Math.max(3,Math.min(24,14*.65*z)));
 }
 zoom(.001);
 node.outerWidth(); // Prime the same compensated style cache that the renderer reads.
@@ -66,13 +66,13 @@ layout.transition(cy,()=>{
   measured.forEach((box,index)=>{near(box.w,boxes[index].w);near(box.h,boxes[index].h);});
 });
 cy.window=originalWindow;
-near(node.renderedWidth(),4);
+near(node.renderedWidth(),3);
 let workerInput;
 const worker=layout.createWorkerLayout(()=>({postMessage(message){workerInput=message;},terminate(){}}));
 void worker.arrange(cy,{fit:false});
 near(parseFloat(workerInput.elements.find(el=>el.data.id==='small').style.width),14);
 worker.cancel();
-near(node.renderedWidth(),4);
+near(node.renderedWidth(),3);
 zoom(.7);near(node.numericStyle('text-opacity'),0);
 zoom(.85);near(node.numericStyle('text-opacity'),.5);near(rendered(node,'font-size'),8.5);
 zoom(1);near(node.numericStyle('text-opacity'),1);
@@ -80,26 +80,27 @@ zoom(7/9);near(edge.numericStyle('text-opacity'),0);
 zoom(8.5/9);near(edge.numericStyle('text-opacity'),.5);
 edge.addClass('hovered');near(edge.numericStyle('text-opacity'),.5);
 edge.select();zoom(.1);near(edge.numericStyle('text-opacity'),0);
-zoom(5);near(rendered(node,'font-size'),14);near(node.renderedWidth(),42);
+zoom(1);near(node.renderedWidth(),9.1);near(cy.$id('hub').renderedWidth(),19.5);
+zoom(5);near(rendered(node,'font-size'),14);near(node.renderedWidth(),24);
 for(const className of ['touched','path','replayChanged','replayRemoved','changed','recordedChange']) {
   node.addClass(className);edge.addClass(className);
-  near(node.renderedWidth(),42);
+  near(node.renderedWidth(),24);
   assert.ok(rendered(node,'border-width')<=4+1e-5);
   assert.ok(rendered(edge,'width')<=3+1e-5);
   assert.ok(arrowPixels()>=6-1e-5&&arrowPixels()<=12+1e-5);
   node.removeClass(className);edge.removeClass(className);
 }
-node.select();near(node.renderedWidth(),42);near(rendered(node,'border-width'),4);
+node.select();near(node.renderedWidth(),24);near(rendered(node,'border-width'),4);
 // Newly loaded and redecorated nodes must inherit the current zoom without another gesture.
 zoom(.001);
 const added=cy.add({data:{id:'new',size:24,color:'#79b8e8',displayLabel:'New'}});
-near(added.renderedWidth(),4);
-added.data('size',58);near(added.renderedWidth(),4);
-zoom(2);near(added.renderedWidth(),42);
+near(added.renderedWidth(),3);
+added.data('size',58);near(added.renderedWidth(),3);
+zoom(2);near(added.renderedWidth(),24);
 const before=node.renderedPosition().x;
 node.position({x:100,y:0});
 near(node.renderedPosition().x-before,200);
 cy.zoom(3);cy.zoom(4);cy.zoom(5);assert.equal(frames.length,1);frames.shift()();
-near(node.renderedWidth(),42);
+near(node.renderedWidth(),24);
 cy.destroy();
 console.log('Graph zoom: bounded screen sizes, smooth label fade, highlights, new nodes and camera spacing passed.');
