@@ -112,11 +112,11 @@ void worker.arrange(cy,{fit:false});
 near(parseFloat(workerInput.elements.find(el=>el.data.id==='small').style.width),14);
 worker.cancel();
 near(node.renderedWidth(),1.5);
-zoom(1.4);near(node.numericStyle('text-opacity'),0);
-zoom(1.7);near(node.numericStyle('text-opacity'),.5);near(rendered(node,'font-size'),8.5);
-zoom(2);near(node.numericStyle('text-opacity'),1);
-zoom(7/4.5);near(edge.numericStyle('text-opacity'),0);
-zoom(8.5/4.5);near(edge.numericStyle('text-opacity'),.5);
+zoom(.6);near(node.numericStyle('text-opacity'),0);
+zoom(1);near(node.numericStyle('text-opacity'),.5);near(rendered(node,'font-size'),5);
+zoom(1.4);near(node.numericStyle('text-opacity'),1);
+zoom(3/4.5);near(edge.numericStyle('text-opacity'),0);
+zoom(5/4.5);near(edge.numericStyle('text-opacity'),.5);
 edge.addClass('hovered');near(edge.numericStyle('text-opacity'),.5);
 edge.select();zoom(.1);near(edge.numericStyle('text-opacity'),0);
 zoom(1);near(node.renderedWidth(),4.55);near(cy.$id('hub').renderedWidth(),9.75);
@@ -166,12 +166,11 @@ for(const percent of choices) {
   zoom(.001);near(node.renderedWidth(),1.5);near(rendered(node,'font-size'),2);
   near(node.numericStyle('text-opacity'),0);
   zoom(5);near(node.renderedWidth(),18*factor);near(rendered(node,'font-size'),14*factor);
-  if(percent<=50)near(node.numericStyle('text-opacity'),0);
-  if(percent>=80) {
-    zoom(7/(5*factor));near(node.numericStyle('text-opacity'),0);
-    zoom(8.5/(5*factor));near(node.numericStyle('text-opacity'),.5);
-    zoom(10/(5*factor));near(node.numericStyle('text-opacity'),1);
-  }
+  const fade=Math.max(0,Math.min(1,(14*factor-3)/4));
+  near(node.numericStyle('text-opacity'),fade*fade*(3-2*fade));
+  zoom(3/(5*factor));near(node.numericStyle('text-opacity'),0);
+  if(percent>=40){zoom(5/(5*factor));near(node.numericStyle('text-opacity'),.5);}
+  if(percent>=50){zoom(7/(5*factor));near(node.numericStyle('text-opacity'),1);}
 }
 assert.equal(vm.runInContext('setElementScale(99)',context),false);
 preferences=JSON.stringify({elementScale:150});vm.runInContext('restoreVisualPreferences()',context);

@@ -2,6 +2,15 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Keep smaller labels visible longer
+
+User tuning lowers the label fade interval from 10–7 to 7–3 CSS pixels. Text
+is fully opaque at 7 pixels, half opaque at 5 and hidden at 3, with the same
+smooth transition and GPU cache handling. Node/font limits and size presets
+are unchanged. The 30–40% presets can now show partially transparent labels
+at their font ceilings. The zoom regression checks these capped values and
+the fixed fade thresholds across all presets.
+
 ## 2026-11-02 — Offer a persistent element-size control
 
 Repeated size tuning now has a graph-toolbar selector, available in the expanded

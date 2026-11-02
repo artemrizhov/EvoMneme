@@ -506,7 +506,7 @@ function zoomLength(value,minimum,maximum,scaleWithElements=false) {
 function zoomTextOpacity(element) {
   const pixels=Math.max(2,Math.min(14*state.elementScale,
     (element.isNode()?5:4.5)*element.cy().zoom()*state.elementScale));
-  const progress=Math.max(0,Math.min(1,(pixels-7)/3));
+  const progress=Math.max(0,Math.min(1,(pixels-3)/4));
   return progress*progress*(3-2*progress);
 }
 const compactNodeDiameter=zoomLength(element=>element.data('size')*.325,1.5,18,true);
