@@ -501,17 +501,19 @@ function zoomLength(value,minimum,maximum) {
   };
 }
 function zoomTextOpacity(element) {
-  const pixels=(element.isNode()?10:9)*element.cy().zoom();
+  const pixels=(element.isNode()?5:4.5)*element.cy().zoom();
   const progress=Math.max(0,Math.min(1,(pixels-7)/3));
   return progress*progress*(3-2*progress);
 }
-const compactNodeDiameter=zoomLength(element=>element.data('size')*.325,1.5,12);
+const compactNodeDiameter=zoomLength(element=>element.data('size')*.325,1.5,18);
 const nodeDiameter=element=>element.cy().scratch('memory-model-dimensions')
   ?Math.min(42,element.data('size')):compactNodeDiameter(element);
 const normalNodeBorder=zoomLength(1,.5,1.5),originalHighlightBorder=zoomLength(5,1,4);
 const nodeBorder=element=>normalNodeBorder(element)*(element.cy().scratch('memory-model-dimensions')?1:.5);
 const highlightBorder=element=>originalHighlightBorder(element)*(element.cy().scratch('memory-model-dimensions')?1:.5);
 const highlightLine=zoomLength(4,.8,3);
+const nodeFont=zoomLength(element=>element.cy().scratch('memory-model-dimensions')?10:5,2,14);
+const edgeFont=zoomLength(element=>element.cy().scratch('memory-model-dimensions')?9:4.5,2,14);
 const normalLine=zoomLength(1.3,.6,2);
 function zoomArrowScale(element) {
   const width=element.is('edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected')
@@ -538,9 +540,9 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
     {selector:'.replayRemoved',style:{'border-color':'#ff7b87','line-color':'#ff7b87','target-arrow-color':'#ff7b87',opacity:.7,'border-width':5}},
     {selector:'edge.replayRemoved',style:{width:4}},
     {selector:'node.replayRemoved',style:{'background-color':'#8f3544'}},
-    {selector:'node',style:{width:nodeDiameter,height:nodeDiameter,'font-size':zoomLength(10,2,14),
+    {selector:'node',style:{width:nodeDiameter,height:nodeDiameter,'font-size':nodeFont,
       'border-width':nodeBorder,'text-margin-y':zoomLength(7,2,10)}},
-    {selector:'edge',style:{width:normalLine,'font-size':zoomLength(9,2,14),
+    {selector:'edge',style:{width:normalLine,'font-size':edgeFont,
       'arrow-scale':zoomArrowScale}},
     {selector:'node, edge',style:{'min-zoomed-font-size':0,'text-opacity':zoomTextOpacity,
       'text-outline-width':zoomLength(2,.5,2)}},

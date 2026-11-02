@@ -2,6 +2,16 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Tune the node ceiling and text scale
+
+User tuning raises only the maximum node diameter from 12 to 18 CSS pixels.
+The minimum diameter and base node scale remain unchanged. Label base fonts
+are halved to 5 pixels for nodes and 4.5 for relationships at 100% zoom, with
+the same 2–14 pixel font limits and 7–10 pixel fade interval. Fading therefore
+starts at the same rendered text size, at a different camera zoom. Layout
+measurements retain the previous base fonts to preserve spacing. The zoom
+regression checks exact base fonts, both limits and the unchanged fade sizes.
+
 ## 2026-11-02 — Center the project heading
 
 User feedback moved the project name out of the small brand subtitle into a

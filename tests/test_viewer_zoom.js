@@ -68,7 +68,7 @@ node.removeStyle('text-opacity opacity');
 for(const z of [.001,.05,.3,.7,.85,1,1.5,3,5]) {
   zoom(z);
   for(const n of cy.nodes()) {
-    assert.ok(n.renderedWidth()>=1.5-1e-5&&n.renderedWidth()<=12+1e-5);
+    assert.ok(n.renderedWidth()>=1.5-1e-5&&n.renderedWidth()<=18+1e-5);
     near(n.renderedWidth(),n.renderedHeight());
     assert.ok(rendered(n,'font-size')<=14+1e-5);
   }
@@ -88,7 +88,7 @@ for(const z of [.001,.05,5]) {
   zoom(z);
   const measured=layout.boxes(cy.nodes());
   measured.forEach((box,index)=>{near(box.w,boxes[index].w);near(box.h,boxes[index].h);});
-  near(node.renderedWidth(),Math.max(1.5,Math.min(12,14*.325*z)));
+  near(node.renderedWidth(),Math.max(1.5,Math.min(18,14*.325*z)));
 }
 zoom(.001);
 node.outerWidth(); // Prime the same compensated style cache that the renderer reads.
@@ -106,34 +106,36 @@ void worker.arrange(cy,{fit:false});
 near(parseFloat(workerInput.elements.find(el=>el.data.id==='small').style.width),14);
 worker.cancel();
 near(node.renderedWidth(),1.5);
-zoom(.7);near(node.numericStyle('text-opacity'),0);
-zoom(.85);near(node.numericStyle('text-opacity'),.5);near(rendered(node,'font-size'),8.5);
-zoom(1);near(node.numericStyle('text-opacity'),1);
-zoom(7/9);near(edge.numericStyle('text-opacity'),0);
-zoom(8.5/9);near(edge.numericStyle('text-opacity'),.5);
+zoom(1.4);near(node.numericStyle('text-opacity'),0);
+zoom(1.7);near(node.numericStyle('text-opacity'),.5);near(rendered(node,'font-size'),8.5);
+zoom(2);near(node.numericStyle('text-opacity'),1);
+zoom(7/4.5);near(edge.numericStyle('text-opacity'),0);
+zoom(8.5/4.5);near(edge.numericStyle('text-opacity'),.5);
 edge.addClass('hovered');near(edge.numericStyle('text-opacity'),.5);
 edge.select();zoom(.1);near(edge.numericStyle('text-opacity'),0);
 zoom(1);near(node.renderedWidth(),4.55);near(cy.$id('hub').renderedWidth(),9.75);
-zoom(5);near(rendered(node,'font-size'),14);near(node.renderedWidth(),12);
+near(rendered(node,'font-size'),5);near(rendered(edge,'font-size'),4.5);
+zoom(.1);near(rendered(node,'font-size'),2);near(rendered(edge,'font-size'),2);
+zoom(5);near(rendered(node,'font-size'),14);near(rendered(edge,'font-size'),14);near(node.renderedWidth(),18);
 for(const className of ['touched','path','replayChanged','replayRemoved','changed','recordedChange']) {
   node.addClass(className);edge.addClass(className);
-  near(node.renderedWidth(),12);
+  near(node.renderedWidth(),18);
   assert.ok(rendered(node,'border-width')<=2+1e-5);
   assert.ok(rendered(edge,'width')<=3+1e-5);
   assert.ok(arrowPixels()>=6-1e-5&&arrowPixels()<=12+1e-5);
   node.removeClass(className);edge.removeClass(className);
 }
-node.select();near(node.renderedWidth(),12);near(rendered(node,'border-width'),2);
+node.select();near(node.renderedWidth(),18);near(rendered(node,'border-width'),2);
 // Newly loaded and redecorated nodes must inherit the current zoom without another gesture.
 zoom(.001);
 const added=cy.add({data:{id:'new',size:24,color:'#79b8e8',displayLabel:'New'}});
 near(added.renderedWidth(),1.5);
 added.data('size',58);near(added.renderedWidth(),1.5);
-zoom(2);near(added.renderedWidth(),12);
+zoom(2);near(added.renderedWidth(),18);
 const before=node.renderedPosition().x;
 node.position({x:100,y:0});
 near(node.renderedPosition().x-before,200);
 cy.zoom(3);cy.zoom(4);cy.zoom(5);assert.equal(frames.length,1);frames.shift()();
-near(node.renderedWidth(),12);
+near(node.renderedWidth(),18);
 cy.destroy();
 console.log('Graph zoom: bounded screen sizes, smooth label fade, highlights, new nodes and camera spacing passed.');
