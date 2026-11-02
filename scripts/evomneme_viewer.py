@@ -581,8 +581,8 @@ def make_server(explorer, port=0):
                 html = data.decode('utf-8')
                 html = html.replace('<title>EvoMneme · Memory explorer</title>',
                                     '<title>' + project_label + ' · Memory Explorer · EvoMneme</title>')
-                html = html.replace('class="subtitle">MEMORY EXPLORER</span>',
-                                    'class="subtitle">' + project_label + ' · MEMORY EXPLORER</span>')
+                html = html.replace('<h1 id="projectName" class="project-title"></h1>',
+                                    '<h1 id="projectName" class="project-title" title="' + project_label + '">' + project_label + '</h1>')
                 data = html.encode('utf-8')
             self.respond(200, data, mime)
 

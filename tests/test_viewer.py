@@ -617,7 +617,8 @@ class ViewerTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 page = response.read().decode('utf-8')
                 self.assertIn('<title>' + expected + ' · Memory Explorer · EvoMneme</title>', page)
-                self.assertIn('class="subtitle">' + expected + ' · MEMORY EXPLORER</span>', page)
+                self.assertIn('<h1 id="projectName" class="project-title" title="' + expected + '">' + expected + '</h1>', page)
+                self.assertIn('class="subtitle">MEMORY EXPLORER</span>', page)
 
     def test_vendor_integrity(self):
         folder = ROOT / 'scripts/viewer/vendor'

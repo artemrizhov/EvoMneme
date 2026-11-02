@@ -14,9 +14,10 @@ Open the complete printed URL, including `#token=...`. Stop with Ctrl+C. The ser
 
 ## Visual investigation
 
-The page header and browser title prefix **Memory Explorer** with the project
-directory name for a database inside `.evomneme`; databases elsewhere use their
-filename without the extension. Restart the viewer and reload to apply updates.
+The page header shows the project name prominently in the center; the browser
+title places it before **Memory Explorer**. Databases inside `.evomneme` use the
+project directory name; databases elsewhere use their filename without the
+extension. Restart the viewer and reload to apply updates.
 
 ### Controlled schema v3
 

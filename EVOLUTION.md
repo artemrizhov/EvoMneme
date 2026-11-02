@@ -2,6 +2,13 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Center the project heading
+
+User feedback moved the project name out of the small brand subtitle into a
+separate 26px heading centered between equal side columns. Long names truncate
+with their full text in a tooltip; narrow screens give the heading a centered
+second row. The browser title retains its project prefix.
+
 ## 2026-11-02 — Fade GPU labels and halve node sizes
 
 User observation isolated inconsistent fading and flashing labels to GPU mode.
