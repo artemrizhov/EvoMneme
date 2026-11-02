@@ -2,6 +2,13 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Make quick highlight transitions perceptible
+
+User feedback found 100 ms highlighting too abrupt. Access flashes now rise
+over 300 ms; retained/history colors turn on and off over 300 ms with
+ease-in-out timing. The accelerating 5 second access fade remains unchanged.
+Existing timing and shipped-style regressions verify the revised durations.
+
 ## 2026-11-02 — Ease text growth into its maximum
 
 The user found the hard font ceiling too abrupt. Label sizes now grow linearly

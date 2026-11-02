@@ -28,8 +28,8 @@ cy.add([
   {data:{id:'link',source:'small',target:'hub',color:'#79b8e8',curve:'bezier',label:'calls',displayLabel:'calls'}}
 ]);
 const node=cy.$id('small'),edge=cy.$id('link');
-assert.equal(node.numericStyle('transition-duration'),100);
-assert.equal(edge.numericStyle('transition-duration'),100);
+assert.equal(node.numericStyle('transition-duration'),300);
+assert.equal(edge.numericStyle('transition-duration'),300);
 edge.scratch('accessFlash',{opacity:.85,color:'#71eab8'}).addClass('accessFlash accessEdgeFlash accessColorFlash');
 assert.equal(edge.style('line-color'),'rgb(113,234,184)','GPU edge path receives the actual flash color');
 assert.equal(edge.style('target-arrow-color'),'rgb(113,234,184)');
@@ -40,7 +40,7 @@ const pulsedWidth=edge.numericStyle('width');
 edge.scratch('accessFlash',{opacity:0,color:'#71eab8'}).updateStyle();
 assert.ok(pulsedWidth>edge.numericStyle('width'),'retained GPU edge still visibly pulses in width');
 edge.removeClass('accessFlash accessEdgeFlash accessColorFlash touched').removeScratch('accessFlash');
-assert.equal(edge.numericStyle('transition-duration'),100,'history color transitions remain fast after a pulse');
+assert.equal(edge.numericStyle('transition-duration'),300,'history color transitions remain visible after a pulse');
 const getArrowWidth=cytoscape('renderer','base').prototype.getArrowWidth;
 const arrowPixels=()=>getArrowWidth.call({arrowWidthCache:{}},edge.numericStyle('width'),
   edge.numericStyle('arrow-scale'))*cy.zoom();

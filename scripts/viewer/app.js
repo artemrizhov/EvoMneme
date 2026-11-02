@@ -562,9 +562,9 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
     {selector:'.replayRemoved',style:{'border-color':'#ff7b87','line-color':'#ff7b87','target-arrow-color':'#ff7b87',opacity:.7,'border-width':5}},
     {selector:'edge.replayRemoved',style:{width:4}},
     {selector:'node.replayRemoved',style:{'background-color':'#8f3544'}},
-    {selector:'node',style:{'transition-property':'border-color','transition-duration':'100ms','transition-timing-function':'ease-out',width:nodeDiameter,height:nodeDiameter,'font-size':nodeFont,
+    {selector:'node',style:{'transition-property':'border-color','transition-duration':'300ms','transition-timing-function':'ease-in-out',width:nodeDiameter,height:nodeDiameter,'font-size':nodeFont,
       'border-width':nodeBorder,'text-margin-y':zoomLength(7,2,10)}},
-    {selector:'edge',style:{'transition-property':'line-color, target-arrow-color, opacity','transition-duration':'100ms','transition-timing-function':'ease-out',width:normalLine,'font-size':edgeFont,
+    {selector:'edge',style:{'transition-property':'line-color, target-arrow-color, opacity','transition-duration':'300ms','transition-timing-function':'ease-in-out',width:normalLine,'font-size':edgeFont,
       'arrow-scale':zoomArrowScale}},
     {selector:'node, edge',style:{'min-zoomed-font-size':0,'text-opacity':zoomTextOpacity,
       'text-outline-width':zoomLength(2,.5,2)}},
@@ -1191,8 +1191,8 @@ function createAccessFlashes(graph,clock=()=>performance.now(),frame=requestAnim
   const active=new Map();let scheduled=false;
   function opacity(entry,now) {
     const elapsed=now-entry.started;
-    if(elapsed<100)return entry.from+(1-entry.from)*Math.max(0,elapsed)/100;
-    return Math.max(0,1-Math.pow((elapsed-100)/5000,2));
+    if(elapsed<300)return entry.from+(1-entry.from)*Math.max(0,elapsed)/300;
+    return Math.max(0,1-Math.pow((elapsed-300)/5000,2));
   }
   function schedule() {if(!scheduled&&active.size){scheduled=true;frame(paint);}}
   function render() {
@@ -1200,7 +1200,7 @@ function createAccessFlashes(graph,clock=()=>performance.now(),frame=requestAnim
     graph.batch(()=>{
       for(const [id,entry] of active) {
         const element=graph.getElementById(id),level=opacity(entry,now);
-        if(!level&&now-entry.started>=5100) {
+        if(!level&&now-entry.started>=5300) {
           element.removeClass('accessFlash accessEdgeFlash accessColorFlash');element.removeScratch('accessFlash');active.delete(id);
         } else if(element.length) {
           element.scratch('accessFlash',{opacity:level*.85,color:entry.changed?'#71eab8':'#f7cd71'});
