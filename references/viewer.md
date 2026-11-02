@@ -14,6 +14,10 @@ Open the complete printed URL, including `#token=...`. Stop with Ctrl+C. The ser
 
 ## Visual investigation
 
+The page header and browser title prefix **Memory Explorer** with the project
+directory name for a database inside `.evomneme`; databases elsewhere use their
+filename without the extension. Restart the viewer and reload to apply updates.
+
 ### Controlled schema v3
 
 New host stores use the [shared version-3 schema](schema.md): all entities in `nodes`, all relationships in `edges`, and supported type attributes in `symbol_details` / `file_details`. The viewer projects these tables directly across every kind/layer. Both node and edge graph IDs are `json_array(scope_id,id)` in separate namespaces. Symbol selection shows qualified name, signature and language; file inspection state is available on the file itself and on entities with a matching nonempty `source_path` in the same scope, without redundant graph edges. Locator matches use current file nodes; selecting an old file still shows its own inspection state. Provenance comes from `evidence.node_id` / `evidence.edge_id`. Fingerprints include attached symbol/file attributes so their edits refresh the graph too.

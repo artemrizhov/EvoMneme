@@ -594,6 +594,31 @@ class ViewerTests(unittest.TestCase):
             self.assertIn("default-src 'self'",response.getheader('Content-Security-Policy'))
             self.assertTrue(response.read())
 
+    def test_project_name_in_page_header_and_title(self):
+        for relative, expected in (
+            ('Проект & Demo/.evomneme/knowledge.sqlite3', 'Проект &amp; Demo'),
+            ('Other & Project.sqlite3', 'Other &amp; Project'),
+        ):
+            with self.subTest(database=relative):
+                path = self.path.parent / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                fixture(path)
+                explorer = Explorer(path)
+                self.addCleanup(explorer.close)
+                server, _ = make_server(explorer)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                self.addCleanup(server.server_close)
+                self.addCleanup(server.shutdown)
+                conn = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=5)
+                self.addCleanup(conn.close)
+                conn.request('GET', '/')
+                response = conn.getresponse()
+                self.assertEqual(response.status, 200)
+                page = response.read().decode('utf-8')
+                self.assertIn('<title>' + expected + ' · Memory Explorer · EvoMneme</title>', page)
+                self.assertIn('class="subtitle">' + expected + ' · MEMORY EXPLORER</span>', page)
+
     def test_vendor_integrity(self):
         folder = ROOT / 'scripts/viewer/vendor'
         manifest = json.loads((folder / 'manifest.json').read_text())

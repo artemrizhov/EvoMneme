@@ -5,6 +5,7 @@ import argparse
 from contextlib import contextmanager
 import gzip
 import hashlib
+from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 from pathlib import Path
@@ -517,6 +518,10 @@ class Explorer:
 
 def make_server(explorer, port=0):
     token = secrets.token_urlsafe(32)
+    database = explorer.path
+    project_name = (database.parent.parent.name if database.parent.name == '.evomneme'
+                    else database.stem)
+    project_label = escape(project_name)
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
@@ -571,7 +576,15 @@ def make_server(explorer, port=0):
             if path not in assets:
                 return self.respond(404, {'error': 'Not found'})
             file, mime = assets[path]
-            self.respond(200, (ASSETS / file).read_bytes(), mime)
+            data = (ASSETS / file).read_bytes()
+            if file == 'index.html':
+                html = data.decode('utf-8')
+                html = html.replace('<title>EvoMneme · Memory explorer</title>',
+                                    '<title>' + project_label + ' · Memory Explorer · EvoMneme</title>')
+                html = html.replace('class="subtitle">MEMORY EXPLORER</span>',
+                                    'class="subtitle">' + project_label + ' · MEMORY EXPLORER</span>')
+                data = html.encode('utf-8')
+            self.respond(200, data, mime)
 
         def do_POST(self):
             if not self.allowed() or not secrets.compare_digest(self.headers.get('X-Viewer-Token', '').encode('utf-8'), token.encode('utf-8')):

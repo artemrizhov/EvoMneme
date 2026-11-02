@@ -2,6 +2,14 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Identify the project in Memory Explorer
+
+Identical viewer headings made multiple project tabs hard to distinguish. The
+local server now prefixes Memory Explorer in the header and browser title with
+the project directory name for `.evomneme` stores, or the database filename stem
+elsewhere. Names are HTML-escaped and available before graph loading. HTTP
+regression coverage checks both path conventions, Unicode and escaped text.
+
 ## 2026-11-02 — Reduce node crowding
 
 User feedback found nodes too large relative to their placement density even
