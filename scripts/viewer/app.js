@@ -503,9 +503,15 @@ function zoomLength(value,minimum,maximum,scaleWithElements=false) {
     return Math.max(minimum,Math.min(maximum*scale,base*zoom*scale))/zoom;
   };
 }
+function textPixels(element) {
+  const maximum=14*state.elementScale,start=.8*maximum,width=maximum-start;
+  const raw=(element.isNode()?5:4.5)*element.cy().zoom()*state.elementScale;
+  // Match linear growth at the knee, then reduce its slope to zero at the cap.
+  const distance=Math.max(0,Math.min(2*width,raw-start));
+  return Math.max(2,Math.min(maximum,raw<=start?raw:start+distance-distance*distance/(4*width)));
+}
 function zoomTextOpacity(element) {
-  const pixels=Math.max(2,Math.min(14*state.elementScale,
-    (element.isNode()?5:4.5)*element.cy().zoom()*state.elementScale));
+  const pixels=textPixels(element);
   const progress=Math.max(0,Math.min(1,(pixels-3)/4));
   return progress*progress*(3-2*progress);
 }
@@ -516,8 +522,8 @@ const normalNodeBorder=zoomLength(1,.5,1.5),originalHighlightBorder=zoomLength(5
 const nodeBorder=element=>normalNodeBorder(element)*(element.cy().scratch('memory-model-dimensions')?1:.5);
 const highlightBorder=element=>originalHighlightBorder(element)*(element.cy().scratch('memory-model-dimensions')?1:.5);
 const highlightLine=zoomLength(4,.8,3);
-const nodeFont=zoomLength(element=>element.cy().scratch('memory-model-dimensions')?10:5,2,14,true);
-const edgeFont=zoomLength(element=>element.cy().scratch('memory-model-dimensions')?9:4.5,2,14,true);
+const nodeFont=element=>element.cy().scratch('memory-model-dimensions')?10:textPixels(element)/element.cy().zoom();
+const edgeFont=element=>element.cy().scratch('memory-model-dimensions')?9:textPixels(element)/element.cy().zoom();
 const normalLine=zoomLength(1.3,.6,2);
 function zoomArrowScale(element) {
   const width=element.is('edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected')

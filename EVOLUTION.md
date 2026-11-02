@@ -2,6 +2,30 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Ease text growth into its maximum
+
+The user found the hard font ceiling too abrupt. Label sizes now grow linearly
+to 80% of their current maximum, then a quadratic transition reduces the growth
+rate continuously from one to zero, reaching the same ceiling at 120% of the
+nominal uncapped size. Extending that input range allows both smooth joins and
+an unchanged ceiling. Opacity reads the same smoothed size, preserving the 3–7
+pixel fade contract even for small element-size presets. Model dimensions and
+node sizes are unchanged. Shipped Cytoscape regression coverage checks both
+font types, all presets, monotonic growth, continuous join slopes and limits.
+
+## 2026-11-02 — Flash new graph accesses without enabling accumulation
+
+Previously, access colors required recording or selecting loaded history. New
+accesses now show a yellow read / green change halo with a 100 ms attack and
+5 second accelerating quadratic fade, restarting from current brightness on
+repeat access. A shared frame loop visits only active IDs and stops when idle.
+Initial/older history and duplicate polls do not replay flashes. Accumulated
+and selected colors use independent 100 ms transitions; recorded colors stay
+on. Stroke widths remain immediate to preserve zoom-dependent arrow sizing.
+Synthetic regressions check timing, colors, repeated access, off-page expiry,
+cleanup, ingestion and existing zoom behavior. Configured Chrome inspection
+was blocked by a browser-profile conflict; visual/GPU verification is pending.
+
 ## 2026-11-02 — Keep smaller labels visible longer
 
 User tuning lowers the label fade interval from 10–7 to 7–3 CSS pixels. Text

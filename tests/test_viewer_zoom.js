@@ -38,6 +38,14 @@ function zoom(value) {
 }
 const rendered=(element,property)=>element.numericStyle(property)*cy.zoom();
 const near=(actual,expected)=>assert.ok(Math.abs(actual-expected)<1e-5,`${actual} != ${expected}`);
+function atFont(pixels) {
+  let low=cy.minZoom(),high=cy.maxZoom();
+  for(let i=0;i<50;i++) {
+    const middle=(low+high)/2;zoom(middle);
+    if(rendered(node,'font-size')<pixels)low=middle;else high=middle;
+  }
+  zoom(high);near(rendered(node,'font-size'),pixels);
+}
 // Reproduce the actual GPU contract: alpha is baked by setupTextStyle, but
 // Cytoscape's labelStyleKey stays unchanged when text-opacity alone changes.
 vm.runInContext(source.slice(source.indexOf('function fixGpuLabelOpacity('),source.indexOf('function replaceRenderer(')),context);
@@ -168,9 +176,28 @@ for(const percent of choices) {
   zoom(5);near(node.renderedWidth(),18*factor);near(rendered(node,'font-size'),14*factor);
   const fade=Math.max(0,Math.min(1,(14*factor-3)/4));
   near(node.numericStyle('text-opacity'),fade*fade*(3-2*fade));
-  zoom(3/(5*factor));near(node.numericStyle('text-opacity'),0);
-  if(percent>=40){zoom(5/(5*factor));near(node.numericStyle('text-opacity'),.5);}
-  if(percent>=50){zoom(7/(5*factor));near(node.numericStyle('text-opacity'),1);}
+  atFont(3);near(node.numericStyle('text-opacity'),0);
+  if(percent>=40){atFont(5);near(node.numericStyle('text-opacity'),.5);}
+  if(percent>=50){atFont(7);near(node.numericStyle('text-opacity'),1);}
+  zoom(2.24);near(rendered(node,'font-size'),11.2*factor);
+  zoom(2.8);near(rendered(node,'font-size'),13.3*factor);
+  zoom(3.36);near(rendered(node,'font-size'),14*factor);
+  zoom(14/4.5);near(rendered(edge,'font-size'),13.3*factor);
+  let previous=0,previousSlope=Infinity;
+  for(let i=0;i<=40;i++) {
+    const z=2.24+i*.04;zoom(z);
+    const value=rendered(node,'font-size');
+    assert.ok(value>=previous-1e-5&&value<=14*factor+1e-5);
+    if(i>0){const slope=(value-previous)/.04;assert.ok(slope<=previousSlope+1e-5);previousSlope=slope;}
+    previous=value;
+  }
+  const step=.00001;
+  for(const point of [2.24,3.36]) {
+    zoom(point-step);const left=rendered(node,'font-size');
+    zoom(point);const center=rendered(node,'font-size');
+    zoom(point+step);const right=rendered(node,'font-size');
+    assert.ok(Math.abs((center-left)/step-(right-center)/step)<.001,'Font growth must join smoothly');
+  }
 }
 assert.equal(vm.runInContext('setElementScale(99)',context),false);
 preferences=JSON.stringify({elementScale:150});vm.runInContext('restoreVisualPreferences()',context);
