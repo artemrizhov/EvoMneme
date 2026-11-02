@@ -1,4 +1,4 @@
-/* Viewport-aware layout using only the bundled Cytoscape core. */
+/* Viewport-aware layout with bundled Cytoscape and spatial force placement. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.MemoryGraphLayout = factory();
@@ -16,6 +16,20 @@
   }
 
   function runForce(cy,options) {
+    const nodes=options.eles.nodes();
+    // Core CoSE has no spatial approximation option: each iteration visits
+    // every pair, and its constructor scans the nodes for every edge. Keep its
+    // compound-graph semantics; use a quadtree for large ordinary graphs.
+    if(nodes.length>800 && !cy.hasCompoundNodes()) {
+      const regions=connectedRegions(options.eles);
+      for(const region of regions) {
+        if(region.nodes().length>800)spatialForce(region,options);
+        else if(region.nodes().length>1)runForce(cy,{...options,eles:region});
+      }
+      const changed=new Set(nodes.map(n=>n.id()));
+      separateRegions(regions,changed,null,{width:options.width || cy.width(),height:options.height || cy.height()});
+      return true;
+    }
     const solver=cy.layout(options);
     // The bundled CoSE calls components() during initialization. Its general
     // collection traversal is expensive on large connected graphs, independently
@@ -24,6 +38,113 @@
     const components=connectedRegions(solver.options.eles);
     solver.options.eles.components=()=>components;
     solver.run();
+  }
+
+  // Barnes-Hut uses exact springs for every edge and approximates only distant
+  // repulsion. All nodes participate in every iteration, including locked
+  // anchors. Label-aware separation below resolves the final local geometry.
+  function spatialForce(elements,options) {
+    const items=boxes(elements.nodes()),count=items.length;
+    const index=new Map(items.map((b,i)=>[b.node.id(),i]));
+    const edges=elements.edges().map(e=>[index.get(e.data('source')),index.get(e.data('target')),
+      typeof options.idealEdgeLength==='function'?options.idealEdgeLength(e):options.idealEdgeLength || 120]);
+    const x=Float64Array.from(items,b=>b.x),y=Float64Array.from(items,b=>b.y);
+    const fx=new Float64Array(count),fy=new Float64Array(count);
+    const order=Int32Array.from(items,(_,i)=>i),rank=new Int32Array(count);
+    const repulsion=Float64Array.from(items,b=>typeof options.nodeRepulsion==='function'
+      ?options.nodeRepulsion(b.node):options.nodeRepulsion || 6500);
+    const center={x:x.reduce((s,v)=>s+v,0)/count,y:y.reduce((s,v)=>s+v,0)/count};
+    // Stable jitter prevents a coincident input from producing a deep, dense
+    // leaf or an axis-aligned escape. It never changes a locked coordinate.
+    const occupied=new Set();
+    for(let i=0;i<count;i++) {
+      const key=x[i]+','+y[i];
+      if(occupied.has(key) && !items[i].locked) {
+        const d=directionFor(items[i].node.id());x[i]+=d.x*20;y[i]+=d.y*20;
+      }
+      occupied.add(key);
+    }
+    let temperature=options.initialTemp || 200;
+    const cells=[],stack=[];
+    function partition(start,end,test) {
+      let left=start,right=end-1;
+      while(left<=right) {
+        if(test(order[left]))left++;
+        else {const v=order[left];order[left]=order[right];order[right--]=v;}
+      }
+      return left;
+    }
+    function build(start,end,left,top,size,depth) {
+      const cell={start,end,size,mass:end-start,x:0,y:0,repulsion:0,children:null};
+      const id=cells.length;cells.push(cell);
+      for(let k=start;k<end;k++) {
+        const i=order[k];cell.x+=x[i];cell.y+=y[i];cell.repulsion+=repulsion[i];
+      }
+      cell.x/=cell.mass;cell.y/=cell.mass;
+      if(end-start>1 && depth<24 && size>.001) {
+        const half=size/2,middle=partition(start,end,i=>x[i]<left+half);
+        const a=partition(start,middle,i=>y[i]<top+half),b=partition(middle,end,i=>y[i]<top+half);
+        cell.children=[];
+        for(const [lo,hi,cx,cy] of [[start,a,left,top],[a,middle,left,top+half],
+          [middle,b,left+half,top],[b,end,left+half,top+half]])
+          if(hi>lo)cell.children.push(build(lo,hi,cx,cy,half,depth+1));
+      }
+      return id;
+    }
+    for(let iteration=0;iteration<(options.numIter || 350) && temperature>=(options.minTemp || 1);iteration++) {
+      let left=Infinity,right=-Infinity,top=Infinity,bottom=-Infinity;
+      for(let i=0;i<count;i++) {
+        left=Math.min(left,x[i]);right=Math.max(right,x[i]);top=Math.min(top,y[i]);bottom=Math.max(bottom,y[i]);
+      }
+      cells.length=0;build(0,count,left,top,Math.max(right-left,bottom-top,1)*1.00001,0);
+      for(let k=0;k<count;k++)rank[order[k]]=k;
+      fx.fill(0);fy.fill(0);
+      for(let i=0;i<count;i++) {
+        if(items[i].locked)continue;
+        stack.length=0;stack.push(0);
+        while(stack.length) {
+          const cell=cells[stack.pop()],dx=x[i]-cell.x,dy=y[i]-cell.y,d2=dx*dx+dy*dy;
+          if(cell.children) {
+            // Never approximate a cell containing the current body: otherwise
+            // its own mass creates an erroneous outward force.
+            if((rank[i]<cell.start || rank[i]>=cell.end) && cell.size*cell.size<.64*d2) {
+              const force=(repulsion[i]*cell.mass+cell.repulsion)/Math.max(d2,1);
+              const scale=force/Math.sqrt(Math.max(d2,1));fx[i]+=dx*scale;fy[i]+=dy*scale;
+            } else for(const child of cell.children)stack.push(child);
+          } else for(let k=cell.start;k<cell.end;k++) {
+            const j=order[k];if(i===j)continue;
+            let dx=x[i]-x[j],dy=y[i]-y[j],distance=Math.hypot(dx,dy);
+            if(distance<.001) {
+              const d=directionFor(items[i].node.id()+'|'+items[j].node.id());dx=d.x;dy=d.y;distance=1;
+            }
+            const a=items[i],b=items[j],overlapX=(a.w+b.w)/2+16-Math.abs(dx),overlapY=(a.h+b.h)/2+16-Math.abs(dy);
+            const force=overlapX>0 && overlapY>0?24*Math.min(overlapX,overlapY)
+              :(repulsion[i]+repulsion[j])/Math.max(distance*distance,1);
+            fx[i]+=dx/distance*force;fy[i]+=dy/distance*force;
+          }
+        }
+      }
+      for(const [a,b,ideal] of edges) {
+        const dx=x[b]-x[a],dy=y[b]-y[a],distance=Math.hypot(dx,dy);
+        if(!distance)continue;
+        const clearance=(Math.max(items[a].w,items[a].h)+Math.max(items[b].w,items[b].h))/2;
+        const stretch=distance-ideal-clearance;
+        // Hooke springs avoid letting a few very long hub edges dominate every
+        // shorter local edge throughout the temperature-limited simulation.
+        const force=stretch*.2,ex=force*dx/distance,ey=force*dy/distance;
+        fx[a]+=ex;fy[a]+=ey;fx[b]-=ex;fy[b]-=ey;
+      }
+      for(let i=0;i<count;i++) {
+        if(items[i].locked)continue;
+        const dx=center.x-x[i],dy=center.y-y[i],distance=Math.hypot(dx,dy);
+        if(distance>1){fx[i]+=.2*dx/distance;fy[i]+=.2*dy/distance;}
+        const length=Math.hypot(fx[i],fy[i]),scale=length>temperature?temperature/length:1;
+        x[i]+=fx[i]*scale;y[i]+=fy[i]*scale;
+      }
+      temperature*=options.coolingFactor || .99;
+    }
+    elements.nodes().positions(n=>{const i=index.get(n.id());return {x:x[i],y:y[i]};});
+    separate(elements.nodes());
   }
 
   function directionFor(key) {
@@ -334,7 +455,7 @@
       if(options.fit!==false)fitViewport(cy,elements);
       return;
     }
-    // Let Cytoscape place the complete visible graph, including components.
+    // Place the complete visible graph, including disconnected components.
     // Automatic updates must not rotate or repack its result afterwards.
     if (options.overview || nodes.length>10000) {
       // Full stores can contain tens of thousands of symbols. Keep this overview
@@ -360,7 +481,7 @@
             h:Math.max(height,Math.ceil(nodes.length/cols)*110)}:common.boundingBox,
           avoidOverlapPadding:28,condense:true}).run();
       }
-      const settings={...common,name:options.name || 'cose',randomize:false,
+      const settings={...common,name:options.name || 'cose',randomize:false,width,height,
         nodeRepulsion:()=>6500,nodeOverlap:24,idealEdgeLength:()=>120,
         componentSpacing:100,gravity:.2,numIter:350,minNodeSpacing:28,
         ...(nodes.length>800?{initialTemp:200,coolingFactor:.99}:{}),
@@ -382,7 +503,7 @@
     },options);
   }
 
-  // Native solvers handle the interiors; component bounds are used only to
+  // Force solvers handle the interiors; component bounds are used only to
   // make room for changed regions without repacking unaffected regions.
   function connectedRegions(elements) {
     const nodes=new Map(elements.nodes().map(n=>[n.id(),n]));
@@ -560,12 +681,12 @@
         // Allow the entire connected structure to settle. Artificially locking
         // its outer nodes or clipping every step prevents new links from forming
         // a coherent layout after the nodes were initially unconnected.
-        runForce(cy,{name:'cose',eles:region,animate:false,fit:false,randomize:false,
+        const separated=runForce(cy,{name:'cose',eles:region,animate:false,fit:false,randomize:false,width:options.width,height:options.height,
           nodeDimensionsIncludeLabels:true,nodeRepulsion:()=>6500,nodeOverlap:24,
           idealEdgeLength:()=>120,componentSpacing:100,gravity:.2,
           numIter:350,initialTemp:200,minTemp:1,coolingFactor:.99});
         // Existing members need room too when a component grows or reconnects.
-        separate(members);
+        if(!separated)separate(members);
         if(!members.some(n=>n.locked())) {
           const destination=reference.reduce((s,n)=>{
             const p=n.position();return {x:s.x+p.x/reference.length,y:s.y+p.y/reference.length};

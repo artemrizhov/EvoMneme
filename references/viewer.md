@@ -141,3 +141,26 @@ Use **Restore page** or Escape to return. This mode preserves the loaded graph,
 filters and replay state, and also works in the public demo. Existing resize
 behavior applies: following fits the graph to the available space, while a
 manual view with following disabled retains its pan and zoom.
+
+### Large graph layout and zoom cost
+
+For **Force directed** above 800 loaded nodes, enable **Experimental background
+layout** to calculate positions without blocking the page. With it disabled,
+the main thread uses the quick grid overview; **Rearrange** then rebuilds that
+same grid. Disabling background layout terminates an outstanding calculation.
+The status reports elapsed time, not a percentage or a predicted completion time.
+
+Large flat connected regions use spatially approximated repulsion and exact
+relationship springs, retaining all nodes, relationships and 350 iterations.
+Small regions and compound graphs keep the bundled CoSE solver. Locked positions,
+label-aware collision separation and component placement remain in effect.
+This changes the exact positions of large force layouts; it does not change the
+stored graph. Graphs above 10,000 visible nodes still use the grid overview.
+Synthetic completion measurements are examples, not a deadline for every topology.
+
+Above 2,000 loaded elements (nodes plus relationships), screen-size styles refresh
+once zoom has been idle for 150 ms. During a wheel gesture or animated camera move,
+the renderer scales the existing styles; the normal size limits and label fading
+are restored after the camera settles. Smaller graphs retain per-frame updates.
+This avoids repeatedly rebuilding all geometry and label caches during motion;
+the final style refresh and rendering can still pause on a very large graph.

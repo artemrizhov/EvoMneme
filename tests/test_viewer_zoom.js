@@ -6,6 +6,7 @@ const cytoscape=require('../scripts/viewer/vendor/cytoscape.min.js');
 const layout=require('../scripts/viewer/graph-layout.js');
 const source=fs.readFileSync(require.resolve('../scripts/viewer/app.js'),'utf8');
 const frames=[];
+const timers=new Map();let timerId=0;
 const state={elementScale:1,acceleration:false,workerLayoutEnabled:false};
 const scaleControl={value:'100'};
 let preferences=null;
@@ -14,6 +15,8 @@ const context=vm.createContext({
   $:id=>id==='elementScale'?scaleControl:null,
   localStorage:{getItem:()=>preferences,setItem:(_key,value)=>{preferences=value;}},
   requestAnimationFrame:callback=>{frames.push(callback);return frames.length;},
+  setTimeout:callback=>{timers.set(++timerId,callback);return timerId;},
+  clearTimeout:id=>timers.delete(id),
   cytoscape:options=>cytoscape({...options,container:undefined,headless:true,styleEnabled:true})
 });
 const start=source.indexOf('const elementScales=');
@@ -228,5 +231,26 @@ near(state.elementScale,1.5);
 context.localStorage={getItem(){throw new Error('blocked');},setItem(){throw new Error('blocked');}};
 assert.equal(vm.runInContext('setElementScale(100)',context),true);
 vm.runInContext('restoreVisualPreferences()',context);near(state.elementScale,1);
+// A large graph must not rebuild style/geometry caches on each wheel frame.
+cy.add(Array.from({length:2001},(_,i)=>({data:{id:'zoom-perf-'+i,size:20,color:'#79b8e8',displayLabel:''}})));
+while(frames.length)frames.shift()();
+let styled=0;cy.on('style',()=>styled++);
+for(const z of [.1,.2,.3,.4,.5])zoom(z);
+assert.equal(styled,0,'large graph keeps native camera motion free of repeated style invalidations');
+assert.equal(timers.size,1,'only the latest settled zoom should be pending');
+for(const [id,callback] of timers){timers.delete(id);callback();}
+while(frames.length)frames.shift()();
+assert.ok(styled>0,'settled camera refreshes the screen-size clamps');
+near(node.renderedWidth(),Math.max(1.5,14*.325*.5));
+near(rendered(node,'font-size'),2.5);
+zoom(.2);
+assert.equal(timers.size,1);
+cy.nodes('[id ^= "zoom-perf-"]').remove();
+styled=0;zoom(.3);
+assert.equal(timers.size,0,'shrinking the graph cancels the large-graph timer');
+assert.ok(styled>0,'small graphs resume frame-by-frame styling');
+cy.add(Array.from({length:2001},(_,i)=>({data:{id:'zoom-destroy-'+i,size:20,color:'#79b8e8',displayLabel:''}})));
+zoom(.4);assert.equal(timers.size,1);
 cy.destroy();
+assert.equal(timers.size,0,'destroy cancels a pending settled-zoom update');
 console.log('Graph zoom: bounded screen sizes, smooth label fade, highlights, new nodes and camera spacing passed.');

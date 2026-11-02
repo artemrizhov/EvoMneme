@@ -458,3 +458,44 @@ The previous ban on redundant documentation could discourage agents from retaini
 The new documentation guide uses existing graph fields for document/section nodes, meaningful relationships and evidence. It covers partial reading, exact terms, source anchors, retrieval and reconciliation after document or implementation changes. Integration, architecture and full-population guidance use the same rules. Whole-document dumping and automatic unrelated indexing remain outside ordinary maintenance; no schema or runtime change is needed.
 
 Validation: instruction/reference review and Git whitespace checks cover this documentation-only change. The standard skill validator could not start because the existing Python environment lacks PyYAML; that check remains unperformed. No dependency was installed, and no runtime behavior or measured retrieval improvement is claimed.
+
+## 2026-11-03 — Scalable background layout and settled zoom styling
+
+A several-thousand-node graph could spend minutes computing its force layout,
+while repeated whole-graph style updates made zooming stall. The bundled CoSE
+repulsion visits every node pair and offers no spatial approximation option.
+Reducing large graphs to one iteration had previously left them close to the
+initial grid; restoring 350 iterations exposed that quadratic cost.
+
+Large flat connected regions now use an in-project Barnes–Hut force calculation
+with exact relationship springs and the full 350 iterations. Small regions and
+compound graphs retain CoSE. No library, served asset, database schema or graph
+truncation was added. Existing worker cancellation, locked nodes, component
+placement and label-aware collision handling remain part of the layout path.
+
+For more than 2,000 loaded elements, zoom now postpones the full style refresh
+until 150 ms of camera inactivity. Native camera motion uses the existing styles
+in the meantime; the normal screen clamps and fading return at rest. This accepts
+temporary scaling of text and strokes during motion rather than repeatedly
+invalidating every geometry and label cache. The final refresh still costs work.
+
+Local synthetic measurements: one native CoSE iteration on a 6,000-node tree took
+8.3 seconds. The completed new worker calculation on a 6,000-node tree with hub
+links took 15.1 seconds for 350 iterations; median edge length fell from 5,165 to
+261 model units. These are different iteration budgets/topologies, not an exact
+speedup ratio. In Chrome on 6,000 nodes and 8,997 relationships, the same 20-step
+zoom sequence took 43.95 seconds with the old listener and 1.66 seconds with the
+settled listener. Style notifications during the gesture fell from 299,970 to
+zero, followed by one final graph refresh. Timings are machine-specific;
+topology, labels and rendering mode still affect responsiveness.
+
+Validation: the 30-test viewer integration suite and the separate zoom regression
+passed, including actual large-worker completion, locks, disconnected/degenerate
+layouts, label overlap, cancellation, retries and HTTP assets. The final Chrome
+worker check retained 6,000 nodes and 6,351 relationships with finite coordinates
+and completed in 17.6 seconds while a 50 ms UI timer advanced 325 times. There were
+no console warnings/errors. Independent review passed. Local HTTP tests initially
+hit sandbox socket restrictions; the same commands passed outside the sandbox.
+Only synthetic fixtures were used, not a private host database. Large compound
+graphs still use quadratic CoSE, and no universal timing or visual-quality bound
+is claimed.

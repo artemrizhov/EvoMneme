@@ -585,14 +585,29 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
         opacity:el=>.65+.35*el.scratch('accessFlash').opacity/.85,'transition-property':'none'}}
   ]});
 cy.scratch('memory-zoom-dimensions',true);
-// Coalesce wheel/animated zoom events; style functions also apply to new elements.
-let zoomStyleFrame=null;
+// Small graphs can refresh their screen clamps each frame. On a large graph,
+// restyling every wheel/animation frame repeatedly invalidates all geometry and
+// label caches. Let the native renderer move the camera, then refresh once at
+// the settled zoom. Newly added elements still evaluate the style functions.
+let zoomStyleFrame=null,zoomStyleTimer=null;
 cy.on('zoom',()=>{
-  if(zoomStyleFrame!==null)return;
+  if(zoomStyleTimer!==null)clearTimeout(zoomStyleTimer);
+  zoomStyleTimer=null;
+  if(cy.elements().length>2000) {
+    zoomStyleTimer=setTimeout(()=>{zoomStyleTimer=null;queueZoomStyle();},150);
+  } else queueZoomStyle();
+});
+function queueZoomStyle() {
+  if(zoomStyleFrame!==null || cy.destroyed())return;
   const schedule=typeof requestAnimationFrame==='function'?requestAnimationFrame:callback=>setTimeout(callback,0);
   zoomStyleFrame=schedule(()=>{
-    zoomStyleFrame=null;cy.elements().updateStyle();
+    zoomStyleFrame=null;
+    if(!cy.destroyed() && zoomStyleTimer===null)cy.elements().updateStyle();
   });
+}
+cy.on('destroy',()=>{
+  if(zoomStyleTimer!==null)clearTimeout(zoomStyleTimer);
+  zoomStyleTimer=null;
 });
 const backgroundLayout=MemoryGraphLayout.createWorkerLayout(()=>new Worker('layout-worker.js'));
 function fixGpuLabelOpacity(renderer) {

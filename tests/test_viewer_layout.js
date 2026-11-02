@@ -68,6 +68,41 @@ try {
   assertSeparated(large);
 } finally {large.destroy();}
 
+const dense=graph();
+try {
+  const elements=[];
+  for(let i=0;i<850;i++) {
+    elements.push({data:{id:'dense'+i,label:'Long architecture title '+i},position:{x:0,y:0},locked:i===0});
+    if(i)elements.push({data:{id:'dense-edge'+i,source:'dense'+Math.floor((i-1)/3),target:'dense'+i}});
+  }
+  elements.push({data:{id:'island',label:'Unrelated locked island'},position:{x:-10000,y:10000},locked:true});
+  elements.push({data:{id:'small-a',label:'Small component'},position:{x:0,y:0}},
+    {data:{id:'small-b',label:'Small component'},position:{x:0,y:0}},
+    {data:{id:'small-edge',source:'small-a',target:'small-b'}});
+  dense.add(elements);
+  graphLayout.arrange(dense,{name:'cose',width:1200,height:400,fit:false});
+  assert.deepEqual(dense.$id('dense0').position(),{x:0,y:0},'Spatial force must preserve an internal locked anchor');
+  assert.deepEqual(dense.$id('island').position(),{x:-10000,y:10000},'Packing must preserve a disconnected locked island');
+  assert.equal(dense.nodes().length,853);assert.equal(dense.edges().length,850);
+  assertSeparated(dense);
+  const island={...dense.$id('island').position()};
+  graphLayout.arrange(dense,{name:'cose',incremental:true,affected:['dense1'],width:1200,height:400,fit:false});
+  assert.deepEqual(dense.$id('island').position(),island,'An incremental large solver must preserve unrelated components');
+  assert.deepEqual(dense.$id('dense0').position(),{x:0,y:0});
+  assertSeparated(dense);
+} finally {dense.destroy();}
+
+const compound=graph();
+try {
+  compound.add([{data:{id:'parent',label:'Parent'}},...Array.from({length:801},(_,i)=>({data:{id:'child'+i,parent:'parent',label:'Child'}}))]);
+  let native=false;
+  const original=compound.layout;
+  compound.layout=options=>{native=true;assert.equal(options.numIter,350);return {options,run(){}};};
+  try {graphLayout.arrange(compound,{name:'cose',fit:false});}
+  finally {compound.layout=original;}
+  assert.equal(native,true,'Compound graphs must retain native CoSE semantics');
+} finally {compound.destroy();}
+
 // Exercise the actual bundled Cytoscape animation engine, including its own
 // timing loop. The viewer must never schedule an additional animation loop.
 async function checkNativeAnimation() {

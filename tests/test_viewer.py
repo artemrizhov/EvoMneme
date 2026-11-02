@@ -106,7 +106,8 @@ class ViewerTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('node'), 'Background layout regression needs an existing Node.js')
     def test_background_layout_worker(self):
-        result = subprocess.run([shutil.which('node'),str(ROOT/'tests/test_viewer_worker.js')],capture_output=True,timeout=30)
+        # The real 6000-node worker has its own 60-second completion budget.
+        result = subprocess.run([shutil.which('node'),str(ROOT/'tests/test_viewer_worker.js')],capture_output=True,timeout=90)
         self.assertEqual(result.returncode,0,result.stderr.decode('utf-8','replace'))
 
     def setUp(self):

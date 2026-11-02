@@ -5,19 +5,21 @@ const {Worker}=require('node:worker_threads');
 const path=require('node:path');
 const fs=require('node:fs');
 const vm=require('node:vm');
+const {performance}=require('node:perf_hooks');
 const cytoscape=require('../scripts/viewer/vendor/cytoscape.min.js');
 const layout=require('../scripts/viewer/graph-layout.js');
 const directory=path.resolve(__dirname,'../scripts/viewer');
 const bootstrap=`
   const {parentPort,workerData}=require('node:worker_threads');
-  const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
-  const sandbox={console,setTimeout,clearTimeout};
-  sandbox.self=sandbox;
-  sandbox.postMessage=data=>parentPort.postMessage(data);
-  const context=vm.createContext(sandbox);
-  sandbox.importScripts=(...names)=>names.forEach(name=>vm.runInContext(fs.readFileSync(path.join(workerData,name==='cytoscape.min.js'?'vendor/cytoscape.min.js':name),'utf8'),context));
-  vm.runInContext(fs.readFileSync(path.join(workerData,'layout-worker.js'),'utf8'),context);
-  parentPort.on('message',data=>{sandbox.messageJSON=JSON.stringify(data);vm.runInContext('self.onmessage({data:JSON.parse(messageJSON)})',context);});
+  const fs=require('node:fs'),path=require('node:path');
+  // The worker thread already supplies isolation. A second VM context makes
+  // tight loops benchmark proxied global access, unlike a browser worker.
+  globalThis.self=globalThis;
+  globalThis.postMessage=data=>parentPort.postMessage(data);
+  const load=name=>new Function('module','exports',fs.readFileSync(path.join(workerData,name),'utf8'))(undefined,undefined);
+  globalThis.importScripts=(...names)=>names.forEach(name=>load(name==='cytoscape.min.js'?'vendor/cytoscape.min.js':name));
+  load('layout-worker.js');
+  parentPort.on('message',data=>self.onmessage({data}));
 `;
 function realWorker() {
   const thread=new Worker(bootstrap,{eval:true,workerData:directory});
@@ -144,35 +146,54 @@ async function main() {
   const largeElements=[];
   for(let i=0;i<6000;i++) {
     largeElements.push({data:{id:'large'+i},position:{x:(i%80)*180,y:Math.floor(i/80)*110}});
-    if(i)largeElements.push({data:{id:'large-edge'+i,source:'large'+(i-1),target:'large'+i}});
+    // Clustered ternary tree plus hub links exercises long springs, degree
+    // imbalance and every endpoint without shipping a private project graph.
+    if(i)largeElements.push({data:{id:'large-edge'+i,source:'large'+Math.floor((i-1)/3),target:'large'+i}});
+    if(i>1 && i%17===0)largeElements.push({data:{id:'hub-edge'+i,source:'large0',target:'large'+i}});
   }
   const large=cytoscape({headless:true,styleEnabled:true,layout:{name:'preset'},elements:largeElements});
-  const largeController=layout.createWorkerLayout(realWorker);
+  const largeController=layout.createWorkerLayout(realWorker,60000);
   try {
     const pending=largeController.arrange(large,{name:'cose',seed:false,width:1200,height:400,fit:false});
     await new Promise(resolve=>setTimeout(resolve,100));
     largeController.cancel();
     assert.equal(await pending,false,'A full large-component calculation must remain cancellable without awaiting completion');
-    assert.equal(large.nodes().length,6000);assert.equal(large.edges().length,5999);
+    assert.equal(large.nodes().length,6000);assert.equal(large.edges().length,6351);
     for(const n of large.nodes())assert.ok(Number.isFinite(n.position('x')) && Number.isFinite(n.position('y')));
     const bounds=large.nodes().boundingBox();
     assert.ok(bounds.w>1200 || bounds.h>400,'Cancelling a full calculation must preserve the displayed geometry');
+    const before=new Map(large.nodes().map(n=>[n.id(),{...n.position()}]));
+    const medianEdge=()=>{
+      const lengths=large.edges().map(e=>{const a=e.source().position(),b=e.target().position();return Math.hypot(a.x-b.x,a.y-b.y);}).sort((a,b)=>a-b);
+      return lengths[lengths.length>>1];
+    };
+    const initialMedian=medianEdge(),started=performance.now();
+    assert.equal(await largeController.arrange(large,{name:'cose',seed:false,width:1200,height:400,fit:false}),true,
+      'A complete 6000-node force calculation must finish and apply');
+    const elapsed=performance.now()-started,finalMedian=medianEdge();
+    assert.equal(large.nodes().length,6000);assert.equal(large.edges().length,6351);
+    assert.ok(finalMedian<initialMedian*.65,'Real force layout must materially shorten the seeded long edges');
+    assert.ok(large.nodes().filter(n=>Math.hypot(n.position('x')-before.get(n.id()).x,n.position('y')-before.get(n.id()).y)>50).length>5500,
+      'The completed force result must move the whole graph beyond its grid seed');
+    // Verify label/body clearance locally, without making the regression test
+    // itself compare all 18 million node pairs.
+    const boxes=layout.boxes(large.nodes()),cell=Math.max(...boxes.map(b=>Math.max(b.w,b.h))),grid=new Map();
+    for(const b of boxes) {
+      const gx=Math.floor((b.x+b.dx)/cell),gy=Math.floor((b.y+b.dy)/cell);
+      for(let x=gx-1;x<=gx+1;x++)for(let y=gy-1;y<=gy+1;y++)for(const a of grid.get(x+','+y) || [])
+        assert.ok(Math.abs(a.x+a.dx-b.x-b.dx)>=(a.w+b.w)/2 || Math.abs(a.y+a.dy-b.y-b.dy)>=(a.h+b.h)/2,
+          'Completed large force layout must separate all node boxes');
+      const key=gx+','+gy;if(!grid.has(key))grid.set(key,[]);grid.get(key).push(b);
+    }
+    console.log('6000-node real-worker force: '+JSON.stringify({elapsed_ms:Math.round(elapsed),initial_median_edge:initialMedian,final_median_edge:finalMedian}));
     const requested=[];
     const probe=cytoscape({headless:true,styleEnabled:true,elements:[{data:{id:'probe'}}]});
     try {
-      for(const graph of [probe,large]) {
-        const native=graph.layout;
-        graph.layout=options=>{requested.push(options.numIter);return {options,run(){}};};
-        try {layout.arrange(graph,{name:'cose',seed:false,fit:false});}
-        finally {graph.layout=native;}
-      }
+      const native=probe.layout;
+      probe.layout=options=>{requested.push(options.numIter);return {options,run(){}};};
+      try {layout.arrange(probe,{name:'cose',seed:false,fit:false});}
+      finally {probe.layout=native;}
       assert.ok(requested[0]>1,'Force layout must retain a full iteration budget');
-      assert.equal(requested[1],requested[0],'Growing to 6000 nodes must not reduce the iteration count');
-      const native=large.layout;
-      large.layout=options=>{requested.push(options.numIter);return {options,run(){}};};
-      try {layout.arrange(large,{name:'cose',incremental:true,affected:['large0'],fit:false});}
-      finally {large.layout=native;}
-      assert.equal(requested[2],requested[0],'Incremental layout must retain the same full budget');
     } finally {probe.destroy();}
   } finally {largeController.cancel();large.destroy();}
   // Virtual time verifies that a valid long calculation survives the former
