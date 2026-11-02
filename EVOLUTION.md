@@ -2,6 +2,23 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Keep graph zoom readable
+
+Camera zoom previously enlarged nodes, labels and strokes up to fivefold,
+obscuring structure during close inspection. Visual dimensions now compensate
+for camera zoom: node diameters stay within 4–42 CSS pixels and fonts cap at 14.
+Text still shrinks on zoom-out, with smooth opacity loss between 10 and 7 pixels
+instead of an abrupt visibility cutoff. Hovered and selected relationship labels
+follow the same rule; tooltips and the inspector retain full text. Position zoom
+remains independent, so zooming in continues to separate neighboring nodes.
+Viewport texture caching is disabled so an old scaled bitmap cannot temporarily
+override these limits during gestures. Layout and fit measure stable model
+dimensions so screen-size clamps cannot inflate force or collision distances.
+Arrow scaling compensates for Cytoscape's nonlinear model stroke conversion.
+Regression checks use the shipped
+Cytoscape styles to cover limits, fade thresholds, highlights and inserted nodes.
+Browser visual verification is blocked by an occupied DevTools profile.
+
 ## 2026-11-02 — Expand the graph to fill the page
 
 The graph shared space with navigation, side panels and activity history.

@@ -492,8 +492,31 @@ async function countComponents() {
   await graphChunks(edges,edge=>components.set(edge.id(),components.get(edge.data('source'))),'Labeling components');
   state.components=components;state.componentCount=labels.size;
 }
+// Positions keep following camera zoom; visual dimensions stay useful in CSS pixels.
+function zoomLength(value,minimum,maximum) {
+  return element=>{
+    const zoom=element.cy().scratch('memory-model-dimensions')?1:element.cy().zoom();
+    const base=typeof value==='function'?value(element):value;
+    return Math.max(minimum,Math.min(maximum,base*zoom))/zoom;
+  };
+}
+function zoomTextOpacity(element) {
+  const pixels=(element.isNode()?10:9)*element.cy().zoom();
+  const progress=Math.max(0,Math.min(1,(pixels-7)/3));
+  return progress*progress*(3-2*progress);
+}
+const nodeDiameter=zoomLength(element=>element.data('size'),4,42);
+const highlightBorder=zoomLength(5,1,4),highlightLine=zoomLength(4,.8,3);
+const normalLine=zoomLength(1.3,.6,2);
+function zoomArrowScale(element) {
+  const width=element.is('edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected')
+    ?highlightLine(element):normalLine(element);
+  // Cytoscape derives arrow size nonlinearly from model stroke width.
+  const arrowWidth=Math.max(Math.pow(13.37*width,.9),29);
+  return zoomLength(10,6,12)(element)/arrowWidth;
+}
 const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
-  hideEdgesOnViewport:true,textureOnViewport:true,
+  hideEdgesOnViewport:true,textureOnViewport:false,
   style:[
     {selector:'node',style:{'background-color':'data(color)',label:'data(displayLabel)','font-size':10,'min-zoomed-font-size':7,color:'#becde0','text-outline-color':'#101925','text-outline-width':2,'text-valign':'bottom','text-margin-y':7,width:'data(size)',height:'data(size)','border-width':1,'border-color':'#62768c','text-max-width':130,'text-wrap':'ellipsis'}},
     {selector:'edge',style:{width:1.3,'line-color':'data(color)','target-arrow-color':'data(color)','target-arrow-shape':'triangle','curve-style':'data(curve)',opacity:.65,label:'data(displayLabel)','font-size':9,'min-zoomed-font-size':7,color:'#b7c8dc','text-rotation':'autorotate','text-background-color':'#111b2b','text-background-opacity':.9}},
@@ -504,13 +527,32 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
     {selector:'.path',style:{'border-color':'#f0a0ff','border-width':5,'line-color':'#f0a0ff','target-arrow-color':'#f0a0ff',width:4,opacity:1}},
     {selector:'node.path',style:{width:'data(size)',height:'data(size)'}},
     {selector:'.hidden',style:{display:'none'}},
-    {selector:'edge:selected, edge:active, edge.hovered',style:{label:'data(label)','min-zoomed-font-size':0}},
+    {selector:'edge:selected, edge:active, edge.hovered',style:{label:'data(label)'}},
     {selector:'node.replayChanged',style:{'background-color':'#5ee6a8','border-width':6,'border-color':'#d7ffe8'}},
     {selector:'edge.replayChanged',style:{width:5,'line-color':'#5ee6a8','target-arrow-color':'#5ee6a8',opacity:1}},
     {selector:'.replayRemoved',style:{'border-color':'#ff7b87','line-color':'#ff7b87','target-arrow-color':'#ff7b87',opacity:.7,'border-width':5}},
     {selector:'edge.replayRemoved',style:{width:4}},
-    {selector:'node.replayRemoved',style:{'background-color':'#8f3544'}}
+    {selector:'node.replayRemoved',style:{'background-color':'#8f3544'}},
+    {selector:'node',style:{width:nodeDiameter,height:nodeDiameter,'font-size':zoomLength(10,2,14),
+      'border-width':zoomLength(1,.5,1.5),'text-margin-y':zoomLength(7,2,10)}},
+    {selector:'edge',style:{width:normalLine,'font-size':zoomLength(9,2,14),
+      'arrow-scale':zoomArrowScale}},
+    {selector:'node, edge',style:{'min-zoomed-font-size':0,'text-opacity':zoomTextOpacity,
+      'text-outline-width':zoomLength(2,.5,2)}},
+    {selector:'node.touched, node.changed, node.recordedChange, node:selected, node.path, node.replayChanged, node.replayRemoved',
+      style:{'border-width':highlightBorder}},
+    {selector:'edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected',style:{width:highlightLine}}
   ]});
+cy.scratch('memory-zoom-dimensions',true);
+// Coalesce wheel/animated zoom events; style functions also apply to new elements.
+let zoomStyleFrame=null;
+cy.on('zoom',()=>{
+  if(zoomStyleFrame!==null)return;
+  const schedule=typeof requestAnimationFrame==='function'?requestAnimationFrame:callback=>setTimeout(callback,0);
+  zoomStyleFrame=schedule(()=>{
+    zoomStyleFrame=null;cy.elements().updateStyle();
+  });
+});
 const backgroundLayout=MemoryGraphLayout.createWorkerLayout(()=>new Worker('layout-worker.js'));
 function replaceRenderer(accelerated) {
   // Cytoscape's experimental renderer reads the inline background colour when
@@ -519,7 +561,7 @@ function replaceRenderer(accelerated) {
   cy.stopAnimationLoop();
   cy.destroyRenderer();
   cy.initRenderer({name:'canvas',webgl:accelerated,hideEdgesOnViewport:!accelerated,
-    textureOnViewport:!accelerated});
+    textureOnViewport:false});
   cy.startAnimationLoop();cy.style().update();cy.resize();
 }
 function saveVisualPreferences() {

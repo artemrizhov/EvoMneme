@@ -7,6 +7,14 @@
 
   const transitions = new WeakMap();
 
+  // Solve and measure in stable model units, independently of screen-size clamps.
+  function modelDimensions(cy,read) {
+    if(!cy.scratch('memory-zoom-dimensions') || cy.scratch('memory-model-dimensions'))return read();
+    cy.scratch('memory-model-dimensions',true);cy.elements().updateStyle();
+    try {return read();}
+    finally {cy.scratch('memory-model-dimensions',false);cy.elements().updateStyle();}
+  }
+
   function runForce(cy,options) {
     const solver=cy.layout(options);
     // The bundled CoSE calls components() during initialization. Its general
@@ -71,6 +79,11 @@
   // Compute a destination in one batch, restore the displayed frame, and let
   // Cytoscape own interpolation and its renderer animation loop.
   function transition(cy, update, options = {}) {
+    // Style updates are deferred inside a batch: establish model dimensions first.
+    return modelDimensions(cy,()=>transitionMeasured(cy,update,options));
+  }
+
+  function transitionMeasured(cy, update, options) {
     const win=cy.window();
     if (options.animate===false || !win?.requestAnimationFrame ||
         win.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
@@ -158,7 +171,7 @@
   }
 
   function boxes(nodes) {
-    return nodes.map(node => {
+    return modelDimensions(nodes.cy(),()=>nodes.map(node => {
       const p = node.position();
       const bodyWidth = node.outerWidth(), bodyHeight = node.outerHeight();
       const fontSize = parseFloat(node.style('font-size')) || 10;
@@ -173,7 +186,7 @@
       const bottom = Math.max(bodyHeight/2+extraHeight,measured.y2-p.y);
       return {node,x:p.x,y:p.y,dx:(left+right)/2,dy:(top+bottom)/2,
         w:right-left,h:bottom-top,locked:node.locked()};
-    });
+    }));
   }
 
   function vacantPositions(nodes,movable,origin,targets=new Map(),gap=16,viewport={}) {
@@ -304,9 +317,11 @@
 
   function fitViewport(cy, elements, padding = 36) {
     if (!elements.length) return;
+    return modelDimensions(cy,()=>{
     // Fitting a tiny initial graph must not magnify every node several-fold.
     cy.fit(elements,padding);
     if (cy.zoom()>1) {cy.zoom(1);cy.center(elements);}
+    });
   }
 
   function arrangeNow(cy, options = {}) {
@@ -582,13 +597,13 @@
       if(pending)cancel();
       if(!worker)worker=createWorker();
       const targets=options.incremental || options.runLayout===false?targetPositions(cy):null;
-      const id=++serial,elements=layoutElements(cy).map(el=>{
+      const id=++serial,elements=modelDimensions(cy,()=>layoutElements(cy).map(el=>{
         if(el.isEdge())return {group:'edges',data:{id:el.id(),source:el.data('source'),target:el.data('target')}};
         const style={};
         for(const key of ['width','height','border-width','padding','label','font-size','text-valign',
           'text-halign','text-margin-x','text-margin-y','text-max-width','text-wrap'])style[key]=el.style(key);
         return {group:'nodes',data:{id:el.id()},position:{...(targets?.get(el.id()) || el.position())},locked:el.locked(),style};
-      });
+      }));
       const result=await new Promise((resolve,reject)=>{
         const fail=message=>{
           if(!pending || pending.id!==id)return;
