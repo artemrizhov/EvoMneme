@@ -63,6 +63,12 @@ def code_fixture(path):
 
 
 class ViewerTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Access animation regression needs an existing Node.js')
+    def test_access_flashes_and_history_transitions(self):
+        for name in ('test_viewer_flashes.js', 'test_viewer_history.js'):
+            result = subprocess.run([shutil.which('node'), str(ROOT/'tests'/name)], capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', 'replace'))
+
     def test_multiselect_facets_combine_values_and_fields(self):
         result = self.explorer.snapshot({'scope_id': ['main'], 'kind': ['module', 'function'],
                                          'confidence': ['confirmed', 'inferred'], 'whole_graph': True})

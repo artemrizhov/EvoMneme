@@ -11,17 +11,33 @@ function section(start, end) {
   return source.slice(from, to);
 }
 const elements = new Map();
+const flashes=[];
 const state = {history: [], recorded: [], sessions: new Map(), seenChanges: new Set(), seenActivities: new Set(),
   activitiesReady: false, recording: false, recordingSince: Infinity, cursors: {}, journal: {version: 3, enabled: true},
   activityAfter: 10000, activityBefore: 100, activityOlder: true, changeAfter: 50, changeBefore: 10, changeOlder: true};
 const context = vm.createContext({state,
   $(id) { if (!elements.has(id)) elements.set(id, {}); return elements.get(id); },
-  isObservation: event => event.source === 'database_change', updateSessionOptions() {}, renderTimeline() {}, async applyHighlight() {}});
+  isObservation: event => event.source === 'database_change', matches:()=>true,
+  references:event=>event.references || [],accessFlashes:{flash(entries) {flashes.push([...entries]);},refresh() {}},
+  updateSessionOptions() {}, renderTimeline() {}, async applyHighlight() {}});
 vm.runInContext(section('async function ingest(', 'async function pollEvents(') +
   section('async function pollEvents(', 'function renderTimeline('), context);
 const run = code => vm.runInContext(code, context);
 const call = (id, time = id) => ({source: 'sql', activity_id: 'call-' + id, activity_record_id: id, time});
 async function main() {
+  const probe={...call(20000),references:['n:existing','e:new'],changed:['e:new']};
+  context.probe=[probe];
+  await run('ingest(probe,true,false,false)');
+  assert.equal(flashes.at(-1).length,0,'initial history is not a fresh access');
+  context.probe=[{...probe,activity_id:'fresh'}];
+  await run('ingest(probe)');
+  assert.deepEqual(JSON.parse(JSON.stringify(flashes.at(-1))),[['n:existing',false],['e:new',true]],'fresh accesses flash reads and changes');
+  await run('ingest(probe)');
+  assert.equal(flashes.at(-1).length,0,'duplicate polling does not restart a flash');
+  context.probe=[{...probe,activity_id:'older'}];
+  await run('ingest(probe,true,true)');
+  assert.equal(flashes.at(-1).length,0,'older history does not flash');
+  state.history=[];state.seenActivities.clear();
   context.recent = Array.from({length: 10000}, (_, index) => call(index + 1));
   await run('ingest(recent)');
   assert.equal(state.history.length, 10000);

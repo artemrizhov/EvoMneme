@@ -337,6 +337,7 @@ async function openReplay() {
   state.replay={engine,saved,disabled,index:-1,desired:0,playing:false,rendering:false,exiting:false,
     database:data.database,startedAt:data.journal.started_at || engine.events[0]?.time};
   MemoryGraphLayout.stop(cy);
+  accessFlashes.clear();
   $('live').checked=false;$('followGraph').checked=true;state.refreshQueued=state.resetQueued=false;
   state.selectedActivity=state.selectedSession=null;
   state.previous=null;state.filterKey='';
@@ -525,9 +526,20 @@ const highlightLine=zoomLength(4,.8,3);
 const nodeFont=element=>element.cy().scratch('memory-model-dimensions')?10:textPixels(element)/element.cy().zoom();
 const edgeFont=element=>element.cy().scratch('memory-model-dimensions')?9:textPixels(element)/element.cy().zoom();
 const normalLine=zoomLength(1.3,.6,2);
-function zoomArrowScale(element) {
-  const width=element.is('edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected')
+function accessEdgeColor(element) {
+  const flash=element.scratch('accessFlash'),amount=flash.opacity/.85;
+  const from=parseInt(element.data('color').slice(1),16),to=parseInt(flash.color.slice(1),16);
+  return [16,8,0].map(shift=>Math.round(((from>>shift)&255)*(1-amount)+((to>>shift)&255)*amount));
+}
+function accessEdgeWidth(element) {
+  const base=element.is('edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected')
     ?highlightLine(element):normalLine(element);
+  return base+zoomLength(2,.4,1.5)(element)*element.scratch('accessFlash').opacity/.85;
+}
+function zoomArrowScale(element) {
+  const width=element.hasClass('accessEdgeFlash')?accessEdgeWidth(element)
+    :element.is('edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected')
+      ?highlightLine(element):normalLine(element);
   // Cytoscape derives arrow size nonlinearly from model stroke width.
   const arrowWidth=Math.max(Math.pow(13.37*width,.9),29);
   return zoomLength(10,6,12)(element)/arrowWidth;
@@ -550,15 +562,24 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
     {selector:'.replayRemoved',style:{'border-color':'#ff7b87','line-color':'#ff7b87','target-arrow-color':'#ff7b87',opacity:.7,'border-width':5}},
     {selector:'edge.replayRemoved',style:{width:4}},
     {selector:'node.replayRemoved',style:{'background-color':'#8f3544'}},
-    {selector:'node',style:{width:nodeDiameter,height:nodeDiameter,'font-size':nodeFont,
+    {selector:'node',style:{'transition-property':'border-color','transition-duration':'100ms','transition-timing-function':'ease-out',width:nodeDiameter,height:nodeDiameter,'font-size':nodeFont,
       'border-width':nodeBorder,'text-margin-y':zoomLength(7,2,10)}},
-    {selector:'edge',style:{width:normalLine,'font-size':edgeFont,
+    {selector:'edge',style:{'transition-property':'line-color, target-arrow-color, opacity','transition-duration':'100ms','transition-timing-function':'ease-out',width:normalLine,'font-size':edgeFont,
       'arrow-scale':zoomArrowScale}},
     {selector:'node, edge',style:{'min-zoomed-font-size':0,'text-opacity':zoomTextOpacity,
       'text-outline-width':zoomLength(2,.5,2)}},
     {selector:'node.touched, node.changed, node.recordedChange, node:selected, node.path, node.replayChanged, node.replayRemoved',
       style:{'border-width':highlightBorder}},
-    {selector:'edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected',style:{width:highlightLine}}
+    {selector:'edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected',style:{width:highlightLine}},
+    {selector:'.accessFlash',style:{'underlay-color':el=>el.scratch('accessFlash').color,
+      'underlay-opacity':el=>el.scratch('accessFlash').opacity,'underlay-padding':zoomLength(5,3,8),
+      'underlay-shape':'ellipse'}},
+    // WebGL draws node underlays but no edge underlays: animate the actual
+    // line/arrow colors too. Retained/history/path/selection colors take priority.
+    {selector:'edge.accessEdgeFlash',style:{width:accessEdgeWidth}},
+    {selector:'edge.accessColorFlash',
+      style:{'line-color':accessEdgeColor,'target-arrow-color':accessEdgeColor,
+        opacity:el=>.65+.35*el.scratch('accessFlash').opacity/.85,'transition-property':'none'}}
   ]});
 cy.scratch('memory-zoom-dimensions',true);
 // Coalesce wheel/animated zoom events; style functions also apply to new elements.
@@ -1005,7 +1026,7 @@ async function draw(data, resetLayout, key) {
     }
   }
   if (!state.replay) await applyHighlight();
-  if (!state.selectedActivity&&!state.selectedSession) await graphChunks(cy.elements(),el=>{if(state.changes.has(el.id()))el.addClass('changed');},'Marking changes',true);
+  if (!state.replay) accessFlashes.flash([...state.changes].map(id=>[id,true]));
   // A click may arrive during cooperative rendering; use the latest selection
   // rather than the one that existed at the start of this update.
   const selected=state.selected?.id();
@@ -1164,6 +1185,52 @@ function references(event) {
   });
   return ids.filter(Boolean).concat(event.changed || []);
 }
+// One frame loop for active IDs only. Fresh reads restart the attack from the
+// current brightness; the quadratic fade loses brightness faster at its end.
+function createAccessFlashes(graph,clock=()=>performance.now(),frame=requestAnimationFrame) {
+  const active=new Map();let scheduled=false;
+  function opacity(entry,now) {
+    const elapsed=now-entry.started;
+    if(elapsed<100)return entry.from+(1-entry.from)*Math.max(0,elapsed)/100;
+    return Math.max(0,1-Math.pow((elapsed-100)/5000,2));
+  }
+  function schedule() {if(!scheduled&&active.size){scheduled=true;frame(paint);}}
+  function render() {
+    const now=clock();
+    graph.batch(()=>{
+      for(const [id,entry] of active) {
+        const element=graph.getElementById(id),level=opacity(entry,now);
+        if(!level&&now-entry.started>=5100) {
+          element.removeClass('accessFlash accessEdgeFlash accessColorFlash');element.removeScratch('accessFlash');active.delete(id);
+        } else if(element.length) {
+          element.scratch('accessFlash',{opacity:level*.85,color:entry.changed?'#71eab8':'#f7cd71'});
+          const held=element.selected()||['touched','recordedChange','changed','path','replayChanged','replayRemoved'].some(name=>element.hasClass(name));
+          element.toggleClass('accessEdgeFlash',element.isEdge());
+          element.toggleClass('accessColorFlash',element.isEdge()&&!held);
+          if(element.hasClass('accessFlash'))element.updateStyle();else element.addClass('accessFlash');
+        }
+      }
+    });
+  }
+  function paint() {
+    scheduled=false;render();schedule();
+  }
+  return {
+    flash(entries) {
+      const now=clock();
+      for(const [id,changed] of entries) {
+        const previous=active.get(id);
+        active.set(id,{started:now,from:previous?opacity(previous,now):0,changed});
+      }
+      schedule();
+    },
+    refresh:render,
+    clear() {
+      active.clear();graph.elements('.accessFlash').removeClass('accessFlash accessEdgeFlash accessColorFlash').removeScratch('accessFlash');
+    }
+  };
+}
+const accessFlashes=createAccessFlashes(cy);
 async function applyHighlight() {
   const events = state.selectedActivity ? [state.selectedActivity] : state.selectedSession
     ? state.history.filter(event=>matches(event)&&sessionKey(event)===state.selectedSession) : state.recorded.filter(matches);
@@ -1185,6 +1252,7 @@ async function applyHighlight() {
       if(el.hasClass(name)!==enabled)el.toggleClass(name,enabled);
     }
   },'Highlighting graph',true);
+  accessFlashes.refresh();
   $('highlightCount').textContent = `${touched.size} accumulated IDs · ${visibleCount} visible`;
   const selected = state.selectedActivity;
   $('showAccumulated').classList.toggle('hidden',!selected&&!state.selectedSession);
@@ -1244,7 +1312,7 @@ function updateSessionOptions() {
     ? 'Caller metadata comes from recorded calls and attributed changes. Process identities are shown when chat or agent identity was not reported. Unassigned changes remain separate.'
     : 'No caller metadata loaded. Unassigned changes and observations cannot identify a chat or agent.';
 }
-async function ingest(events,highlight=true,older=false) {
+async function ingest(events,highlight=true,older=false,live=true) {
   // Empty Live polls do not change highlights. Avoid restyling every element
   // of a large graph merely to redisplay the same empty activity response.
   if (!events.length) {
@@ -1253,6 +1321,7 @@ async function ingest(events,highlight=true,older=false) {
     return;
   }
   state.activitiesReady=true;
+  const flashes=new Map();
   for (const event of events) {
     if (event.source==='database_change') {
       if (state.seenChanges.has(event.change_id)) continue;
@@ -1271,7 +1340,12 @@ async function ingest(events,highlight=true,older=false) {
     }
     state.history.push(event);
     if (state.recording && event.time >= state.recordingSince) state.recorded.push(event);
+    if(live&&!older&&!state.replay&&matches(event)) {
+      const changed=new Set(event.changed || []);
+      for(const id of references(event))flashes.set(id,changed.has(id)||flashes.get(id)||false);
+    }
   }
+  accessFlashes.flash(flashes);
   if (events.length) state.history.sort((a,b)=>a.time-b.time || (a.change_id || 0)-(b.change_id || 0));
   for (const collection of [state.history,state.recorded]) {
     if (collection.length > 10000) {
@@ -1293,6 +1367,7 @@ async function ingest(events,highlight=true,older=false) {
   else renderTimeline();
 }
 async function pollEvents(older=false) {
+  const live=!older&&state.activityAfter!=null;
   for(let page=0;page<5;page++) {
     const request={cursors:state.cursors,limit:state.activityAfter==null?100:200};
     if(older) {if(state.activityBefore==null)break;request.before_id=state.activityBefore;}
@@ -1303,7 +1378,7 @@ async function pollEvents(older=false) {
       state.activityBefore=data.before_id??null;state.activityOlder=!!data.has_older;
     }
     if(!older)state.activityAfter=data.after_id??state.activityAfter;
-    await ingest(data.events || [],true,older);
+    await ingest(data.events || [],true,older,live);
     $('traceStatus').textContent = (data.storage==='database' || data.enabled ? 'Database call history available' : 'Call history unavailable')
       + (data.has_more ? ' · catching up' : '')
       + (state.missed ? ' · browser history limited to 10,000 loaded activities' : '');
@@ -1323,6 +1398,7 @@ async function pollChanges(older=false) {
   }
   if(older && (!state.changeOlder || state.changeBefore==null)) {renderTimeline();return;}
   state.changeBusy=true;
+  const live=!older&&state.changeAfter!=null;
   historyButton();
   try {
     let more=false;
@@ -1338,7 +1414,7 @@ async function pollChanges(older=false) {
         state.changeOlder=data.has_older;
       }
       if (!older) state.changeAfter=data.after_id;
-      await ingest(data.events || [],true,older);
+      await ingest(data.events || [],true,older,live);
       more=data.has_more;
       if (!more || older) break;
     }
@@ -1521,6 +1597,7 @@ $('neighbors').onclick = () => {
 $('pinPath').onclick=graphControl(()=>{state.pathStart=state.selected?.id();$('pathInfo').textContent='Path start: '+(state.selected?.data('label')||'none');});$('findPath').onclick=graphControl(async()=>{await graphStage('Finding path');cy.elements().removeClass('path');if(!state.pathStart||!state.selected?.isNode()||!cy.getElementById(state.pathStart).length){$('pathInfo').textContent='Select and set a path start in this slice first.';return;}const result=cy.elements().dijkstra({root:cy.getElementById(state.pathStart),directed:false}),distance=result.distanceTo(state.selected);if(Number.isFinite(distance)){result.pathTo(state.selected).addClass('path');$('pathInfo').textContent=`${distance} hops · undirected shortest path within loaded slice`;}else $('pathInfo').textContent='No path in loaded slice; expand scope to investigate.';});
 $('record').onclick=()=>{state.recording=!state.recording;state.recordingSince=state.recording?Date.now()/1000:Infinity;$('record').classList.toggle('recording',state.recording);$('record').textContent=state.recording?'Ⅱ Pause recording':'● Record highlight';};
 $('reset').onclick = graphControl(async() => {
+  accessFlashes.clear();
   state.recorded=[];
   state.selectedActivity=null;
   state.selectedSession=null;
@@ -1531,6 +1608,7 @@ $('reset').onclick = graphControl(async() => {
 $('loadHistory').onclick = graphControl(async() => {state.selectedActivity=null;state.selectedSession=null;state.recorded=[...state.history];await applyHighlight();});
 $('showAccumulated').onclick = graphControl(async() => {state.selectedActivity=null;state.selectedSession=null;await applyHighlight();});
 for (const key of ['chat','session','agent']) $(key).onchange = graphControl(async() => {
+  accessFlashes.clear();
   state.selectedActivity=null;
   state.selectedSession=null;
   updateSessionOptions();

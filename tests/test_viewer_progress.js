@@ -16,6 +16,7 @@ function element(id='') {
 }
 function $(id){if(!elements.has(id))elements.set(id,element(id));return elements.get(id);}
 const context=vm.createContext({console,performance,setTimeout,clearTimeout,
+  requestAnimationFrame:fn=>setTimeout(fn,16).unref(),
   setInterval(fn,ms){const timer=setInterval(fn,ms);intervals.add(timer);return timer;},
   clearInterval(timer){intervals.delete(timer);clearInterval(timer);},
   document:{hidden:true,getElementById:$,createElement:()=>element(),querySelectorAll:()=>[],activeElement:null},
