@@ -6,11 +6,17 @@ const cytoscape=require('../scripts/viewer/vendor/cytoscape.min.js');
 const layout=require('../scripts/viewer/graph-layout.js');
 const source=fs.readFileSync(require.resolve('../scripts/viewer/app.js'),'utf8');
 const frames=[];
+const state={elementScale:1,acceleration:false,workerLayoutEnabled:false};
+const scaleControl={value:'100'};
+let preferences=null;
 const context=vm.createContext({
-  $:()=>null,requestAnimationFrame:callback=>{frames.push(callback);return frames.length;},
+  state,
+  $:id=>id==='elementScale'?scaleControl:null,
+  localStorage:{getItem:()=>preferences,setItem:(_key,value)=>{preferences=value;}},
+  requestAnimationFrame:callback=>{frames.push(callback);return frames.length;},
   cytoscape:options=>cytoscape({...options,container:undefined,headless:true,styleEnabled:true})
 });
-const start=source.indexOf('function zoomLength(');
+const start=source.indexOf('const elementScales=');
 const end=source.indexOf('const backgroundLayout=',start);
 assert.ok(start>=0&&end>start);
 vm.runInContext(source.slice(start,end),context);
@@ -137,5 +143,43 @@ node.position({x:100,y:0});
 near(node.renderedPosition().x-before,200);
 cy.zoom(3);cy.zoom(4);cy.zoom(5);assert.equal(frames.length,1);frames.shift()();
 near(node.renderedWidth(),18);
+// Drive the shipped selector handler, including persistence and every offered size.
+vm.runInContext(source.slice(source.indexOf('function saveVisualPreferences('),source.indexOf('function setAcceleration(')),context);
+const html=fs.readFileSync(require.resolve('../scripts/viewer/index.html'),'utf8');
+const select=html.match(/<select id="elementScale">([\s\S]*?)<\/select>/)[1];
+const choices=[...select.matchAll(/<option value="(\d+)"[^>]*>/g)].map(match=>Number(match[1]));
+assert.deepEqual(choices,[30,40,50,65,80,100,125,150,200,250,300,400]);
+assert.match(select,/<option value="100" selected>/);
+zoom(1);
+const modelBoxes=layout.boxes(cy.nodes());
+const positions=JSON.stringify(cy.nodes().map(n=>n.position()));
+for(const percent of choices) {
+  const factor=percent/100,viewport=JSON.stringify({zoom:cy.zoom(),pan:cy.pan()});
+  scaleControl.value=String(percent);scaleControl.onchange();
+  near(state.elementScale,factor);
+  assert.equal(JSON.parse(preferences).elementScale,percent);
+  assert.equal(JSON.stringify({zoom:cy.zoom(),pan:cy.pan()}),viewport);
+  assert.equal(JSON.stringify(cy.nodes().map(n=>n.position())),positions);
+  zoom(1);near(node.renderedWidth(),Math.max(1.5,4.55*factor));
+  near(rendered(node,'font-size'),Math.max(2,5*factor));
+  layout.boxes(cy.nodes()).forEach((box,index)=>{near(box.w,modelBoxes[index].w);near(box.h,modelBoxes[index].h);});
+  zoom(.001);near(node.renderedWidth(),1.5);near(rendered(node,'font-size'),2);
+  near(node.numericStyle('text-opacity'),0);
+  zoom(5);near(node.renderedWidth(),18*factor);near(rendered(node,'font-size'),14*factor);
+  if(percent<=50)near(node.numericStyle('text-opacity'),0);
+  if(percent>=80) {
+    zoom(7/(5*factor));near(node.numericStyle('text-opacity'),0);
+    zoom(8.5/(5*factor));near(node.numericStyle('text-opacity'),.5);
+    zoom(10/(5*factor));near(node.numericStyle('text-opacity'),1);
+  }
+}
+assert.equal(vm.runInContext('setElementScale(99)',context),false);
+preferences=JSON.stringify({elementScale:150});vm.runInContext('restoreVisualPreferences()',context);
+near(state.elementScale,1.5);assert.equal(scaleControl.value,'150');
+preferences='{"elementScale":999}';vm.runInContext('restoreVisualPreferences()',context);
+near(state.elementScale,1.5);
+context.localStorage={getItem(){throw new Error('blocked');},setItem(){throw new Error('blocked');}};
+assert.equal(vm.runInContext('setElementScale(100)',context),true);
+vm.runInContext('restoreVisualPreferences()',context);near(state.elementScale,1);
 cy.destroy();
 console.log('Graph zoom: bounded screen sizes, smooth label fade, highlights, new nodes and camera spacing passed.');

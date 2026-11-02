@@ -33,6 +33,7 @@ main>*{min-width:0;min-height:0}
 .replay-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 12px;flex-shrink:0;border-bottom:1px solid #29384b;font-size:12px}
 .replay-controls label{display:flex;align-items:center;gap:5px;margin:0}
 .replay-controls select{width:auto;margin:0}
+.graph-scale{display:flex;align-items:center;gap:6px;white-space:nowrap}.graph-scale>select{width:auto;margin:0;font-size:12px;padding:5px}
 .replay-controls input[type=range]{flex:1;min-width:100px;width:120px;margin:0;padding:0;border:0;background:transparent;accent-color:var(--accent)}
 .replay-controls [role=status]{flex:0 0 100%;min-width:0;height:1.5em;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;color:#a8bacd}
 .sidebar,.inspector{height:100%;max-height:none;scrollbar-gutter:stable}

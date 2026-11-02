@@ -9,7 +9,7 @@ const state = { snapshot: null, offset: 0, root: '', selected: null, pathStart: 
   selectedActivity:null,pendingLayout:false,disabledLayers:new Set(),revision:null,refreshQueued:false,resetQueued:false,activitiesReady:false,
   journal:null,changeAfter:null,changeBefore:null,changeOlder:false,changeBusy:false,seenChanges:new Set(),
   activityAfter:null,activityBefore:null,activityOlder:false,seenActivities:new Set(),expandedSessions:new Set(),sessionLimits:new Map(),selectedSession:null,
-  components:new Map(),componentCount:0,graphActions:[],progress:null,replay:null,acceleration:false,workerLayoutEnabled:false,graphMutation:false,workerError:'' };
+  components:new Map(),componentCount:0,graphActions:[],progress:null,replay:null,acceleration:false,workerLayoutEnabled:false,graphMutation:false,workerError:'',elementScale:1 };
 const liveLayout={layoutEpoch:0,layoutPending:null,layoutRunning:false,layoutTimer:null};
 const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c8d889','#88cdd7','#ccab91','#b0a3d4'];
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
@@ -328,7 +328,7 @@ async function openReplay() {
   const data=await api('replay'),engine=createReplayEngine(data);
   if(!engine.events.length)throw new Error('No saved node or relationship changes are available yet.');
   const saved={live:$('live').checked,follow:$('followGraph').checked,snapshot:state.snapshot,activity:state.selectedActivity,session:state.selectedSession};
-  const visualControls=new Set(['perspective','layout','labels','edgeLabels','followGraph',
+  const visualControls=new Set(['perspective','layout','labels','edgeLabels','followGraph','elementScale',
     'experimentalAcceleration','experimentalWorker']);
   const disabled=[...document.querySelectorAll('.sidebar input,.sidebar select,.sidebar button,#activityPanel input,#activityPanel select,#activityPanel button,#live,#refresh,#previous,#next')]
     .filter(el=>!visualControls.has(el.id))
@@ -493,27 +493,31 @@ async function countComponents() {
   state.components=components;state.componentCount=labels.size;
 }
 // Positions keep following camera zoom; visual dimensions stay useful in CSS pixels.
-function zoomLength(value,minimum,maximum) {
+const elementScales=[30,40,50,65,80,100,125,150,200,250,300,400];
+function zoomLength(value,minimum,maximum,scaleWithElements=false) {
   return element=>{
-    const zoom=element.cy().scratch('memory-model-dimensions')?1:element.cy().zoom();
+    const model=element.cy().scratch('memory-model-dimensions');
+    const zoom=model?1:element.cy().zoom();
+    const scale=scaleWithElements&&!model?state.elementScale:1;
     const base=typeof value==='function'?value(element):value;
-    return Math.max(minimum,Math.min(maximum,base*zoom))/zoom;
+    return Math.max(minimum,Math.min(maximum*scale,base*zoom*scale))/zoom;
   };
 }
 function zoomTextOpacity(element) {
-  const pixels=(element.isNode()?5:4.5)*element.cy().zoom();
+  const pixels=Math.max(2,Math.min(14*state.elementScale,
+    (element.isNode()?5:4.5)*element.cy().zoom()*state.elementScale));
   const progress=Math.max(0,Math.min(1,(pixels-7)/3));
   return progress*progress*(3-2*progress);
 }
-const compactNodeDiameter=zoomLength(element=>element.data('size')*.325,1.5,18);
+const compactNodeDiameter=zoomLength(element=>element.data('size')*.325,1.5,18,true);
 const nodeDiameter=element=>element.cy().scratch('memory-model-dimensions')
   ?Math.min(42,element.data('size')):compactNodeDiameter(element);
 const normalNodeBorder=zoomLength(1,.5,1.5),originalHighlightBorder=zoomLength(5,1,4);
 const nodeBorder=element=>normalNodeBorder(element)*(element.cy().scratch('memory-model-dimensions')?1:.5);
 const highlightBorder=element=>originalHighlightBorder(element)*(element.cy().scratch('memory-model-dimensions')?1:.5);
 const highlightLine=zoomLength(4,.8,3);
-const nodeFont=zoomLength(element=>element.cy().scratch('memory-model-dimensions')?10:5,2,14);
-const edgeFont=zoomLength(element=>element.cy().scratch('memory-model-dimensions')?9:4.5,2,14);
+const nodeFont=zoomLength(element=>element.cy().scratch('memory-model-dimensions')?10:5,2,14,true);
+const edgeFont=zoomLength(element=>element.cy().scratch('memory-model-dimensions')?9:4.5,2,14,true);
 const normalLine=zoomLength(1.3,.6,2);
 function zoomArrowScale(element) {
   const width=element.is('edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected')
@@ -588,16 +592,26 @@ function replaceRenderer(accelerated) {
   cy.startAnimationLoop();cy.style().update();cy.resize();
 }
 function saveVisualPreferences() {
-  try {localStorage.setItem('evomneme-viewer-visual-preferences',JSON.stringify({gpu:state.acceleration,worker:state.workerLayoutEnabled}));}
+  try {localStorage.setItem('evomneme-viewer-visual-preferences',JSON.stringify({gpu:state.acceleration,worker:state.workerLayoutEnabled,elementScale:state.elementScale*100}));}
   catch {} // Storage can be blocked; the controls still work for this page.
 }
 function restoreVisualPreferences() {
   try {
     const saved=JSON.parse(localStorage.getItem('evomneme-viewer-visual-preferences') || 'null');
+    setElementScale(saved?.elementScale,false);
     if(saved?.gpu===true)setAcceleration(true);
     if(saved?.worker===true)setWorkerLayout(true);
   } catch {}
 }
+function setElementScale(value,persist=true) {
+  const percent=Number(value);
+  if(!elementScales.includes(percent))return false;
+  state.elementScale=percent/100;$('elementScale').value=String(percent);
+  cy.elements().updateStyle();
+  if(persist)saveVisualPreferences();
+  return true;
+}
+$('elementScale').onchange=()=>setElementScale($('elementScale').value);
 function setAcceleration(enabled) {
   try {
     if(enabled) {

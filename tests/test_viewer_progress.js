@@ -314,14 +314,17 @@ async function main(){
   run('cy.layout=blockingLayout');$('layout').value='grid';
   // Preferences are restored before startup refresh, independently for each
   // renderer. Malformed or unavailable storage must not prevent graph loading.
-  let savedPreferences='{"gpu":false,"worker":true}';
+  let savedPreferences='{"gpu":false,"worker":true,"elementScale":200}';
   context.localStorage={getItem:()=>savedPreferences,setItem:(key,value)=>{savedPreferences=value;}};
   context.Worker=class {};
   run('restoreVisualPreferences()');
   assert.equal(run('state.workerLayoutEnabled'),true);assert.equal(run('state.acceleration'),false);
+  assert.equal(run('state.elementScale'),2);assert.equal($('elementScale').value,'200');
   run('setWorkerLayout(false)');
   assert.equal(JSON.parse(savedPreferences).worker,false);
+  assert.equal(JSON.parse(savedPreferences).elementScale,200);
   savedPreferences='invalid JSON';run('restoreVisualPreferences()');
+  run('setElementScale(100)');
   delete context.Worker;delete context.localStorage;
   // Replay restores deleted entities by reversing the saved deltas; seeking
   // either direction must preserve pre-recording nodes and scoped identities.
@@ -387,6 +390,12 @@ async function main(){
   assert.equal($('live').checked,false);
   assert.match($('notice').textContent,/whole database/);
   assert.match($('replayBoundary').textContent,/Baseline: 1 nodes, 0 relationships, 1 components/);
+  const scaleReplayIndex=run('state.replay.index'),scaleReplayView=run('JSON.stringify({zoom:cy.zoom(),pan:cy.pan()})');
+  $('elementScale').value='150';$('elementScale').onchange();
+  assert.equal(run('state.elementScale'),1.5);
+  assert.equal(run('state.replay.index'),scaleReplayIndex,'Element size must preserve the replay position');
+  assert.equal(run('JSON.stringify({zoom:cy.zoom(),pan:cy.pan()})'),scaleReplayView,'Element size must preserve the camera');
+  $('elementScale').value='100';$('elementScale').onchange();
   for(const id of ['layout','perspective','labels','edgeLabels','followGraph','experimentalAcceleration','experimentalWorker'])
     assert.equal($(id).disabled,false,id+' must remain usable in Replay');
   for(const id of ['search','wholeGraph','apply','live','refresh','previous','next'])

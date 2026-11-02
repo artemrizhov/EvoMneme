@@ -2,6 +2,21 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Offer a persistent element-size control
+
+Repeated size tuning now has a graph-toolbar selector, available in the expanded
+view and Replay. Its requested presets span 30–400%, with 100% as the default.
+The multiplier affects base and maximum node/font sizes, leaving minimum sizes
+and the 7–10 CSS pixel fade interval unchanged. Alpha uses the actual capped
+font size; small presets whose font ceiling never exceeds 7 pixels keep labels
+hidden rather than exposing unreadable text. CSS pixels already account for
+display density, so these lower bounds do not depend on physical resolution.
+The existing local visual preferences retain the choice. Setting it updates
+styles without changing the camera, layout or replay progress. Regression
+checks exercise every preset, capped-font fading, stable layout measurements,
+preference restoration and changes during history replay. Browser appearance
+and GPU performance remain unverified in the configured browser.
+
 ## 2026-11-02 — Tune the node ceiling and text scale
 
 User tuning raises only the maximum node diameter from 12 to 18 CSS pixels.
