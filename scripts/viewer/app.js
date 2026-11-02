@@ -12,6 +12,7 @@ const state = { snapshot: null, offset: 0, root: '', selected: null, pathStart: 
   components:new Map(),componentCount:0,graphActions:[],progress:null,replay:null,acceleration:false,workerLayoutEnabled:false,graphMutation:false,workerError:'',elementScale:1 };
 const liveLayout={layoutEpoch:0,layoutPending:null,layoutRunning:false,layoutTimer:null};
 const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c8d889','#88cdd7','#ccab91','#b0a3d4'];
+const activityColors={read:'#f7cd71',update:'#79b8ff',create:'#71eab8',delete:'#ff7b87'};
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
 function setConnectionStatus(value) { const el=$('connection');el.textContent=value;el.title=value; }
 function showError(error, persistent=false) { $('error').textContent = error.message || String(error); $('error').classList.remove('hidden'); clearTimeout(showError.timer); if (!persistent) showError.timer = setTimeout(() => $('error').classList.add('hidden'), 12000); }
@@ -341,7 +342,7 @@ async function openReplay() {
   $('live').checked=false;$('followGraph').checked=true;state.refreshQueued=state.resetQueued=false;
   state.selectedActivity=state.selectedSession=null;
   state.previous=null;state.filterKey='';
-  cy.elements().removeClass('hidden touched recordedChange path replayChanged');
+  cy.elements().removeClass('hidden touched recordedChange recordedCreate recordedDelete path replayChanged');
   $('notice').textContent='History replay · whole database; graph and activity filters are suspended. '
     +'Layouts are recalculated. Evidence and detail tables are not reconstructed. '
     +(engine.truncated?'Some saved text values are truncated. ':'')
@@ -551,7 +552,9 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
     {selector:'edge',style:{width:1.3,'line-color':'data(color)','target-arrow-color':'data(color)','target-arrow-shape':'triangle','curve-style':'data(curve)',opacity:.65,label:'data(displayLabel)','font-size':9,'min-zoomed-font-size':7,color:'#b7c8dc','text-rotation':'autorotate','text-background-color':'#111b2b','text-background-opacity':.9}},
     {selector:'.touched',style:{'border-width':5,'border-color':'#f7cd71','line-color':'#f7cd71','target-arrow-color':'#f7cd71',width:4,opacity:1}},
     {selector:'node.touched',style:{width:'data(size)',height:'data(size)'}},
-    {selector:'.changed, .recordedChange',style:{'border-color':'#71eab8','border-width':5,'line-color':'#71eab8','target-arrow-color':'#71eab8',opacity:1}},
+    {selector:'.changed, .recordedChange',style:{'border-color':activityColors.update,'border-width':5,'line-color':activityColors.update,'target-arrow-color':activityColors.update,opacity:1}},
+    {selector:'.recordedCreate',style:{'border-color':activityColors.create,'border-width':5,'line-color':activityColors.create,'target-arrow-color':activityColors.create,opacity:1}},
+    {selector:'.recordedDelete',style:{'border-color':activityColors.delete,'border-width':5,'line-color':activityColors.delete,'target-arrow-color':activityColors.delete,opacity:1}},
     {selector:':selected',style:{'border-color':'#fff','border-width':5,'line-color':'#fff','target-arrow-color':'#fff',opacity:1}},
     {selector:'.path',style:{'border-color':'#f0a0ff','border-width':5,'line-color':'#f0a0ff','target-arrow-color':'#f0a0ff',width:4,opacity:1}},
     {selector:'node.path',style:{width:'data(size)',height:'data(size)'}},
@@ -568,7 +571,7 @@ const cy = cytoscape({container:$('cy'), elements:[], minZoom:.001, maxZoom:5,
       'arrow-scale':zoomArrowScale}},
     {selector:'node, edge',style:{'min-zoomed-font-size':0,'text-opacity':zoomTextOpacity,
       'text-outline-width':zoomLength(2,.5,2)}},
-    {selector:'node.touched, node.changed, node.recordedChange, node:selected, node.path, node.replayChanged, node.replayRemoved',
+    {selector:'node.touched, node.changed, node.recordedChange, node.recordedCreate, node.recordedDelete, node:selected, node.path, node.replayChanged, node.replayRemoved',
       style:{'border-width':highlightBorder}},
     {selector:'edge.touched, edge.path, edge.replayChanged, edge.replayRemoved, edge:selected',style:{width:highlightLine}},
     {selector:'.accessFlash',style:{'underlay-color':el=>el.scratch('accessFlash').color,
@@ -904,6 +907,8 @@ async function signatureMap(data) {
 async function draw(data, resetLayout, key) {
   const next = await signatureMap(data);
   const previous=state.previous,sameView=state.filterKey===key;
+  const snapshotKinds=new Map();
+  if(!sameView&&!state.replay)accessFlashes.clear(true);
   state.changes.clear();
   if (state.previous && state.filterKey === key) {
     const changed = [];
@@ -911,12 +916,16 @@ async function draw(data, resetLayout, key) {
       if (state.previous.get(id) !== signature) {
         state.changes.add(id);
         changed.push(id);
+        snapshotKinds.set(id,previous.has(id)?'update':'create');
       }
     },'Comparing graph');
     const removed = [...state.previous.keys()].filter(id => !next.has(id));
+    for(const id of removed)snapshotKinds.set(id,'delete');
+    const removedIds=new Set(removed);
+    if(!state.replay)accessFlashes.remember(cy.elements().filter(el=>removedIds.has(el.id())));
     if (changed.length || removed.length) {
       if (!state.replay && !state.journal?.enabled) await ingest([{source:'snapshot',time:Date.now()/1000, read:[], write:[],
-        references:[], changed, removed, ok:true, elapsed_ms:0, returned_rows:0}],false);
+        references:[], changed, created:changed.filter(id=>snapshotKinds.get(id)==='create'),removed, ok:true, elapsed_ms:0, returned_rows:0}],false);
     } else if (!resetLayout) {
       // Preserve a user's layout, selection and path while the database is unchanged.
       cy.elements().removeClass('changed');
@@ -1026,7 +1035,7 @@ async function draw(data, resetLayout, key) {
     }
   }
   if (!state.replay) await applyHighlight();
-  if (!state.replay) accessFlashes.flash([...state.changes].map(id=>[id,true]));
+  if (!state.replay&&!state.journal?.enabled) accessFlashes.flash(snapshotKinds);
   // A click may arrive during cooperative rendering; use the latest selection
   // rather than the one that existed at the start of this update.
   const selected=state.selected?.id();
@@ -1183,34 +1192,101 @@ function references(event) {
     if (r.table==='nodes'||r.table==='edges') return (r.table==='nodes'?'n:':'e:')+JSON.stringify([r.scope_id,r.id]);
     return null;
   });
-  return ids.filter(Boolean).concat(event.changed || []);
+  return ids.filter(Boolean).concat(event.changed || [],event.removed || []);
+}
+function mergeAccess(kinds,id,kind) {
+  // In accumulated history the latest mutation wins; reads never erase it.
+  if(!kinds.has(id)||kind!=='read')kinds.set(id,kind);
+}
+function accessKinds(event) {
+  const kinds=new Map(references(event).map(id=>[id,'read']));
+  for(const id of event.changed || [])kinds.set(id,'update');
+  for(const id of event.created || [])kinds.set(id,'create');
+  for(const id of event.removed || [])kinds.set(id,'delete');
+  if(event.source==='database_change') {
+    const phases=new Map();
+    for(const reference of event.references || []) {
+      const id=references({references:[reference]})[0];
+      if(!id)continue;
+      if(reference.role!=='entity'){mergeAccess(kinds,id,'update');continue;}
+      if(!phases.has(id))phases.set(id,new Set());
+      phases.get(id).add(reference.phase);
+    }
+    for(const [id,seen] of phases)kinds.set(id,seen.has('before')
+      ?seen.has('after')?'update':'delete':'create');
+  }
+  return kinds;
+}
+// Deleted geometry lives on a noninteractive canvas, outside graph membership.
+function createDeletedOverlay(graph,container) {
+  const canvas=document.createElement('canvas');canvas.className='deleted-overlay';
+  canvas.setAttribute('aria-hidden','true');container.append(canvas);
+  const context=canvas.getContext('2d');let scene=[],queued=false;
+  function paint() {
+    queued=false;
+    // Cytoscape destroys every container child when switching CPU/GPU renderers.
+    if(canvas.parentNode!==container)container.append(canvas);
+    const {width,height}=container.getBoundingClientRect(),ratio=window.devicePixelRatio || 1;
+    if(canvas.width!==Math.round(width*ratio))canvas.width=Math.round(width*ratio);
+    if(canvas.height!==Math.round(height*ratio))canvas.height=Math.round(height*ratio);
+    context.setTransform(ratio,0,0,ratio,0,0);context.clearRect(0,0,width,height);
+    const zoom=graph.zoom(),pan=graph.pan();
+    const point=p=>({x:p.x*zoom+pan.x,y:p.y*zoom+pan.y});
+    for(const {ghost,opacity,kind} of scene) {
+      context.globalAlpha=opacity;context.strokeStyle=context.fillStyle=activityColors[kind];
+      context.lineWidth=2;context.setLineDash([5,3]);context.beginPath();
+      if(ghost.group==='nodes') {
+        const p=point(ghost.position);context.arc(p.x,p.y,Math.max(5,Math.min(20,ghost.size*zoom*.325/2))+3,0,Math.PI*2);
+        context.stroke();context.setLineDash([]);context.font='12px sans-serif';context.fillText(ghost.label,p.x+10,p.y-8);
+      } else {
+        const ends=ghost.ends.map(end=>point(graph.getElementById(end.id).length
+          ?graph.getElementById(end.id).position():end.position));
+        if(Math.hypot(ends[1].x-ends[0].x,ends[1].y-ends[0].y)<1)context.arc(ends[0].x,ends[0].y-10,10,0,Math.PI*2);
+        else {context.moveTo(ends[0].x,ends[0].y);context.lineTo(ends[1].x,ends[1].y);}
+        context.stroke();
+      }
+    }
+    context.globalAlpha=1;context.setLineDash([]);
+  }
+  graph.on('pan zoom resize position',()=>{if(!queued&&scene.length){queued=true;requestAnimationFrame(paint);}});
+  return entries=>{scene=entries;paint();};
 }
 // One frame loop for active IDs only. Fresh reads restart the attack from the
 // current brightness; the quadratic fade loses brightness faster at its end.
-function createAccessFlashes(graph,clock=()=>performance.now(),frame=requestAnimationFrame) {
-  const active=new Map();let scheduled=false;
+function createAccessFlashes(graph,clock=()=>performance.now(),frame=requestAnimationFrame,drawGhosts=()=>{}) {
+  const active=new Map(),ghosts=new Map(),held=new Map();let scheduled=false;
   function opacity(entry,now) {
     const elapsed=now-entry.started;
     if(elapsed<300)return entry.from+(1-entry.from)*Math.max(0,elapsed)/300;
     return Math.max(0,1-Math.pow((elapsed-300)/5000,2));
   }
-  function schedule() {if(!scheduled&&active.size){scheduled=true;frame(paint);}}
+  function heldOpacity(entry,now) {return entry.from+(entry.target-entry.from)*Math.min(1,Math.max(0,(now-entry.started)/300));}
+  function schedule() {if(!scheduled&&(active.size||[...held.values()].some(e=>clock()-e.started<300))){scheduled=true;frame(paint);}}
   function render() {
-    const now=clock();
+    const now=clock(),scene=new Map();
     graph.batch(()=>{
       for(const [id,entry] of active) {
         const element=graph.getElementById(id),level=opacity(entry,now);
         if(!level&&now-entry.started>=5300) {
           element.removeClass('accessFlash accessEdgeFlash accessColorFlash');element.removeScratch('accessFlash');active.delete(id);
         } else if(element.length) {
-          element.scratch('accessFlash',{opacity:level*.85,color:entry.changed?'#71eab8':'#f7cd71'});
-          const held=element.selected()||['touched','recordedChange','changed','path','replayChanged','replayRemoved'].some(name=>element.hasClass(name));
+          element.scratch('accessFlash',{opacity:level*.85,color:activityColors[entry.kind]});
+          const held=element.selected()||['touched','recordedChange','recordedCreate','recordedDelete','changed','path','replayChanged','replayRemoved'].some(name=>element.hasClass(name));
           element.toggleClass('accessEdgeFlash',element.isEdge());
           element.toggleClass('accessColorFlash',element.isEdge()&&!held);
           if(element.hasClass('accessFlash'))element.updateStyle();else element.addClass('accessFlash');
+        } else if(ghosts.has(id)&&entry.kind==='delete') {
+          scene.set(id,{ghost:ghosts.get(id),opacity:level,kind:entry.kind});
         }
       }
+      for(const [id,entry] of held) {
+        const level=heldOpacity(entry,now);
+        if(!ghosts.has(id)||(!entry.target&&!level)){held.delete(id);continue;}
+        if(!graph.hasElementWithId(id)&&level>=(scene.get(id)?.opacity || 0))
+          scene.set(id,{ghost:ghosts.get(id),opacity:level,kind:entry.kind});
+      }
     });
+    drawGhosts([...scene.values()]);
   }
   function paint() {
     scheduled=false;render();schedule();
@@ -1218,41 +1294,58 @@ function createAccessFlashes(graph,clock=()=>performance.now(),frame=requestAnim
   return {
     flash(entries) {
       const now=clock();
-      for(const [id,changed] of entries) {
+      for(const [id,kind] of entries) {
         const previous=active.get(id);
-        active.set(id,{started:now,from:previous?opacity(previous,now):0,changed});
+        active.set(id,{started:now,from:previous?opacity(previous,now):0,kind});
       }
       schedule();
     },
+    remember(elements) {
+      for(const element of elements) {
+        if(element.isNode())ghosts.set(element.id(),{group:'nodes',position:{...element.position()},size:element.data('size')||24,label:element.data('label')||element.id()});
+        else ghosts.set(element.id(),{group:'edges',ends:[element.source(),element.target()].map(node=>({id:node.id(),position:{...node.position()}}))});
+      }
+      while(ghosts.size>10000)ghosts.delete(ghosts.keys().next().value);
+    },
+    hasGhost:id=>ghosts.has(id)&&!graph.hasElementWithId(id),
+    hold(kinds) {
+      const now=clock();
+      for(const [id,entry] of held)if(!kinds.has(id)&&entry.target)held.set(id,{...entry,from:heldOpacity(entry,now),target:0,started:now});
+      for(const [id,kind] of kinds)if(ghosts.has(id)&&!graph.hasElementWithId(id)) {
+        const entry=held.get(id);
+        if(!entry?.target||entry.kind!==kind)held.set(id,{from:entry?heldOpacity(entry,now):0,target:1,started:now,kind});
+      }
+      render();schedule();
+    },
     refresh:render,
-    clear() {
-      active.clear();graph.elements('.accessFlash').removeClass('accessFlash accessEdgeFlash accessColorFlash').removeScratch('accessFlash');
+    clear(forget=false) {
+      active.clear();held.clear();if(forget)ghosts.clear();drawGhosts([]);graph.elements('.accessFlash').removeClass('accessFlash accessEdgeFlash accessColorFlash').removeScratch('accessFlash');
     }
   };
 }
-const accessFlashes=createAccessFlashes(cy);
+const accessFlashes=createAccessFlashes(cy,()=>performance.now(),requestAnimationFrame,createDeletedOverlay(cy,$('cy')));
 async function applyHighlight() {
   const events = state.selectedActivity ? [state.selectedActivity] : state.selectedSession
     ? state.history.filter(event=>matches(event)&&sessionKey(event)===state.selectedSession) : state.recorded.filter(matches);
-  const touched = new Set(),changed=new Set(),context=new Set();
+  const touched = new Set(),kinds=new Map(),context=new Set();
   await graphChunks(events,event=>{
-    for(const id of references(event))touched.add(id);
-    for(const id of event.changed || [])changed.add(id);
+    for(const [id,kind] of accessKinds(event)){touched.add(id);mergeAccess(kinds,id,kind);}
   },'Preparing highlights');
   let visibleCount=0;
   await graphChunks([...touched],id=>{
     const el=cy.getElementById(id);
-    if(!el.length)return;
+    if(!el.length){if(accessFlashes.hasGhost(id))visibleCount++;return;}
     visibleCount++;context.add(id);
     if(el.isEdge()) {context.add(el.data('source'));context.add(el.data('target'));}
   },'Finding highlighted elements');
   await graphChunks(cy.elements(),el=>{
-    for(const [name,enabled] of [['touched',touched.has(el.id())],['recordedChange',changed.has(el.id())],
+    for(const [name,enabled] of [['touched',touched.has(el.id())],['recordedChange',kinds.get(el.id())==='update'],
+      ['recordedCreate',kinds.get(el.id())==='create'],['recordedDelete',kinds.get(el.id())==='delete'],
       ['hidden',$('onlyTouched').checked && !context.has(el.id())]]) {
       if(el.hasClass(name)!==enabled)el.toggleClass(name,enabled);
     }
   },'Highlighting graph',true);
-  accessFlashes.refresh();
+  accessFlashes.hold(kinds);
   $('highlightCount').textContent = `${touched.size} accumulated IDs · ${visibleCount} visible`;
   const selected = state.selectedActivity;
   $('showAccumulated').classList.toggle('hidden',!selected&&!state.selectedSession);
@@ -1341,8 +1434,7 @@ async function ingest(events,highlight=true,older=false,live=true) {
     state.history.push(event);
     if (state.recording && event.time >= state.recordingSince) state.recorded.push(event);
     if(live&&!older&&!state.replay&&matches(event)) {
-      const changed=new Set(event.changed || []);
-      for(const id of references(event))flashes.set(id,changed.has(id)||flashes.get(id)||false);
+      for(const [id,kind] of accessKinds(event))flashes.set(id,kind);
     }
   }
   accessFlashes.flash(flashes);

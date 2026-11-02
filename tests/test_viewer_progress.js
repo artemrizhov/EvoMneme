@@ -9,6 +9,7 @@ function element(id='') {
   let content='';
   return {id,value:'',checked:false,disabled:false,dataset:{},style:{},options:[],children:[],
     classList:{add(){},remove(){},toggle(){}},
+    getContext:()=>({setTransform(){},clearRect(){},setLineDash(){},beginPath(){},arc(){},stroke(){},fillText(){},moveTo(){},lineTo(){}}),
     set textContent(value) {content=value;if(id==='connection')statuses.push(value);},get textContent(){return content;},
     replaceChildren(...children){this.children=children;},append(...children){this.children.push(...children);},prepend(){},
     listeners:{},addEventListener(type,fn){(this.listeners[type] ||= []).push(fn);},setAttribute(){},getBoundingClientRect(){return {width:900,height:600};},

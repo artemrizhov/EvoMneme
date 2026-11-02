@@ -20,7 +20,7 @@ const context = vm.createContext({state,
   isObservation: event => event.source === 'database_change', matches:()=>true,
   references:event=>event.references || [],accessFlashes:{flash(entries) {flashes.push([...entries]);},refresh() {}},
   updateSessionOptions() {}, renderTimeline() {}, async applyHighlight() {}});
-vm.runInContext(section('async function ingest(', 'async function pollEvents(') +
+vm.runInContext(section('function mergeAccess(', '// Deleted geometry') +section('async function ingest(', 'async function pollEvents(') +
   section('async function pollEvents(', 'function renderTimeline('), context);
 const run = code => vm.runInContext(code, context);
 const call = (id, time = id) => ({source: 'sql', activity_id: 'call-' + id, activity_record_id: id, time});
@@ -31,7 +31,7 @@ async function main() {
   assert.equal(flashes.at(-1).length,0,'initial history is not a fresh access');
   context.probe=[{...probe,activity_id:'fresh'}];
   await run('ingest(probe)');
-  assert.deepEqual(JSON.parse(JSON.stringify(flashes.at(-1))),[['n:existing',false],['e:new',true]],'fresh accesses flash reads and changes');
+  assert.deepEqual(JSON.parse(JSON.stringify(flashes.at(-1))),[['n:existing','read'],['e:new','update']],'fresh accesses flash reads and changes');
   await run('ingest(probe)');
   assert.equal(flashes.at(-1).length,0,'duplicate polling does not restart a flash');
   context.probe=[{...probe,activity_id:'older'}];
