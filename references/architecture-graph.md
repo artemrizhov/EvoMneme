@@ -14,12 +14,12 @@ Summarize responsibility, boundary, important inputs/outputs or contracts, const
 
 ## Build from evidence
 
-1. Read relevant non-secret project documentation and decision records to identify intended responsibilities, terminology and claims. Treat diagrams and descriptions as evidence to check, not automatic truth about the running system.
+1. Read relevant non-secret project documentation and decision records as sources of truth for requirements, intended responsibilities, terminology and recorded decisions. Maintain their structure and key points using [documentation mapping](documentation.md). Check implementation claims against code or runtime evidence; a documented requirement does not establish that the running system satisfies it.
 2. Inspect entrypoints, composition/registration code, public interfaces, configuration and deployment descriptions to establish actual boundaries and connections. Follow implementation paths for important user/system flows. Read tests as evidence of the contracts they check, without claiming they prove deployed behavior.
 3. Trace meaningful interactions between boundaries: what initiates the interaction, what data/control crosses it, the target and mechanism, and important failure or consistency constraints where established. Resolve sufficient implementation to support the claim; folder names, imports and similarly named entities alone do not establish architecture.
 4. Reconcile documented intent with observed implementation. Describe whether a claim is intended, implemented or observed at runtime, with the corresponding evidence and confidence. Preserve material disagreement as an evidenced finding or uncertainty on the relevant concept. A proposed design must not appear as a current implemented relationship; `validity='current'` alone does not mean implemented.
 
-Attach evidence through the existing `evidence` table to the node or edge it supports. Use source/version locators and inspected content identity for code, configuration and documents. For an authorized decision or runtime observation, retain a concise dated description and available provenance. Do not copy documents, credentials, deployment secrets or conversations into the store. Summaries may combine sources, but must not claim a broader boundary or behavior than those sources establish.
+Attach evidence through the existing `evidence` table to the node or edge it supports. Use source/version locators and inspected content identity for code, configuration and documents. For an authorized decision or runtime observation, retain a concise dated description and available provenance. Store useful documentation summaries and essential exact terms with their sources; exclude whole-document dumps, credentials, deployment secrets and conversations. Summaries may combine sources, but must not claim a broader boundary or behavior than those sources establish.
 
 ## Connect architecture, code and decisions
 

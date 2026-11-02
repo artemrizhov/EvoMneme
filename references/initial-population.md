@@ -2,7 +2,7 @@
 
 Use this procedure for an explicit request to build the host's complete knowledge graph, or to resume/rebuild that agreed scope. Connecting EvoMneme, opening an empty store or performing an ordinary task does not start a full build. Self-hosting requires the same explicit authorization and storage isolation as any other host.
 
-The result combines selected code entities with architectural responsibilities, boundaries, flows and useful decisions. Follow the shared [representation and code selection rules](code-graph.md) and [architecture rules](architecture-graph.md). Initial population is a broader reading pass under the ordinary maintenance rules, not a separate data format or indexing pipeline.
+The result combines selected code entities with documentation structure and key points, architectural responsibilities, boundaries, flows and useful decisions. Follow the shared [representation and code selection rules](code-graph.md), [documentation mapping](documentation.md) and [architecture rules](architecture-graph.md). Initial population is a broader reading pass under the ordinary maintenance rules, not a separate data format or indexing pipeline.
 
 ## 1. Verify readiness and existing knowledge
 
@@ -14,7 +14,7 @@ Read the private connection receipt and representative compatible records. Estab
 
 ## 2. Establish the reading boundary and order
 
-Include own application/library sources, scripts and examples, plus tests at the depth defined by the code selection rules. Include uncommitted/new sources within that boundary. Identify relevant architecture documentation, manifests, entrypoints, configuration and deployment descriptions as evidence sources; they do not each require a code node. Read only non-secret material within the authorized boundary.
+Include own application/library sources, scripts and examples, plus tests at the depth defined by the code selection rules. Include uncommitted/new sources within that boundary. Include relevant project documentation in the reading boundary: its structure, key requirements, contracts, procedures and decisions are knowledge to retain, not only pointers to code. Identify manifests, entrypoints, configuration and deployment descriptions as evidence sources; they do not each require a code node. Read only non-secret material within the authorized boundary.
 
 Record included roots, exclusions with reasons, scope/snapshot and traversal order in the private receipt. Default to sorted project-relative paths within the included roots and source order within each file; record any deliberate dependency-first detour so it does not skip a file. For generated code, inspect the meaningful generator/source boundary. Do not traverse vendor/dependency implementations or disposable outputs. Inaccessible in-scope sources are blocked work, not successful exclusions.
 
