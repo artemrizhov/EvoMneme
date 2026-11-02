@@ -13,19 +13,6 @@ pixel fade contract even for small element-size presets. Model dimensions and
 node sizes are unchanged. Shipped Cytoscape regression coverage checks both
 font types, all presets, monotonic growth, continuous join slopes and limits.
 
-## 2026-11-02 — Flash new graph accesses without enabling accumulation
-
-Previously, access colors required recording or selecting loaded history. New
-accesses now show a yellow read / green change halo with a 100 ms attack and
-5 second accelerating quadratic fade, restarting from current brightness on
-repeat access. A shared frame loop visits only active IDs and stops when idle.
-Initial/older history and duplicate polls do not replay flashes. Accumulated
-and selected colors use independent 100 ms transitions; recorded colors stay
-on. Stroke widths remain immediate to preserve zoom-dependent arrow sizing.
-Synthetic regressions check timing, colors, repeated access, off-page expiry,
-cleanup, ingestion and existing zoom behavior. Configured Chrome inspection
-was blocked by a browser-profile conflict; visual/GPU verification is pending.
-
 ## 2026-11-02 — Keep smaller labels visible longer
 
 User tuning lowers the label fade interval from 10–7 to 7–3 CSS pixels. Text
