@@ -2,6 +2,19 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-02 — Expand the graph to fill the page
+
+The graph shared space with navigation, side panels and activity history.
+A page-wide toggle now leaves only the canvas and graph/history controls, with
+a restore button and Escape exit. CSS reuses the existing canvas and resize
+observer, preserving loaded data and replay state without requiring browser
+fullscreen permission. The shared viewer also supplies this mode to the public
+demo; no separate renderer or dependency is introduced. Validation: 28 viewer
+tests, shared website build and a shipped-handler check for toggle, Escape,
+focus, replay preservation and the graph-view guard passed. Visual browser
+verification remains incomplete because the configured browser navigation
+timed out.
+
 ## 2026-10-27 — Combine viewer facet values
 
 Single-choice facet dropdowns prevented selecting several node types, scopes or

@@ -123,3 +123,10 @@ SQL/table inspection returns at most 200 rows; evidence detail at most 200. Grap
 Run `python -m unittest discover -s tests -v`. For manual browser checks, `python tests/test_viewer.py --serve-demo` serves synthetic fixtures under excluded `.evomneme-tests/viewer-demo/`.
 
 When Node.js is already available for development, the Python suite also runs the geometry regressions against the bundled Cytoscape with `node tests/test_viewer_layout.js`. Otherwise that optional check is skipped; Node.js is not a viewer runtime dependency.
+
+**Expand graph** fills the page with the graph, its toolbar and saved-history
+controls. It hides the page header, side panels, activity log and captions.
+Use **Restore page** or Escape to return. This mode preserves the loaded graph,
+filters and replay state, and also works in the public demo. Existing resize
+behavior applies: following fits the graph to the available space, while a
+manual view with following disabled retains its pan and zoom.

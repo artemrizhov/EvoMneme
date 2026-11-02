@@ -1534,5 +1534,22 @@ async function exportPng() {
 }
 $('png').onclick=graphControl(exportPng);
 if(!token)showError(new Error('Open the complete viewer URL printed by the server, including its token.'));
+function setGraphExpanded(expanded) {
+  if (expanded && state.view !== 'graph') return;
+  document.body.classList.toggle('graph-expanded',expanded);
+  const button=$('expandGraph');
+  button.setAttribute('aria-pressed',String(expanded));
+  button.textContent=expanded?'Restore page':'Expand graph';
+  button.title=expanded?'Restore page (Escape)':'Expand graph to fill the page';
+  // The existing ResizeObserver adapts the canvas without replacing graph state.
+  button.focus({preventScroll:true});
+}
+$('expandGraph').onclick=()=>setGraphExpanded(!document.body.classList.contains('graph-expanded'));
+window.addEventListener('keydown',event=>{
+  if (event.key==='Escape' && document.body.classList.contains('graph-expanded')) {
+    event.preventDefault();
+    setGraphExpanded(false);
+  }
+});
 restoreVisualPreferences();
 refresh(true);setInterval(()=>{if($('live').checked && !state.busy)refresh();},2000);
