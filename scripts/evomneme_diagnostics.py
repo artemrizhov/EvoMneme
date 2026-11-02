@@ -1,4 +1,4 @@
-"""Advisory graph checks and measured storage statistics; never writes the store."""
+"""Read-only graph diagnostics with separate automatic activity history."""
 import hashlib
 from pathlib import Path, PureWindowsPath
 import sqlite3
@@ -218,8 +218,14 @@ class DiagnosticReader:
         return dict(scope_graph=distributions, storage=storage)
 
 
-def diagnose(connection, args, shared=None):
+def diagnose(connection, args, shared=None, activity_context=None):
     """Return complete guarded output, sharing a chain's snapshot and deadline."""
+    if shared is None:
+        from evomneme_read_activity import read_call
+        return read_call(connection, args.diagnostic_command,
+                         lambda active: diagnose(connection, args, shared=active),
+                         timeout=TIMEOUT_SECONDS, error=DiagnosticError, activity_context=activity_context,
+                         timeout_message='Diagnostics timed out; no complete result.', read_error='Cannot read bound diagnostics')
     reader = None
     try:
         reader = DiagnosticReader(connection, shared=shared)
@@ -251,6 +257,7 @@ def diagnose(connection, args, shared=None):
         reader.check_time()
         output = ''.join(chunks)
         reader.check_time()
+        reader.context.completed += 1
         return output
     except sqlite3.Error as exc:
         if reader is not None and (time.monotonic() >= reader.context.deadline or 'interrupted' in str(exc).lower()):
@@ -268,7 +275,10 @@ def configure_parser(subparsers):
         if name == 'check':
             parser.add_argument('--sources', nargs='+', action='extend', default=[], metavar='PATH', help='Target literal source paths for bounded reconciliation preflight; repeatable')
         parser.set_defaults(diagnostic=True, diagnostic_command=name)
+        from evomneme_read_activity import configure
+        configure(parser)
 
 
 def run(connection, args):
-    return diagnose(connection, args)
+    from evomneme_write_options import context
+    return diagnose(connection, args, activity_context=context(args))

@@ -58,6 +58,8 @@ evomneme nodes root
 evomneme links root
 ```
 
+The access tools automatically record activity, including graph reads, in the local database. Agents do not write journal entries or run a second logging command. Graph reads leave knowledge rows unchanged; a separate connection persists their [activity history](references/change-history.md#automatic-graph-read-activity).
+
 For ordinary writes, use the [maintenance commands](references/mutations.md), including symbol and file inspection details. Combine related writes with `--next` to commit together or roll back together. Optional source and record guards reject stale updates; `--compact` reduces write output while retaining the atomic output limit. Supply known chat, session and agent identities to attribute activity without changing client configuration.
 
 Use the read-only [diagnostics](references/diagnostics.md) to inspect graph components, leaves, evidence coverage, source freshness and storage use. Structural warnings guide source review; they do not prove missing relationships or semantic completeness. Activity recording remains enabled by default.

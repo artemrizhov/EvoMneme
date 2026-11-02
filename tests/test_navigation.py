@@ -216,15 +216,21 @@ class NavigationTests(unittest.TestCase):
         self.assertNotIn('evomneme_cli.py', stderr.getvalue())
         self.assertEqual(len(cards(navigate(self.connection, 'links', ['root'], all_output=True))), 301)
 
-    def test_database_unchanged_and_reader_snapshot_survives_concurrent_commit(self):
-        before = hashlib.sha256(self.path.read_bytes()).hexdigest()
+    def test_graph_unchanged_and_reader_snapshot_survives_concurrent_commit(self):
+        with self.db() as db:
+            before = {t: db.execute('SELECT * FROM ' + t).fetchall() for t in ('nodes', 'edges', 'evidence')}
         navigate(self.connection, 'nodes', ['root', 'draft'])
         navigate(self.connection, 'links', ['draft', 'commit'])
-        self.assertEqual(hashlib.sha256(self.path.read_bytes()).hexdigest(), before)
+        with self.db() as db:
+            self.assertEqual({t: db.execute('SELECT * FROM ' + t).fetchall() for t in before}, before)
+            self.assertEqual(db.execute('SELECT count(*) FROM evomneme_change_calls').fetchone()[0], 2)
+            self.assertEqual(db.execute('SELECT count(*) FROM evomneme_change_log').fetchone()[0], 0)
         with self.db() as db:
             db.execute('PRAGMA journal_mode=WAL')
         reader = Reader(self.connection)
         try:
+            with self.assertRaises(sqlite3.OperationalError):
+                reader.db.execute("UPDATE nodes SET summary='Forbidden'")
             self.assertEqual(reader.count(['draft']), 5)
             self.edge('concurrent', 'draft', 'commit')
             self.assertEqual(reader.node_card(reader.resolve('draft'))['link_count'], 5)

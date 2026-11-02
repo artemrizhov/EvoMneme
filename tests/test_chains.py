@@ -60,7 +60,7 @@ class ChainTests(unittest.TestCase):
             result = main(tokens)
         return result, stdout.getvalue(), stderr.getvalue(), discover.call_count
 
-    def test_read_chain_groups_commands_with_one_validation_and_no_history(self):
+    def test_read_chain_groups_commands_with_one_snapshot_and_aggregate_history(self):
         import evomneme_context
         with mock.patch('evomneme_context.validate_binding', wraps=evomneme_context.validate_binding) as binding:
             result, output, error, discovered = self.invoke(['nodes', 'root', '--next', 'links', 'root', '--next', 'references', 'src/parser.py'])
@@ -69,7 +69,11 @@ class ChainTests(unittest.TestCase):
         self.assertIn('segment: 2\ncommand: links', output)
         self.assertIn('segment: 3\ncommand: references', output)
         self.assertIn('source_path: src/parser.py', output)
-        self.assertFalse(self.query("SELECT name FROM sqlite_schema WHERE name=?", (LOG,)))
+        events = self.query('SELECT event_json FROM ' + CALLS)
+        self.assertEqual(len(events), 1)
+        event = json.loads(events[0]['event_json'])
+        self.assertEqual((event['command'], event['completed']), ('chain', 3))
+        self.assertFalse(self.query('SELECT * FROM ' + LOG))
 
     def test_late_parse_errors_mixed_setup_help_and_empty_segments_precede_discovery(self):
         tails = [self.add('bad')[:-1], ['update', 'node', 'parser', '--line_start', 'bad'],

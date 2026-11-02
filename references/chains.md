@@ -10,6 +10,8 @@ evomneme add node --id parser --kind function --title Parser --summary "Parses i
 Choose one category for the entire chain:
 
 - Reads: `nodes`, `links`, `references`, `check`, `stats` share one read-only SQLite snapshot.
+  The tool automatically records one aggregate access event after the snapshot closes;
+  graph data remains unchanged. No separate logging command is needed.
 - Mutations: `add`, `update`, `delete` share one `BEGIN IMMEDIATE` transaction.
   Later segments see earlier writes. Any failure rolls back every graph write,
   history installation, row-history entry and activity entry from the chain.
@@ -64,9 +66,10 @@ retries retain it and must be standalone or last.
   any segment removes that aggregate size guard for every segment. Mutation
   chains have no `--all`. Oversized read errors provide a safe whole-chain retry;
   control-bearing arguments require rerunning the original invocation manually.
-- One five-second deadline covers the complete chain; `--all` does not extend it.
+- One five-second deadline covers the chain's graph work; `--all` does not extend it.
   Read operations share one snapshot even if another connection commits between
-  segments. Binding validation happens once; references can inspect stale/missing
+  segments. The read snapshot validates the binding; separate history persistence
+  revalidates it before writing. References can inspect stale/missing
   root maintenance data, while each `nodes`/`links` segment still requires a
   current configured root in that snapshot.
 - Every mutation retains the [maintenance safeguards](mutations.md): exact scope,
@@ -77,6 +80,13 @@ retries retain it and must be standalone or last.
   encoding, aggregate-budget and deadline checks happen before mutation commit.
   Actual delivery to stdout occurs after commit: a broken pipe or other output
   delivery failure cannot undo an already committed transaction.
+
+Read-chain activity carries only references from a complete accepted result. If
+any segment fails, earlier buffered segments are not logged as returned elements.
+Optional activity labels can be supplied on any read segment; the chain merges
+them and rejects conflicting values before database access. Automatic history
+persistence has a separate short lock budget and reports failures on stderr while
+preserving successful read results; see [activity limits](change-history.md#automatic-graph-read-activity).
 
 Full command parameters remain in [navigation](navigation.md),
 [file references](references.md) and [maintenance](mutations.md).

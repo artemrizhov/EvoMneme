@@ -1,6 +1,6 @@
 # Persistent database change and activity history · format 2
 
-Managed EvoMneme v3 databases retain row changes and SQL-call activities automatically in the same SQLite file. The viewer and Python/CLI executor install/maintain a published versioned extension when a compatible store is recognized. No recording flag, trace directory or session setup is required. Generic or not-yet-initialized SQLite databases keep the native SQL contract without automatic history installation. The base graph schema remains v3.
+Managed EvoMneme v3 databases retain row changes and access activities automatically in the same SQLite file. The viewer, Python/SQL executor and bound graph CLI use the published versioned history extension. No manual journal entry, second logging command, recording flag, trace directory or session setup is required. Generic or not-yet-initialized SQLite databases keep the native SQL contract without automatic history installation. The base graph schema remains v3.
 
 ```powershell
 python scripts/evomneme_viewer.py --database "C:/path/to/host/.evomneme/knowledge.sqlite3"
@@ -15,13 +15,49 @@ Restart the viewer and existing executor processes and reload the browser after 
 - `evomneme_change_log`: one row per INSERT, actual UPDATE or DELETE of a tracked ordinary-table row, with monotonic change ID, UTC time, source table, operation, primary key (rowid fallback), typed before/after JSON, and optional `activity_id` / `actor_json` attribution.
 - `evomneme_change_elements`: links from change IDs to graph node/edge IDs, with `before`/`after` phase and entity/detail/evidence role. References survive deletion because they deliberately do not foreign-key the current graph.
 - `evomneme_change_meta`: extension owner/version, installation time, tracked-table schema signatures and owned trigger names. These reserved tables do not recursively journal themselves.
-- `evomneme_change_calls`: durable SQL-call events with a numeric history cursor, stable `activity_id` and bounded event JSON. Events preserve known caller/client metadata, returned graph references, timing, read/write table access and transaction outcome; they omit SQL text, parameters and result contents beyond graph identifiers.
+- `evomneme_change_calls`: durable SQL and graph-CLI access events with a numeric history cursor, stable `activity_id` and bounded event JSON. Events preserve known caller/client metadata, returned graph references, timing, read/write table access and transaction outcome; they omit SQL text, parameters and result contents beyond graph identifiers.
 
 SQLite AFTER triggers run inside the writer's transaction. Rollback/savepoint rollback removes row-change history; multirow statements produce separate entries. A no-op UPDATE produces none. Calls, including failed/rolled-back attempts, remain separately observable with their actual outcome. Partial native autocommits can leave committed changes even if a later command fails; the recorded outcome preserves that distinction.
 
 Instrumented executor connections attach their own activity ID and known identity metadata to their row changes. Connection-local attribution avoids assigning concurrent external writes to the last caller. Ordinary external SQLite clients still work without Python UDFs, including writes while the viewer is closed; their reads and identity cannot be inferred. No attribution is guessed from timestamps or neighboring IDs. Linking a change to a call does not make attempted/rolled-back effects durable. A process crash or call-log write failure can leave a committed attributed change without a completed call record; no missing call outcome is invented.
 
 Callers should supply known `activity_context` chat/session/agent IDs and titles. A fallback session stays stable for an executor process, while unknown chats/agents remain unknown. Actual names, Codex chat ancestry and earlier missing metadata cannot be reconstructed automatically. Restarting a process creates a new fallback session unless the caller supplies a stable session ID.
+
+## Automatic graph-read activity
+
+`nodes`, `links`, `references`, `check` and `stats` automatically record access.
+Their graph connection remains `mode=ro` and `query_only`; after the read snapshot
+closes, a separate write transaction revalidates the binding, installs the released
+extension if needed and appends the event. It does not maintain graph rows. An
+explicitly suspended journal is not silently resumed by these reads.
+
+A standalone read records one event; a read chain records one aggregate event.
+Returned references are staged until the entire result passes rendering, size and
+deadline checks. A failed read or chain has no returned references, even when earlier
+segments were computed successfully. Binding/initialization failures that prevent a
+validated read context produce no history write. Diagnostic events remain table-level;
+aggregate counts do not imply that every inspected graph element was returned.
+
+`nodes` identifies the returned node cards. `links` identifies returned relationships
+and their shown neighbors; pair results also identify both shown endpoints.
+`references` identifies actual returned node/edge records across direct, dependent
+and owner-context groups, excluding missing owners. Counts and internal lookups do
+not add returned references. Oversized reference metadata uses the existing
+`references_truncated` marker instead of silently presenting a partial ID list.
+
+All reads accept optional `--chat-id`, `--chat-title`, `--session-id`, `--session-title`,
+`--agent-id` and `--agent-name` labels (nonempty, at most 200 characters), with the
+same `activity_context` fields in Python. Read-chain labels merge across segments;
+conflicting values fail before database access. Recording is automatic when all
+labels are omitted. These labels identify known callers; they do not discover chat
+ancestry or require agents to write journal contents.
+
+The five-second read deadline remains unchanged. History persistence has a separate
+short lock budget of at most one second after the snapshot closes. A recording
+failure emits a warning on stderr and does not discard a successful graph read;
+the warning means that access may be missing from history. A process crash or
+stdout delivery failure is not proof of successful caller receipt. References
+describe results prepared for return, not proof that the agent understood them.
 
 Values preserve SQLite storage type; blobs are hexadecimal, nulls explicit. Text/blob fields have bounded previews (roughly 32 KiB of preview content per row, at most 16 KiB per field, with additional JSON/type metadata); lengths and truncation are marked. This is an investigation record, not a complete backup of long values. All source tables may contain private content, and the journal retains deleted content. Export and protect the database accordingly. History has no automatic disk pruning; it increases database size and write work. Back up and prune deliberately if needed. Deleting log rows also cleans their element links even when foreign-key enforcement is off.
 

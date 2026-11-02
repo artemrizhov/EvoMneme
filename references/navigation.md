@@ -50,7 +50,14 @@ The active graph consists of current nodes and current edges whose endpoints are
 
 Available evidence retains its own validity labels, including stale attachments when present. Seeing an attachment on a current card does not promote that attachment to current evidence; inspect its status and verify the source.
 
-Each command resolves names, reads cards/evidence/counts and renders results from one read snapshot. Separate commands can observe intervening maintenance: the count shown on a card describes that card's snapshot, not a lock on the next command. Navigation opens the database read-only, without automatic history installation or graph maintenance.
+Each command resolves names, reads cards/evidence/counts and renders results from one read snapshot. Separate commands can observe intervening maintenance: the count shown on a card describes that card's snapshot, not a lock on the next command. Graph queries use a read-only connection; the tool automatically records access in the same database's existing [activity history](change-history.md) through a separate write connection. Navigation does not maintain graph data. No manual journal entry or recording flag is needed.
+
+Optional `--chat-id`, `--chat-title`, `--session-id`, `--session-title`, `--agent-id`
+and `--agent-name` identify known callers; omission does not disable recording.
+History is persisted after the read snapshot closes. A recording failure produces
+an explicit stderr warning while retaining a successful read result. See
+[automatic graph-read activity](change-history.md#automatic-graph-read-activity)
+for chain behavior, identity merging and recording limits.
 
 ## Names you can understand and copy
 

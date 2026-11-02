@@ -176,11 +176,14 @@ class ReferencesTests(unittest.TestCase):
         self.assertNotIn('not-recursive', result)
         self.assertNotIn('id: outside', result)
 
-    def test_readonly_snapshot_no_history_install_or_side_effects(self):
-        before = hashlib.sha256(self.path.read_bytes()).hexdigest()
-        references(self.connection, ['missing.py'])
-        self.assertEqual(before, hashlib.sha256(self.path.read_bytes()).hexdigest())
+    def test_readonly_graph_snapshot_with_separate_activity_history(self):
         with self.db() as db:
+            before = {t: db.execute('SELECT * FROM ' + t).fetchall() for t in ('nodes', 'edges', 'evidence')}
+        references(self.connection, ['missing.py'])
+        with self.db() as db:
+            self.assertEqual({t: db.execute('SELECT * FROM ' + t).fetchall() for t in before}, before)
+            self.assertEqual(db.execute('SELECT count(*) FROM evomneme_change_calls').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT count(*) FROM evomneme_change_log').fetchone()[0], 0)
             tables = list(db.execute("SELECT name,sql FROM sqlite_schema ORDER BY name"))
             self.assertEqual(db.execute('SELECT count(*) FROM history').fetchone()[0], 0)
             db.execute('PRAGMA journal_mode=WAL')

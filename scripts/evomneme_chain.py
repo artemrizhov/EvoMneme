@@ -2,7 +2,6 @@
 import argparse
 import sqlite3
 
-from evomneme_context import ReadContext
 from evomneme_mutate import MutationSession, run as mutate
 from evomneme_navigate import fields, navigate, quote_command
 from evomneme_references import references
@@ -61,7 +60,21 @@ def parse_segments(parser, segments):
             parsed.append(args)
         except ValueError as exc:
             raise ValueError('Segment ' + str(index) + ': ' + str(exc)) from exc
+    if category == 'read':
+        read_context(parsed)
     return parsed, category
+
+
+def read_context(parsed):
+    """An aggregate read call has one consistent, explicitly known identity."""
+    from evomneme_write_options import context
+    merged = {}
+    for index, args in enumerate(parsed, 1):
+        for key, value in context(args).items():
+            if key in merged and merged[key] != value:
+                raise ValueError('Segment ' + str(index) + ': Conflicting read-chain activity ' + key)
+            merged[key] = value
+    return merged
 
 
 def retry_command(segments, shell):
@@ -81,12 +94,16 @@ def result_group(index, args, output):
     return header + ''.join(('  ' + line if line else '') + '\n' for line in output.splitlines())
 
 
-def run(connection, parsed, category, segments):
+def run(connection, parsed, category, segments, shared=None):
     """Buffer all results; write chains commit only after aggregate validation."""
+    if category == 'read' and shared is None:
+        from evomneme_read_activity import read_call
+        return read_call(connection, 'chain', lambda active: run(connection, parsed, category, segments, shared=active),
+                         timeout=TIMEOUT_SECONDS, activity_context=read_context(parsed))
     active = None
     index = 1
     try:
-        active = (ReadContext(connection, timeout=TIMEOUT_SECONDS) if category == 'read' else
+        active = (shared if category == 'read' else
                   MutationSession(connection, timeout=TIMEOUT_SECONDS))
         unlimited = category == 'read' and any(args.all_output for args in parsed)
         chunks, used = [], 0
@@ -116,5 +133,5 @@ def run(connection, parsed, category, segments):
     except (ValueError, OSError, sqlite3.Error) as exc:
         raise ValueError('Segment ' + str(index) + ': ' + str(exc)) from exc
     finally:
-        if active is not None:
+        if active is not None and shared is None:
             active.close()

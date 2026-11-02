@@ -179,6 +179,7 @@ class Reader:
 
     def node_card(self, node):
         self.check_time()
+        self.context.returned('nodes', node['id'])
         return dict(argument=self.argument(node), kind=node['kind'], title=node['title'],
                     summary=node['summary'], confidence=node['confidence'], validity=node['validity'],
                     locator=location(node), evidence=self.evidence(node=node['id']), link_count=self.count([node['id']]),
@@ -190,6 +191,8 @@ class Reader:
         target = self.db.execute('SELECT * FROM nodes WHERE scope_id=? AND id=?', (self.scope, edge['target_id'])).fetchone()
         direction = 'self' if source['id'] == target['id'] else 'outgoing' if source['id'] == root_id else 'incoming'
         neighbor = target if source['id'] == root_id else source
+        self.context.returned('edges', edge['id'])
+        self.context.returned('nodes', neighbor['id'], count=False)
         card = dict(direction=direction, kind=edge['kind'], summary=edge['summary'], confidence=edge['confidence'],
                     validity=edge['validity'], resolution=edge['resolution'],
                     neighbor=dict(argument=self.argument(neighbor), title=neighbor['title'],
@@ -197,15 +200,23 @@ class Reader:
                     nodes_command=quote_command(['evomneme', 'nodes', self.command_argument(neighbor)],
                                                 self.connection.shell))
         if pair:
+            self.context.returned('nodes', source['id'], count=False)
+            self.context.returned('nodes', target['id'], count=False)
             card.update(source=self.argument(source), target=self.argument(target),
                         locator=location(edge), evidence=self.evidence(edge=edge['id']))
         return card
 
 
-def navigate(connection, command, names, all_output=False, timeout=TIMEOUT_SECONDS, shared=None):
+def navigate(connection, command, names, all_output=False, timeout=TIMEOUT_SECONDS, shared=None, activity_context=None):
     """Return one complete UTF-8 text result or raise; never emit partial cards."""
     if command not in ('nodes', 'links') or not names or (command == 'links' and len(names) > 2):
         raise NavigationError('Use nodes NAME [NAME ...], links NAME, or links NAME1 NAME2.')
+    if shared is None:
+        from evomneme_read_activity import read_call
+        return read_call(connection, command,
+                         lambda active: navigate(connection, command, names, all_output, timeout, shared=active),
+                         timeout=timeout, error=NavigationError, activity_context=activity_context,
+                         timeout_message='Navigation timed out; no complete result.', read_error='Cannot read the bound graph')
     reader = None
     try:
         reader = Reader(connection, timeout=timeout, shared=shared)
@@ -247,6 +258,7 @@ def navigate(connection, command, names, all_output=False, timeout=TIMEOUT_SECON
                                              source_completeness='not established'))):
             append(line)
         reader.check_time()
+        reader.context.completed += 1
         return ''.join(chunks)
     except sqlite3.Error as exc:
         if (reader is not None and time.monotonic() >= reader.deadline) or 'interrupted' in str(exc).lower():

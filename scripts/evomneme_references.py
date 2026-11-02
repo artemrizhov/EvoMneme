@@ -130,6 +130,7 @@ class ReferenceReader:
         if row is None:
             card.update(scope_id=self.connection.scope, id=id_, status='missing owner/endpoint row')
             return card
+        self.context.returned(table, id_)
         card['stored'] = row
         if table == 'nodes':
             for detail in ('symbol_details', 'file_details'):
@@ -140,8 +141,14 @@ class ReferenceReader:
         return card
 
 
-def references(connection, paths, all_output=False, timeout=TIMEOUT_SECONDS, shared=None):
+def references(connection, paths, all_output=False, timeout=TIMEOUT_SECONDS, shared=None, activity_context=None):
     """Return the entire guarded UTF-8 result; caller alone writes stdout."""
+    if shared is None:
+        from evomneme_read_activity import read_call
+        return read_call(connection, 'references',
+                         lambda active: references(connection, paths, all_output, timeout, shared=active),
+                         timeout=timeout, error=ReferencesError, activity_context=activity_context,
+                         timeout_message='References timed out; no complete result.', read_error='Cannot read bound references')
     reader = None
     try:
         reader = ReferenceReader(connection, timeout=timeout, shared=shared)
@@ -206,6 +213,7 @@ def references(connection, paths, all_output=False, timeout=TIMEOUT_SECONDS, sha
         reader.check_time()
         result = ''.join(chunks)
         reader.check_time()
+        reader.context.completed += 1
         return result
     except sqlite3.Error as exc:
         if (reader is not None and time.monotonic() >= reader.deadline) or 'interrupted' in str(exc).lower():
@@ -224,7 +232,10 @@ def configure_parser(subparsers):
     parser.add_argument('paths', nargs='+', help='Exact stored source_path; use -- before leading-dash paths')
     parser.add_argument('--all', action='store_true', dest='all_output', help='Remove the 64 KiB output guard; in a read chain opts out for the entire chain; keep the whole-chain five-second deadline')
     parser.set_defaults(references=True)
+    from evomneme_read_activity import configure
+    configure(parser)
 
 
 def run(connection, args):
-    return references(connection, args.paths, all_output=args.all_output)
+    from evomneme_write_options import context
+    return references(connection, args.paths, all_output=args.all_output, activity_context=context(args))

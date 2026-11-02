@@ -22,6 +22,8 @@ def build_parser(parser_class=argparse.ArgumentParser):
                                    '-- makes the literal remainder the last segment. Any read-segment --all opts out for the entire chain.')
         sub.add_argument('names', metavar='NAME', nargs='+')
         sub.add_argument('--all', action='store_true', dest='all_output', help='Allow complete output above 64 KiB; in a read chain opts out for the entire chain; five-second deadline remains.')
+        from evomneme_read_activity import configure as configure_read_activity
+        configure_read_activity(sub)
     configure_parser(subparsers)
     configure_install(subparsers)
     configure_mutations(subparsers)
@@ -55,7 +57,8 @@ def main(argv=None):
             elif getattr(args, 'mutation', False):
                 output = run_mutation(connection, args)
             else:
-                output = navigate(connection, args.command, args.names, all_output=args.all_output)
+                from evomneme_write_options import context
+                output = navigate(connection, args.command, args.names, all_output=args.all_output, activity_context=context(args))
         # Match the UTF-8 byte guard even with Windows newline/locale defaults.
         if hasattr(sys.stdout, 'buffer'):
             sys.stdout.buffer.write(output.encode('utf-8'))

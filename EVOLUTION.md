@@ -2,6 +2,44 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-03 — Record graph reads automatically through the access tool
+
+The user clarified that activity history must be recorded by the access tool,
+without manual journal entries by the agent. Bound navigation previously bypassed
+the automatic SQL-call history, leaving ordinary graph reads invisible to the viewer.
+The graph CLI now records reads in the existing format-2 journal while preserving
+read-only graph snapshots. History writes happen separately after the snapshot closes
+and revalidate the bound store. No base-schema change or new dependency is required.
+
+Standalone reads and complete read chains produce one event each. Returned graph
+references come from accepted results; failed buffered results produce no returned
+references. Optional known caller labels do not gate recording. A history failure
+is visible on stderr without discarding successful graph output; recording therefore
+remains an observation aid, not a guarantee of lossless audit or caller receipt.
+
+Validation: 104 related tests passed across navigation, references, diagnostics,
+chains, write controls, automatic history and journal suites, including 13 focused
+read-activity cases. They cover unchanged graph rows, exact/Unicode references
+through the viewer API, rejected output, failed chains, binding changes, suspended
+and corrupt journals, and one cumulative history-lock budget. Of 30 broader viewer
+tests, 28 passed; two JavaScript harness failures involve concurrent viewer changes
+outside this task. Windows subprocess/HTTP checks required same-command sandbox
+escalation. No browser visual verification or lossless-audit guarantee is claimed.
+
+## 2026-11-03 — Distinguish read, update, create and delete activity
+
+Activity colors now distinguish reads (yellow), updates (blue), creations
+(green) and deletions (red) for live pulses and retained/history highlighting.
+Journal entity phases determine the operation; deleting evidence or details
+updates the attached entity rather than claiming the entity was deleted.
+Deleted geometry cached from the visible slice uses a separate dashed canvas
+overlay, preserving live topology, layout and pathfinding in both renderers.
+Cached history deletions can stay highlighted; unknown geometry is not invented.
+The cache is bounded at 10,000 removed elements and clears on graph-filter changes.
+The existing 300 ms transitions and accelerating 5 second fade are retained.
+Regressions cover operation phases, identity changes, attachment deletion,
+ghost timing/retention, unchanged topology and camera/device-pixel transforms.
+
 ## 2026-11-02 — Make quick highlight transitions perceptible
 
 User feedback found 100 ms highlighting too abrupt. Access flashes now rise

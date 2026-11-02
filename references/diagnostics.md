@@ -32,3 +32,8 @@ or infer retrieval usefulness from storage or graph size.
 Both commands use a shared five-second read deadline and a complete 64 KiB output
 guard; `--all` removes the output guard, not the deadline. Diagnostics inspect data
 without repairing it. Preserve errors and incomplete checks in the handoff.
+
+The tool automatically records diagnostic access in [activity history](change-history.md).
+Graph queries remain read-only; history is written separately after the read snapshot
+closes. Diagnostic events describe table access without treating aggregate counts
+as returned graph elements. No manual journal entry or recording flag is needed.

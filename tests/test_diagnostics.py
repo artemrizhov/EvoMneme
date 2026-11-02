@@ -112,11 +112,15 @@ class DiagnosticsTests(unittest.TestCase):
         finally:
             reader.context.close()
 
-    def test_snapshot_no_writes_or_journal_changes(self):
-        before = hashlib.sha256(self.path.read_bytes()).hexdigest()
+    def test_snapshot_no_graph_writes_with_separate_activity(self):
+        with self.db() as db:
+            before = {t: db.execute('SELECT * FROM ' + t).fetchall() for t in ('nodes', 'edges', 'evidence')}
         diagnose(self.connection, self.args())
         diagnose(self.connection, self.args('stats'))
-        self.assertEqual(before, hashlib.sha256(self.path.read_bytes()).hexdigest())
+        with self.db() as db:
+            self.assertEqual({t: db.execute('SELECT * FROM ' + t).fetchall() for t in before}, before)
+            self.assertEqual(db.execute('SELECT count(*) FROM evomneme_change_calls').fetchone()[0], 2)
+            self.assertEqual(db.execute('SELECT count(*) FROM evomneme_change_log').fetchone()[0], 0)
         with self.db() as db:
             db.execute('PRAGMA journal_mode=WAL')
         shared = ReadContext(self.connection)
