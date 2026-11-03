@@ -2,6 +2,19 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-03 — Inspect selections in the expanded graph
+
+Expanded mode hid the selection inspector even though graph taps still loaded
+details. Reuse that inspector as a right-side sliding overlay, preserving graph
+geometry and the existing evidence, aggregate and Replay behavior. Only an
+explicit selection opens it; polling cannot reopen a dismissed panel. Close,
+Escape, outside pointer input, focus leaving the panel and window blur dismiss
+it. Internal focus changes preserve it, hidden controls are inert, and reduced
+motion disables the slide. Automated handler regressions cover nodes, edges,
+aggregates, Replay, focus transitions, dismissal, late responses and background
+refreshes. The viewer lifecycle regression passed. Real-browser animation and
+focus behavior remain unverified because the configured browser was unavailable.
+
 ## 2026-11-03 — Use the stored project title in the viewer
 
 Folder-derived headings could differ from a project's real name. Reuse the

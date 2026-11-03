@@ -20,7 +20,7 @@ const context=vm.createContext({console,performance,setTimeout,clearTimeout,
   requestAnimationFrame:fn=>setTimeout(fn,16).unref(),
   setInterval(fn,ms){const timer=setInterval(fn,ms);intervals.add(timer);return timer;},
   clearInterval(timer){intervals.delete(timer);clearInterval(timer);},
-  document:{hidden:true,getElementById:$,createElement:()=>element(),querySelectorAll:()=>[],activeElement:null},
+  document:{hidden:true,body:{classList:{contains:()=>false}},getElementById:$,createElement:()=>element(),querySelectorAll:()=>[],activeElement:null},
   location:{hash:'#token=fixture',pathname:'/'},sessionStorage:{getItem(){},setItem(){}},history:{replaceState(){}},
   URLSearchParams,AbortController,Option:function(value,label){this.value=value;this.label=label;},
   window:{addEventListener(){}},ResizeObserver:class{observe(){}},MemoryGraphLayout:graphLayout});

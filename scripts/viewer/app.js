@@ -1598,8 +1598,9 @@ function renderTimeline() {
 }
 function table(container,rows){container.replaceChildren();if(!rows.length){container.append(text('p','No rows.','hint'));return;}const el=document.createElement('table'),thead=document.createElement('thead'),head=document.createElement('tr'),columns=[...new Set(rows.flatMap(Object.keys))];columns.forEach(c=>head.append(text('th',c)));thead.append(head);el.append(thead);const body=document.createElement('tbody');for(const row of rows){const tr=document.createElement('tr');columns.forEach(c=>tr.append(text('td',typeof row[c]==='object'?JSON.stringify(row[c],null,2):row[c])));body.append(tr);}el.append(body);container.append(el);}
 function attributes(container,record){const dl=document.createElement('dl');for(const [key,value]of Object.entries(record)){dl.append(text('dt',key),text('dd',typeof value==='object'?JSON.stringify(value,null,2):value));}container.append(dl);}
-async function inspect(el) {
+async function inspect(el, reveal=false) {
   state.selected = el;
+  if (reveal) openInspector();
   const attrs = el.data('attributes');
   const container = $('detail');
   $('openGroup').classList.add('hidden');
@@ -1616,6 +1617,10 @@ async function inspect(el) {
     $('selectionActions').classList.add('hidden');
     $('openGroup').classList.toggle('hidden',!el.isNode());
     return;
+  }
+  if (reveal) {
+    container.replaceChildren(text('p','Loading selection…','hint'));
+    $('selectionActions').classList.add('hidden');
   }
   const data = await api('detail',{type:el.isNode()?'nodes':'edges',id:attrs.graph_id});
   if (state.selected !== el) return;
@@ -1654,7 +1659,7 @@ function openGroup(el) {
   state.offset = 0;
   refresh(true);
 }
-cy.on('tap','node,edge',event => {if(!event.target.removed())guarded(inspect)(event.target);});
+cy.on('tap','node,edge',event => {if(!event.target.removed())guarded(inspect)(event.target,true);});
 cy.on('dbltap','node',event => {
   if (state.replay) return;
   if (event.target.data('attributes')._aggregate) return openGroup(event.target);
@@ -1805,6 +1810,28 @@ async function exportPng() {
 }
 $('png').onclick=graphControl(exportPng);
 if(!token)showError(new Error('Open the complete viewer URL printed by the server, including its token.'));
+function openInspector() {
+  if (!document.body.classList.contains('graph-expanded')) return;
+  const panel=$('inspector');
+  panel.inert=false;
+  panel.classList.add('inspector-open');
+  panel.focus({preventScroll:true});
+}
+function closeInspector(restoreFocus=false) {
+  const panel=$('inspector');
+  if (!panel.classList.contains('inspector-open')) return;
+  panel.classList.remove('inspector-open');
+  panel.inert=document.body.classList.contains('graph-expanded');
+  if (restoreFocus) $('cy').focus({preventScroll:true});
+}
+$('closeInspector').onclick=()=>closeInspector(true);
+$('inspector').addEventListener('focusout',event=>{
+  if (!$('inspector').contains(event.relatedTarget)) closeInspector();
+});
+window.addEventListener('pointerdown',event=>{
+  if (!$('inspector').contains(event.target)) closeInspector();
+},true);
+window.addEventListener('blur',()=>closeInspector());
 function setGraphExpanded(expanded) {
   if (expanded && state.view !== 'graph') return;
   if(expanded) $('graphIdentity').append($('viewerBrand'),$('projectName'));
@@ -1813,6 +1840,8 @@ function setGraphExpanded(expanded) {
     $('headerActions').before($('projectName'));
   }
   document.body.classList.toggle('graph-expanded',expanded);
+  $('inspector').classList.remove('inspector-open');
+  $('inspector').inert=expanded;
   const button=$('expandGraph');
   button.setAttribute('aria-pressed',String(expanded));
   button.setAttribute('aria-label',expanded?'Restore page':'Expand graph');
@@ -1824,7 +1853,8 @@ $('expandGraph').onclick=()=>setGraphExpanded(!document.body.classList.contains(
 window.addEventListener('keydown',event=>{
   if (event.key==='Escape' && document.body.classList.contains('graph-expanded')) {
     event.preventDefault();
-    setGraphExpanded(false);
+    if ($('inspector').classList.contains('inspector-open')) closeInspector(true);
+    else setGraphExpanded(false);
   }
 });
 restoreVisualPreferences();

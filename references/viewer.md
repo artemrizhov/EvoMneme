@@ -151,7 +151,14 @@ page header, side panels, activity log and captions. Messages share a fixed-heig
 row with the saved-history status: right-aligned after a gap, truncated with an
 ellipsis and available in full on hover. The calculation timer appears only after
 one second, and disappears on completion or cancellation without shifting the graph.
-Use the inward-corner **Restore page** icon or Escape to return. This mode preserves the loaded graph,
+Selecting a node, relationship or aggregate slides the selection inspector in
+from the right without resizing the graph. It shows the same stored attributes,
+evidence and actions as the regular inspector; Replay retains historical-only
+details. Close it with its close button, Escape, a click outside, or by moving
+keyboard focus outside the panel or switching away from the browser window.
+Moving focus between controls inside the panel keeps it open. Background refreshes
+do not reopen a dismissed panel. The slide respects reduced-motion preferences.
+Use the inward-corner **Restore page** icon or Escape with the inspector closed to return. This mode preserves the loaded graph,
 filters and replay state, and also works in the public demo. Existing resize
 behavior applies: following fits the graph to the available space, while a
 manual view with following disabled retains its pan and zoom.

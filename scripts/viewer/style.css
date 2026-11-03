@@ -53,7 +53,7 @@ main>*{min-width:0;min-height:0}
 body:has(#graphView.hidden) #expandGraph{display:none}
 body.graph-expanded{height:100vh;height:100dvh;min-height:0;overflow:hidden}
 body.graph-expanded>header,body.graph-expanded>.demo-chrome,
-body.graph-expanded .sidebar,body.graph-expanded .inspector,
+body.graph-expanded .sidebar,
 body.graph-expanded .workspace>#notice,body.graph-expanded .workspace>footer,
 body.graph-expanded .workspace>.activity,body.graph-expanded nav .tab,
 body.graph-expanded .graph-caption{display:none!important}
@@ -96,3 +96,12 @@ body.graph-expanded #graphIdentity .project-title{font-size:18px;max-width:100%}
 #expandGraph svg{display:block;width:18px;height:18px}
 #expandGraph .restore-icon,body.graph-expanded #expandGraph .expand-icon{display:none}
 body.graph-expanded #expandGraph .restore-icon{display:block}
+
+/* Reuse the selection inspector as a nonmodal drawer over the expanded graph. */
+#closeInspector{display:none}
+body.graph-expanded .inspector{position:absolute;inset:0 0 0 auto;z-index:12;width:min(380px,90vw);height:100%;max-height:none;display:block;box-shadow:-12px 0 32px #0006;transform:translateX(100%);visibility:hidden;transition:transform .2s ease,visibility 0s linear .2s}
+body.graph-expanded .inspector.inspector-open{transform:translateX(0);visibility:visible;transition-delay:0s}
+body.graph-expanded .inspector .overview-panel{display:none}
+body.graph-expanded #closeInspector{display:block;float:right;margin:-6px 0 8px 12px;line-height:1;font-size:20px}
+body.graph-expanded .inspector:focus{outline:none}
+@media(prefers-reduced-motion:reduce){body.graph-expanded .inspector{transition:none}}
