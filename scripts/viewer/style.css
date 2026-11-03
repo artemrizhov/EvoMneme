@@ -72,12 +72,25 @@ header{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1
 @media(max-width:1100px){#connection{display:none}}
 @media(max-width:700px){header{height:auto;min-height:76px;padding:12px;grid-template-columns:minmax(0,1fr) auto;gap:12px}.project-title{grid-column:1/-1;grid-row:2;font-size:24px}.header-start{gap:8px}}
 #graphIdentity{display:none}
-.graph-status{margin:0;padding:7px 16px;border-bottom:1px solid var(--line);flex-shrink:0;overflow-wrap:anywhere}
-body.graph-expanded .workspace>nav{flex-wrap:nowrap;overflow-x:auto}
-body.graph-expanded .workspace>nav>*{flex-shrink:0}
-body.graph-expanded #graphIdentity{display:flex;align-items:center;gap:12px;min-width:0;flex:0 0 auto}
+#notice{display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0}
+#workerStatus{font-variant-numeric:tabular-nums}
+#workerStatus:empty{display:none}
+body.graph-expanded .workspace>#notice:has(#workerStatus:not(:empty)){display:flex!important}
+body.graph-expanded #noticeText{display:none}
+#graphButtons{display:contents}
+body.graph-expanded .workspace>nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+body.graph-expanded .workspace>nav>.spacer{display:none}
+body.graph-expanded #graphIdentity{display:contents}
+body.graph-expanded #graphIdentity .brand{grid-column:1;grid-row:1;justify-self:start}
+body.graph-expanded #graphIdentity .project-title{grid-column:2;grid-row:1;width:100%}
+body.graph-expanded #graphButtons{grid-column:3;grid-row:1;display:flex;justify-self:end;align-items:center;gap:5px;max-width:100%;min-width:0;overflow-x:auto}
+body.graph-expanded #graphButtons>*{flex-shrink:0}
 body.graph-expanded #graphIdentity .mark{width:26px;height:26px;font-size:22px;border-radius:8px;flex-shrink:0}
 body.graph-expanded #graphIdentity .brand{gap:8px}
 body.graph-expanded #graphIdentity .brand strong{font-size:14px;letter-spacing:0}
 body.graph-expanded #graphIdentity .subtitle{display:none}
-body.graph-expanded #graphIdentity .project-title{font-size:18px;max-width:30vw}
+body.graph-expanded #graphIdentity .project-title{font-size:18px;max-width:100%}
+#expandGraph{display:inline-flex;align-items:center;justify-content:center;padding:6px;width:32px;height:32px}
+#expandGraph svg{display:block;width:18px;height:18px}
+#expandGraph .restore-icon,body.graph-expanded #expandGraph .expand-icon{display:none}
+body.graph-expanded #expandGraph .restore-icon{display:block}

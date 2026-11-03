@@ -2,6 +2,17 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-03 — Use icons for graph expansion
+
+The graph expansion control now uses outward/inward corner icons to save toolbar
+space. Hover text and accessible names retain the expand/restore actions and the
+Escape hint; the existing toggle and keyboard behavior remain unchanged. Expanded
+mode centers the project heading between equal side columns, with the compact
+brand on the left and horizontally scrollable controls on the right. The layout
+timer names the calculation without an ambiguous On/Off prefix and shares the
+common message row. It appears only during calculation, including expanded
+mode, and disappears on completion or cancellation.
+
 ## 2026-11-03 — Keep expanded graph identity and layout status visible
 
 Expanded mode previously hid the project identity and the sidebar's background

@@ -343,7 +343,7 @@ async function openReplay() {
   state.selectedActivity=state.selectedSession=null;
   state.previous=null;state.filterKey='';
   cy.elements().removeClass('hidden touched recordedChange recordedCreate recordedDelete path replayChanged');
-  $('notice').textContent='History replay · whole database; graph and activity filters are suspended. '
+  $('noticeText').textContent='History replay · whole database; graph and activity filters are suspended. '
     +'Layouts are recalculated. Evidence and detail tables are not reconstructed. '
     +(engine.truncated?'Some saved text values are truncated. ':'')
     +(!data.journal.enabled || data.journal.untracked_tables?.length?'Recording has gaps or is suspended; reconstruction may be incomplete. ':'')
@@ -400,6 +400,7 @@ async function requestedLayout(options={}) {
 }
 function cancelReplayLayout(r) {
   if(!r)return;
+  if(layoutOwnerActive(r))$('workerStatus').textContent='';
   r.layoutEpoch=(r.layoutEpoch || 0)+1;
   r.layoutPending=null;clearTimeout(r.layoutTimer);r.layoutTimer=null;
   backgroundLayout.cancel();
@@ -436,11 +437,11 @@ async function runReplayLayout(r) {
   const options=r.layoutPending,epoch=r.layoutEpoch || 0;
   r.layoutPending=null;r.layoutRunning=true;
   replayStatus();
-  if(state.workerLayoutEnabled)$('workerStatus').textContent='On · calculating layout in background…';
+  if(state.workerLayoutEnabled)$('workerStatus').textContent='Calculating layout in background…';
   const started=performance.now();let statusTimer;
   const reportElapsed=()=>{
     if(!layoutOwnerActive(r) || !state.workerLayoutEnabled || (r.layoutEpoch || 0)!==epoch)return;
-    $('workerStatus').textContent=`On · calculating layout in background · ${Math.floor((performance.now()-started)/1000)} s`;
+    $('workerStatus').textContent=`Calculating layout in background · ${Math.floor((performance.now()-started)/1000)} s`;
     statusTimer=setTimeout(reportElapsed,1000);
   };
   statusTimer=setTimeout(reportElapsed,1000);
@@ -456,8 +457,8 @@ async function runReplayLayout(r) {
   finally {
     clearTimeout(statusTimer);
     r.layoutRunning=false;replayStatus();startReplayLayout(r);
-    if(layoutOwnerActive(r) && state.workerLayoutEnabled && !r.layoutPending)
-      $('workerStatus').textContent='On · layout calculated in background.';
+    if(layoutOwnerActive(r) && !r.layoutPending)
+      $('workerStatus').textContent='';
   }
 }
 async function drainGraphWork() {
@@ -681,16 +682,14 @@ function setAcceleration(enabled) {
 function setWorkerLayout(enabled) {
   cancelReplayLayout(state.replay);cancelReplayLayout(liveLayout);backgroundLayout.cancel();
   state.workerError='';
+  $('workerStatus').textContent='';
   if(enabled && typeof Worker!=='function') {
     state.workerLayoutEnabled=false;$('experimentalWorker').checked=false;
-    $('workerStatus').textContent='Background workers are unavailable. Layout runs on the main thread.';
+    $('noticeText').textContent='Background workers are unavailable. Layout runs on the main thread.';
     saveVisualPreferences();
     return;
   }
   state.workerLayoutEnabled=enabled;$('experimentalWorker').checked=enabled;
-  $('workerStatus').textContent=enabled
-    ?'On · layout runs in a background thread; animation can continue during calculation.'
-    :'Off · layout runs on the main thread.';
   saveVisualPreferences();
 }
 $('experimentalAcceleration').onchange=graphControl(()=>setAcceleration($('experimentalAcceleration').checked));
@@ -893,7 +892,7 @@ async function layout(options = {},beforeApply=null,work=state.activeWork) {
       backgroundError=error.message;
       setWorkerLayout(false);
       state.workerError=backgroundError;
-      $('workerStatus').textContent='Background layout failed: '+error.message+'. Background layout disabled; large graphs use a quick grid overview.';
+      $('noticeText').textContent='Background layout failed: '+error.message+'. Background layout disabled; large graphs use a quick grid overview.';
     }
   }
   if(guard && await guard()===false)return;
@@ -904,7 +903,7 @@ async function layout(options = {},beforeApply=null,work=state.activeWork) {
   if(cy.nodes().length>800 && settings.name==='cose') {
     settings.overview=true;
     const failure=backgroundError || state.workerError;
-    $('workerStatus').textContent=(failure?'Background layout failed: '+failure+'. ':'')
+    $('noticeText').textContent=(failure?'Background layout failed: '+failure+'. ':'')
       +'Large graph: quick grid overview keeps controls responsive. Enable background layout for force-directed positioning.';
   }
   MemoryGraphLayout.arrange(cy,settings);
@@ -1128,7 +1127,7 @@ async function refresh(resetLayout=false) {
     if (cy.scratch('memory-layout')==='grid-large') notices.push('Large graph: grid overview keeps all selected nodes and links available. Zoom in, filter, or group by layer/type to inspect structure.');
     if (cy.scratch('memory-layout')==='grid-overview') notices.push('Quick grid overview: all selected nodes and links are loaded. Enable Experimental background layout for force-directed positioning.');
     notices.push(...(data.projection_warnings || []));
-    $('notice').textContent = notices.join(' ') || 'Showing the complete graph for this selection. Select elements to inspect evidence and stored claims.';
+    $('noticeText').textContent = notices.join(' ') || 'Showing the complete graph for this selection. Select elements to inspect evidence and stored claims.';
     renderTables(data.tables);
     if (state.view === 'tables') await loadTable();
     if (state.selected) await inspect(state.selected);
@@ -1814,7 +1813,7 @@ function setGraphExpanded(expanded) {
   document.body.classList.toggle('graph-expanded',expanded);
   const button=$('expandGraph');
   button.setAttribute('aria-pressed',String(expanded));
-  button.textContent=expanded?'Restore page':'Expand graph';
+  button.setAttribute('aria-label',expanded?'Restore page':'Expand graph');
   button.title=expanded?'Restore page (Escape)':'Expand graph to fill the page';
   // The existing ResizeObserver adapts the canvas without replacing graph state.
   button.focus({preventScroll:true});

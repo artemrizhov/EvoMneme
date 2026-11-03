@@ -237,7 +237,8 @@ async function main(){
   assert.match($('accelerationStatus').textContent,/unavailable/);
   run('setWorkerLayout(true)');
   assert.equal(run('state.workerLayoutEnabled'),false);
-  assert.match($('workerStatus').textContent,/unavailable/);
+  assert.match($('noticeText').textContent,/unavailable/);
+  assert.equal($('workerStatus').textContent,'');
   $('cy').getBoundingClientRect=()=>({width:900,height:600});
   run('const realReplaceRenderer=replaceRenderer,rendererInit=cy.initRenderer;const rendererModes=[];cy.initRenderer=options=>{rendererInit.call(cy,{...options,name:"null"});if(options.webgl)cy.renderer().drawing={atlasManager:{getRenderTypeOpts:()=>({getKey:()=>"label_0",isVisible:()=>true})}};};replaceRenderer=enabled=>{rendererModes.push(enabled);realReplaceRenderer(enabled);};');
   const createElement=context.document.createElement;
@@ -266,7 +267,8 @@ async function main(){
   assert.equal($('experimentalWorker').checked,false);
   assert.equal(run('state.acceleration'),true,'A worker failure must not disable GPU rendering');
   assert.equal($('experimentalAcceleration').checked,true);
-  assert.match($('workerStatus').textContent,/Background layout failed.*quick grid/);
+  assert.match($('noticeText').textContent,/Background layout failed.*quick grid/);
+  assert.equal($('workerStatus').textContent,'');
   run('setAcceleration(false);setWorkerLayout(true);');
   assert.equal(run('state.acceleration'),false);
   assert.equal(run('state.workerLayoutEnabled'),true,'Background layout must also work without GPU rendering');
@@ -283,7 +285,7 @@ async function main(){
   assert.equal(run('cy.nodes().length'),4644);assert.equal(run('cy.edges().length'),4643);
   assert.equal(run('cy.scratch("memory-layout")'),'grid-overview');
   assert.equal(run('state.busy'),false);
-  assert.match($('workerStatus').textContent,/Enable background layout/);
+  assert.match($('noticeText').textContent,/Enable background layout/);
   let stoppedWorkers=0;
   context.Worker=class {postMessage(){}terminate(){stoppedWorkers++;}};
   $('experimentalWorker').checked=true;
@@ -296,10 +298,12 @@ async function main(){
   assert.equal(run('state.busy'),false,'Enabling background layout must not wait for a worker result');
   await new Promise(resolve=>setTimeout(resolve,20));
   assert.equal(run('liveLayout.layoutRunning'),true);
+  assert.match($('workerStatus').textContent,/^Calculating layout in background/);
   await run('graphAction(()=>{state.responsiveWhileCalculating=true;})');
   assert.equal(run('state.responsiveWhileCalculating'),true,'Graph actions must run while the worker is calculating');
   assert.equal(run('liveLayout.layoutRunning'),true,'Unrelated work must not cancel the background calculation');
   run('setWorkerLayout(false)');
+  assert.equal($('workerStatus').textContent,'','Cancellation removes the calculation message immediately');
   await settleLiveLayout();
   assert.equal(run('state.busy'),false,'Disabling a pending worker must release startup work');
   assert.equal(run('cy.scratch("memory-layout")'),'grid-overview');
@@ -390,7 +394,7 @@ async function main(){
   assert.equal(run('state.replay.index'),0,'Back must undo exactly one saved change');
   assert.equal($('replayBack').disabled,true);
   assert.equal($('live').checked,false);
-  assert.match($('notice').textContent,/whole database/);
+  assert.match($('noticeText').textContent,/whole database/);
   assert.match($('replayBoundary').textContent,/Baseline: 1 nodes, 0 relationships, 1 components/);
   const scaleReplayIndex=run('state.replay.index'),scaleReplayView=run('JSON.stringify({zoom:cy.zoom(),pan:cy.pan()})');
   $('elementScale').value='150';$('elementScale').onchange();
