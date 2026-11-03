@@ -2,6 +2,16 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-03 — Stabilize graph toolbar and messages
+
+User feedback rejected scrolling controls and viewport-centered headings.
+Expanded mode now gives the logo and buttons their natural widths, centering
+the heading in the space between them; narrow button groups wrap without scroll.
+Messages occupy a fixed-height slot to the right of the saved-history status,
+with a gap, right alignment, ellipsis and full hover text. The layout counter
+waits one second before appearing, so fast calculations stay silent and status
+changes cannot resize the graph.
+
 ## 2026-11-03 — Use icons for graph expansion
 
 The graph expansion control now uses outward/inward corner icons to save toolbar

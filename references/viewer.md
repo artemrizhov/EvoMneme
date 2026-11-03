@@ -137,11 +137,12 @@ When Node.js is already available for development, the Python suite also runs th
 
 The **Expand graph** corner icon (named in its hover tooltip) fills the page with the graph, its toolbar and saved-history
 controls. A compact logo and the project heading share one row with the toolbar
-buttons, with the project centered between equal side columns and the logo on
-the left; narrow windows can scroll the right-hand controls. It hides the remaining
-page header, side panels, activity log and captions. While layout is calculated,
-its elapsed counter appears in the common message row above the graph in both
-page modes; it disappears when calculation finishes or is disabled.
+buttons, with the project centered in the space between the logo and controls.
+Controls wrap on narrow windows without a scrollbar. It hides the remaining
+page header, side panels, activity log and captions. Messages share a fixed-height
+row with the saved-history status: right-aligned after a gap, truncated with an
+ellipsis and available in full on hover. The calculation timer appears only after
+one second, and disappears on completion or cancellation without shifting the graph.
 Use the inward-corner **Restore page** icon or Escape to return. This mode preserves the loaded graph,
 filters and replay state, and also works in the public demo. Existing resize
 behavior applies: following fits the graph to the available space, while a

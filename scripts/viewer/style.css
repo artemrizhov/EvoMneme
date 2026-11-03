@@ -72,18 +72,20 @@ header{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1
 @media(max-width:1100px){#connection{display:none}}
 @media(max-width:700px){header{height:auto;min-height:76px;padding:12px;grid-template-columns:minmax(0,1fr) auto;gap:12px}.project-title{grid-column:1/-1;grid-row:2;font-size:24px}.header-start{gap:8px}}
 #graphIdentity{display:none}
-#notice{display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0}
+.replay-summary{display:flex;align-items:center;gap:24px;flex:0 0 100%;min-width:0;height:18px}
+.replay-summary #replayStatus{flex:0 1 auto;max-width:60%;min-width:0}
+.replay-summary #notice{flex:1;min-width:0;height:18px;min-height:0;line-height:18px;padding:0;background:transparent;text-align:right}
+#noticeText,#workerStatus{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #workerStatus{font-variant-numeric:tabular-nums}
 #workerStatus:empty{display:none}
-body.graph-expanded .workspace>#notice:has(#workerStatus:not(:empty)){display:flex!important}
-body.graph-expanded #noticeText{display:none}
+#notice:has(#workerStatus:not(:empty)) #noticeText{display:none}
 #graphButtons{display:contents}
-body.graph-expanded .workspace>nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+body.graph-expanded .workspace>nav{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px}
 body.graph-expanded .workspace>nav>.spacer{display:none}
 body.graph-expanded #graphIdentity{display:contents}
 body.graph-expanded #graphIdentity .brand{grid-column:1;grid-row:1;justify-self:start}
 body.graph-expanded #graphIdentity .project-title{grid-column:2;grid-row:1;width:100%}
-body.graph-expanded #graphButtons{grid-column:3;grid-row:1;display:flex;justify-self:end;align-items:center;gap:5px;max-width:100%;min-width:0;overflow-x:auto}
+body.graph-expanded #graphButtons{grid-column:3;grid-row:1;display:flex;justify-self:end;align-items:center;justify-content:flex-end;gap:5px;max-width:50vw;min-width:0;flex-wrap:wrap}
 body.graph-expanded #graphButtons>*{flex-shrink:0}
 body.graph-expanded #graphIdentity .mark{width:26px;height:26px;font-size:22px;border-radius:8px;flex-shrink:0}
 body.graph-expanded #graphIdentity .brand{gap:8px}

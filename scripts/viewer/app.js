@@ -15,6 +15,8 @@ const palette = ['#79b8e8','#86d8b6','#d5a0e8','#f0bf79','#e58e99','#a5b6eb','#c
 const activityColors={read:'#f7cd71',update:'#79b8ff',create:'#71eab8',delete:'#ff7b87'};
 function text(tag, value, className) { const el = document.createElement(tag); el.textContent = String(value ?? ''); if (className) el.className = className; return el; }
 function setConnectionStatus(value) { const el=$('connection');el.textContent=value;el.title=value; }
+function setNotice(value) { const el=$('noticeText');el.textContent=value;el.title=value; }
+function setLayoutStatus(value) { const el=$('workerStatus');el.textContent=value;el.title=value; }
 function showError(error, persistent=false) { $('error').textContent = error.message || String(error); $('error').classList.remove('hidden'); clearTimeout(showError.timer); if (!persistent) showError.timer = setTimeout(() => $('error').classList.add('hidden'), 12000); }
 const graphCancelled=new Error('Graph work superseded');
 function checkGraphWork(work=state.activeWork) {if(work?.cancelled)throw graphCancelled;}
@@ -343,11 +345,11 @@ async function openReplay() {
   state.selectedActivity=state.selectedSession=null;
   state.previous=null;state.filterKey='';
   cy.elements().removeClass('hidden touched recordedChange recordedCreate recordedDelete path replayChanged');
-  $('noticeText').textContent='History replay · whole database; graph and activity filters are suspended. '
+  setNotice('History replay · whole database; graph and activity filters are suspended. '
     +'Layouts are recalculated. Evidence and detail tables are not reconstructed. '
     +(engine.truncated?'Some saved text values are truncated. ':'')
     +(!data.journal.enabled || data.journal.untracked_tables?.length?'Recording has gaps or is suspended; reconstruction may be incomplete. ':'')
-    +'Only changes since history recording began are available.';
+    +'Only changes since history recording began are available.');
   $('replayOpen').disabled=true;$('replayPlay').disabled=false;
   $('replayExit').disabled=false;$('replayPosition').disabled=false;
   // graphAction finishes loading before the coalescing renderer takes over.
@@ -400,7 +402,7 @@ async function requestedLayout(options={}) {
 }
 function cancelReplayLayout(r) {
   if(!r)return;
-  if(layoutOwnerActive(r))$('workerStatus').textContent='';
+  if(layoutOwnerActive(r))setLayoutStatus('');
   r.layoutEpoch=(r.layoutEpoch || 0)+1;
   r.layoutPending=null;clearTimeout(r.layoutTimer);r.layoutTimer=null;
   backgroundLayout.cancel();
@@ -437,11 +439,11 @@ async function runReplayLayout(r) {
   const options=r.layoutPending,epoch=r.layoutEpoch || 0;
   r.layoutPending=null;r.layoutRunning=true;
   replayStatus();
-  if(state.workerLayoutEnabled)$('workerStatus').textContent='Calculating layout in background…';
+  setLayoutStatus('');
   const started=performance.now();let statusTimer;
   const reportElapsed=()=>{
     if(!layoutOwnerActive(r) || !state.workerLayoutEnabled || (r.layoutEpoch || 0)!==epoch)return;
-    $('workerStatus').textContent=`Calculating layout in background · ${Math.floor((performance.now()-started)/1000)} s`;
+    setLayoutStatus(`Calculating layout in background · ${Math.floor((performance.now()-started)/1000)} s`);
     statusTimer=setTimeout(reportElapsed,1000);
   };
   statusTimer=setTimeout(reportElapsed,1000);
@@ -458,7 +460,7 @@ async function runReplayLayout(r) {
     clearTimeout(statusTimer);
     r.layoutRunning=false;replayStatus();startReplayLayout(r);
     if(layoutOwnerActive(r) && !r.layoutPending)
-      $('workerStatus').textContent='';
+      setLayoutStatus('');
   }
 }
 async function drainGraphWork() {
@@ -682,10 +684,10 @@ function setAcceleration(enabled) {
 function setWorkerLayout(enabled) {
   cancelReplayLayout(state.replay);cancelReplayLayout(liveLayout);backgroundLayout.cancel();
   state.workerError='';
-  $('workerStatus').textContent='';
+  setLayoutStatus('');
   if(enabled && typeof Worker!=='function') {
     state.workerLayoutEnabled=false;$('experimentalWorker').checked=false;
-    $('noticeText').textContent='Background workers are unavailable. Layout runs on the main thread.';
+    setNotice('Background workers are unavailable. Layout runs on the main thread.');
     saveVisualPreferences();
     return;
   }
@@ -892,7 +894,7 @@ async function layout(options = {},beforeApply=null,work=state.activeWork) {
       backgroundError=error.message;
       setWorkerLayout(false);
       state.workerError=backgroundError;
-      $('noticeText').textContent='Background layout failed: '+error.message+'. Background layout disabled; large graphs use a quick grid overview.';
+      setNotice('Background layout failed: '+error.message+'. Background layout disabled; large graphs use a quick grid overview.');
     }
   }
   if(guard && await guard()===false)return;
@@ -903,8 +905,8 @@ async function layout(options = {},beforeApply=null,work=state.activeWork) {
   if(cy.nodes().length>800 && settings.name==='cose') {
     settings.overview=true;
     const failure=backgroundError || state.workerError;
-    $('noticeText').textContent=(failure?'Background layout failed: '+failure+'. ':'')
-      +'Large graph: quick grid overview keeps controls responsive. Enable background layout for force-directed positioning.';
+    setNotice((failure?'Background layout failed: '+failure+'. ':'')
+      +'Large graph: quick grid overview keeps controls responsive. Enable background layout for force-directed positioning.');
   }
   MemoryGraphLayout.arrange(cy,settings);
 }
@@ -1127,7 +1129,7 @@ async function refresh(resetLayout=false) {
     if (cy.scratch('memory-layout')==='grid-large') notices.push('Large graph: grid overview keeps all selected nodes and links available. Zoom in, filter, or group by layer/type to inspect structure.');
     if (cy.scratch('memory-layout')==='grid-overview') notices.push('Quick grid overview: all selected nodes and links are loaded. Enable Experimental background layout for force-directed positioning.');
     notices.push(...(data.projection_warnings || []));
-    $('noticeText').textContent = notices.join(' ') || 'Showing the complete graph for this selection. Select elements to inspect evidence and stored claims.';
+    setNotice(notices.join(' ') || 'Showing the complete graph for this selection. Select elements to inspect evidence and stored claims.');
     renderTables(data.tables);
     if (state.view === 'tables') await loadTable();
     if (state.selected) await inspect(state.selected);

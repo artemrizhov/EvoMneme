@@ -4,13 +4,13 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const graphLayout=require('../scripts/viewer/graph-layout.js');
-const elements=new Map(),statuses=[],intervals=new Set();
+const elements=new Map(),statuses=[],layoutStatuses=[],intervals=new Set();
 function element(id='') {
   let content='';
   return {id,value:'',checked:false,disabled:false,dataset:{},style:{},options:[],children:[],
     classList:{add(){},remove(){},toggle(){}},
     getContext:()=>({setTransform(){},clearRect(){},setLineDash(){},beginPath(){},arc(){},stroke(){},fillText(){},moveTo(){},lineTo(){}}),
-    set textContent(value) {content=value;if(id==='connection')statuses.push(value);},get textContent(){return content;},
+    set textContent(value) {content=value;if(id==='connection')statuses.push(value);if(id==='workerStatus')layoutStatuses.push(value);},get textContent(){return content;},
     replaceChildren(...children){this.children=children;},append(...children){this.children.push(...children);},prepend(){},
     listeners:{},addEventListener(type,fn){(this.listeners[type] ||= []).push(fn);},setAttribute(){},getBoundingClientRect(){return {width:900,height:600};},
     focus(){context.document.activeElement=this;},add(value){this.options.push(value);}};
@@ -257,8 +257,10 @@ async function main(){
   assert.equal(run('state.workerLayoutEnabled'),false,'GPU rendering must not enable background layouts');
   assert.equal(run('cy.nodes().map(n=>n.id()+":"+n.position("x")).join(",")'),beforeToggle);
   run('setWorkerLayout(true)');
+  layoutStatuses.length=0;
   await run('graphAction(()=>requestedLayout({fit:false}))');
   await settleLiveLayout();
+  assert.ok(layoutStatuses.every(value=>value===''),'Fast calculations never flash a message');
   assert.equal(run('state.acceleration'),true);
   workerFailure=true;
   await run('graphAction(()=>requestedLayout({fit:false}))');
@@ -298,7 +300,10 @@ async function main(){
   assert.equal(run('state.busy'),false,'Enabling background layout must not wait for a worker result');
   await new Promise(resolve=>setTimeout(resolve,20));
   assert.equal(run('liveLayout.layoutRunning'),true);
+  assert.equal($('workerStatus').textContent,'','Short calculations remain silent');
+  await new Promise(resolve=>setTimeout(resolve,1100));
   assert.match($('workerStatus').textContent,/^Calculating layout in background/);
+  assert.equal($('workerStatus').title,$('workerStatus').textContent,'Hover exposes the full calculation message');
   await run('graphAction(()=>{state.responsiveWhileCalculating=true;})');
   assert.equal(run('state.responsiveWhileCalculating'),true,'Graph actions must run while the worker is calculating');
   assert.equal(run('liveLayout.layoutRunning'),true,'Unrelated work must not cancel the background calculation');
