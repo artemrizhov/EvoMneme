@@ -1806,6 +1806,11 @@ $('png').onclick=graphControl(exportPng);
 if(!token)showError(new Error('Open the complete viewer URL printed by the server, including its token.'));
 function setGraphExpanded(expanded) {
   if (expanded && state.view !== 'graph') return;
+  if(expanded) $('graphIdentity').append($('viewerBrand'),$('projectName'));
+  else {
+    $('headerIdentity').prepend($('viewerBrand'));
+    $('headerActions').before($('projectName'));
+  }
   document.body.classList.toggle('graph-expanded',expanded);
   const button=$('expandGraph');
   button.setAttribute('aria-pressed',String(expanded));

@@ -2,6 +2,14 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-03 — Keep expanded graph identity and layout status visible
+
+Expanded mode previously hid the project identity and the sidebar's background
+layout timer. It now moves the existing logo and project heading into a compact
+single toolbar row, restoring them on exit. The row scrolls on narrow screens.
+Background layout status, including elapsed calculation time and errors, now
+lives above the graph in both modes, retaining its accessible status identity.
+
 ## 2026-11-03 — Record graph reads automatically through the access tool
 
 The user clarified that activity history must be recorded by the access tool,

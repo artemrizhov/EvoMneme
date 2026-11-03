@@ -136,7 +136,10 @@ Run `python -m unittest discover -s tests -v`. For manual browser checks, `pytho
 When Node.js is already available for development, the Python suite also runs the geometry regressions against the bundled Cytoscape with `node tests/test_viewer_layout.js`. Otherwise that optional check is skipped; Node.js is not a viewer runtime dependency.
 
 **Expand graph** fills the page with the graph, its toolbar and saved-history
-controls. It hides the page header, side panels, activity log and captions.
+controls. A compact logo and the project heading share one row with the toolbar
+buttons; narrow windows can scroll that row horizontally. It hides the remaining
+page header, side panels, activity log and captions. The background layout status
+and elapsed calculation counter sit above the graph in both page modes.
 Use **Restore page** or Escape to return. This mode preserves the loaded graph,
 filters and replay state, and also works in the public demo. Existing resize
 behavior applies: following fits the graph to the available space, while a
