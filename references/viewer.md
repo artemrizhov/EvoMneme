@@ -12,6 +12,30 @@ python scripts/evomneme_viewer.py --database "C:/path/to/host/.evomneme/knowledg
 
 Open the complete printed URL, including `#token=...`. Stop with Ctrl+C. The server binds only to `127.0.0.1` on an allocated port (`--port` can select one). Tokens protect data APIs; Host/origin checks reject cross-origin requests. Scripts/styles are served locally. No npm installation, CDN, internet or external service is required at runtime. The requested optional Cytoscape.js 3.30.4 asset, MIT license and SHA-256 manifest are in `scripts/viewer/vendor/`. This user-directed viewer dependency adds no dependencies to SQL execution and does not amend the charter.
 
+## Experimental features and saved settings
+
+On first use for a database, a dialog appears three seconds after the browser's
+page-load event, independently of graph rendering, and offers **Try experimental features** or
+**Keep disabled**. Escape also keeps them disabled. The offer explains GPU
+rendering and background layout and points to their independent switches under
+**Visual perspective** in the left sidebar. Either choice dismisses the offer
+for later launches; no experimental feature is enabled without opting in.
+
+The viewer saves both on and off states, the dialog choice and **Element size**
+in a local JSON file beside the database: `knowledge.sqlite3` uses
+`knowledge.viewer-settings.json`. A companion `.lock` coordinates writers.
+Keep these files in the project's excluded local working area. Settings survive
+server restarts, port changes and different browsers; they are separate from
+graph/history data and do not depend on browser storage. They are restored
+before the first graph load. Unsupported GPU/worker features revert to off and
+that effective state is saved too.
+
+The token-protected, same-origin preferences API validates settings and writes
+them atomically. Read failures leave the experimental/size controls disabled;
+save failures leave a visible message and **Retry settings** button. Invalid
+files are not silently replaced. The graph remains available while a settings
+problem is corrected.
+
 ## Visual investigation
 
 The page header shows the project name prominently in the center; the browser

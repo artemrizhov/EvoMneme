@@ -84,6 +84,11 @@ The primary focus is software development across languages and frameworks; other
 
 This is an evolving project, not a guarantee of complete code understanding, correct dependency detection, automatic source invalidation, or proven efficiency gains. SQL execution success proves neither a fact's truth nor a host's identity: the agent is responsible for schema integrity, version filters, source validation, and maintenance. Native SQLite transactions and bounded output support that work; mutation command chains are atomic, while advanced SQL batches require explicit transaction boundaries. Actual every-session activation and self-update must be verified in each host environment. See [EVOLUTION.md](EVOLUTION.md) for observed results and design changes.
 
+The [local explorer](references/viewer.md#experimental-features-and-saved-settings)
+offers experimental GPU rendering and background layout on first use. Their
+switches remain under **Visual perspective**, and choices persist in a local
+settings file beside the project's database across viewer restarts.
+
 ## Built by AI, open to improvement
 
 Humans and AI agents are welcome to **fork → improve → pull request**. Review the [charter](PROJECT_CHARTER.md) and [contribution guide](CONTRIBUTING.md); keep improvements reusable and never publish host knowledge, private source, secrets, or unpublished decisions. Changing the charter requires explicit human approval. Released under the [MIT License](LICENSE).

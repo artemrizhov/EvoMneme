@@ -27,8 +27,8 @@ const context=vm.createContext({console,performance,setTimeout,clearTimeout,
 vm.runInContext(fs.readFileSync(require.resolve('../scripts/viewer/vendor/cytoscape.min.js'),'utf8'),context);
 vm.runInContext('const cytoscapeCore=cytoscape;cytoscape=options=>cytoscapeCore({...options,container:undefined,headless:true,styleEnabled:true});',context);
 let source=fs.readFileSync(require.resolve('../scripts/viewer/app.js'),'utf8');
-source=source.replace(/refresh\(true\);setInterval\(\(\)=>\{if\(\$\('live'\)\.checked && !state\.busy\)refresh\(\);\},2000\);\s*$/,'');
-assert.ok(!source.endsWith('},2000);\n'),'automatic polling disabled in harness');
+source=source.replace(/initializeViewer\(\);\s*$/,'');
+assert.ok(!source.trimEnd().endsWith('initializeViewer();'),'automatic startup disabled in harness');
 vm.runInContext(source,context);
 vm.runInContext('const shippedApi=api;',context);
 const run=code=>vm.runInContext(code,context);
@@ -214,6 +214,31 @@ async function main(){
   run('cy.add=realAdd');await run('refresh(true)');
   assert.equal(run("cy.getElementById('n:after-add-failure').length"),1);
   assert.match($('connection').textContent,/Connected/);assert.equal(intervals.size,0);
+  // The delayed first-use offer can be chosen during a snapshot fetch. Its
+  // real graphControl cancellation must recover the graph even with Live off.
+  run('const offerAcceleration=setAcceleration,offerWorker=setWorkerLayout;setAcceleration=enabled=>{state.acceleration=enabled;};setWorkerLayout=()=>{state.workerLayoutEnabled=false;};');
+  $('experimentalWelcome').close=()=>{};
+  for(const enabled of [false,true]) {
+    let snapshots=0,aborted=false;
+    context.fixture=fixture(['offer-recovered-'+enabled]);
+    context.fetch=(url,{signal})=>{
+      if(url==='/api/preferences')return Promise.resolve({ok:true,json:async()=>({})});
+      assert.equal(url,'/api/snapshot');
+      if(++snapshots>1)return Promise.resolve({ok:true,json:async()=>context.fixture});
+      return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>{aborted=true;reject(new Error('aborted'));}));
+    };
+    run('api=shippedApi;state.preferencesReady=true;state.snapshot=null;state.previous=null;');
+    $('live').checked=false;
+    const pending=run('refresh(true)');
+    for(let i=0;i<100 && !snapshots;i++)await new Promise(resolve=>setTimeout(resolve,1));
+    assert.equal(snapshots,1,'first graph request is pending when offer is chosen');
+    await $(enabled?'tryExperimental':'skipExperimental').onclick();await pending;
+    assert.equal(aborted,true);assert.equal(snapshots,2,'choice retries interrupted startup without Live polling');
+    assert.equal(run('state.snapshot.nodes[0].graph_id'),'offer-recovered-'+enabled);
+    assert.equal(run('cy.nodes().length'),1);assert.equal(run('state.busy'),false);
+    assert.equal($('live').checked,false);assert.equal($('error').textContent,'');
+  }
+  run('setAcceleration=offerAcceleration;setWorkerLayout=offerWorker;state.acceleration=false;state.preferencesReady=false;api=savedTestApi;');
   // Server-side unchanged responses retain component cache and skip graph work.
   run('const realComponents=countComponents;countComponents=()=>{throw new Error("unexpected traversal")};api=async()=>({unchanged:true});');
   await run('refresh()');
@@ -323,20 +348,15 @@ async function main(){
   assert.equal(run('state.busy'),false);assert.equal($('error').textContent,'');
   delete context.Worker;
   run('cy.layout=blockingLayout');$('layout').value='grid';
-  // Preferences are restored before startup refresh, independently for each
-  // renderer. Malformed or unavailable storage must not prevent graph loading.
-  let savedPreferences='{"gpu":false,"worker":true,"elementScale":200}';
-  context.localStorage={getItem:()=>savedPreferences,setItem:(key,value)=>{savedPreferences=value;}};
+  // The server's preferences restore each feature before the startup graph.
   context.Worker=class {};
-  run('restoreVisualPreferences()');
+  run('restoreVisualPreferences({gpu:false,worker:true,elementScale:200})');
   assert.equal(run('state.workerLayoutEnabled'),true);assert.equal(run('state.acceleration'),false);
   assert.equal(run('state.elementScale'),2);assert.equal($('elementScale').value,'200');
   run('setWorkerLayout(false)');
-  assert.equal(JSON.parse(savedPreferences).worker,false);
-  assert.equal(JSON.parse(savedPreferences).elementScale,200);
-  savedPreferences='invalid JSON';run('restoreVisualPreferences()');
+  assert.equal(run('state.workerLayoutEnabled'),false);
   run('setElementScale(100)');
-  delete context.Worker;delete context.localStorage;
+  delete context.Worker;
   // Replay restores deleted entities by reversing the saved deltas; seeking
   // either direction must preserve pre-recording nodes and scoped identities.
   const row=(id,title)=>({scope_id:'main',id,title,kind:'item'});

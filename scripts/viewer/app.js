@@ -32,14 +32,13 @@ function interruptGraphWork(stopMotion=true) {
   cancelReplayLayout(state.replay);cancelReplayLayout(liveLayout);backgroundLayout.cancel();
   if(stopMotion)MemoryGraphLayout.stop(cy);
 }
-async function api(route, values = {}) {
-  const work=state.activeWork;
+async function api(route, values = {}, work=state.activeWork) {
   checkGraphWork(work);
   const controller=new AbortController();
   work?.requests.add(controller);
   const timeout=setTimeout(()=>controller.abort(),90000);
   try {
-    const response=await fetch('/api/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token || ''},body:JSON.stringify(values),signal:controller.signal});
+    const response=await fetch('/api/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token || ''},body:JSON.stringify(values),signal:controller.signal,keepalive:route==='preferences'});
     const data=await response.json();
     checkGraphWork(work);
     if (!response.ok) throw new Error(data.error || response.statusText);
@@ -640,16 +639,31 @@ function replaceRenderer(accelerated) {
   cy.startAnimationLoop();cy.style().update();cy.resize();
 }
 function saveVisualPreferences() {
-  try {localStorage.setItem('evomneme-viewer-visual-preferences',JSON.stringify({gpu:state.acceleration,worker:state.workerLayoutEnabled,elementScale:state.elementScale*100}));}
-  catch {} // Storage can be blocked; the controls still work for this page.
+  if(!state.preferencesReady)return Promise.resolve();
+  const updates={gpu:state.acceleration,worker:state.workerLayoutEnabled,
+    elementScale:state.elementScale*100,experimentalPromptSeen:state.experimentalPromptSeen===true};
+  const revision=state.preferenceRevision=(state.preferenceRevision || 0)+1;
+  state.preferencesUnsaved=true;
+  $('preferencesStatus').textContent='Saving settings…';
+  $('retryPreferences').hidden=true;
+  // Serialize writes independently of cancellable graph work. A late response
+  // must never overwrite a more recent toggle or mark it as saved.
+  state.preferenceSave=(state.preferenceSave || Promise.resolve()).then(()=>api('preferences',{updates},null)).then(()=>{
+    if(revision!==state.preferenceRevision)return;
+    state.preferencesUnsaved=false;
+    $('preferencesStatus').textContent='Settings saved locally.';
+  }).catch(error=>{
+    if(revision!==state.preferenceRevision)return;
+    $('preferencesStatus').textContent='Settings could not be saved: '+error.message;
+    $('retryPreferences').hidden=false;
+  });
+  return state.preferenceSave;
 }
-function restoreVisualPreferences() {
-  try {
-    const saved=JSON.parse(localStorage.getItem('evomneme-viewer-visual-preferences') || 'null');
-    setElementScale(saved?.elementScale,false);
-    if(saved?.gpu===true)setAcceleration(true);
-    if(saved?.worker===true)setWorkerLayout(true);
-  } catch {}
+function restoreVisualPreferences(saved) {
+  setElementScale(saved.elementScale,false);
+  if(saved.gpu===true || state.acceleration)setAcceleration(saved.gpu===true,false);
+  if(saved.worker===true || state.workerLayoutEnabled)setWorkerLayout(saved.worker===true,false);
+  state.experimentalPromptSeen=saved.experimentalPromptSeen===true;
 }
 function setElementScale(value,persist=true) {
   const percent=Number(value);
@@ -660,7 +674,7 @@ function setElementScale(value,persist=true) {
   return true;
 }
 $('elementScale').onchange=()=>setElementScale($('elementScale').value);
-function setAcceleration(enabled) {
+function setAcceleration(enabled,persist=true) {
   try {
     if(enabled) {
       const probe=document.createElement('canvas'),gl=probe.getContext?.('webgl2');
@@ -679,20 +693,20 @@ function setAcceleration(enabled) {
     state.acceleration=false;$('experimentalAcceleration').checked=false;
     $('accelerationStatus').textContent='Experimental acceleration unavailable: '+error.message+'. Standard rendering is active.';
   }
-  saveVisualPreferences();
+  if(persist)saveVisualPreferences();
 }
-function setWorkerLayout(enabled) {
+function setWorkerLayout(enabled,persist=true) {
   cancelReplayLayout(state.replay);cancelReplayLayout(liveLayout);backgroundLayout.cancel();
   state.workerError='';
   setLayoutStatus('');
   if(enabled && typeof Worker!=='function') {
     state.workerLayoutEnabled=false;$('experimentalWorker').checked=false;
     setNotice('Background workers are unavailable. Layout runs on the main thread.');
-    saveVisualPreferences();
+    if(persist)saveVisualPreferences();
     return;
   }
   state.workerLayoutEnabled=enabled;$('experimentalWorker').checked=enabled;
-  saveVisualPreferences();
+  if(persist)saveVisualPreferences();
 }
 $('experimentalAcceleration').onchange=graphControl(()=>setAcceleration($('experimentalAcceleration').checked));
 $('experimentalWorker').onchange=graphControl(()=>{
@@ -1857,5 +1871,58 @@ window.addEventListener('keydown',event=>{
     else setGraphExpanded(false);
   }
 });
-restoreVisualPreferences();
-refresh(true);setInterval(()=>{if($('live').checked && !state.busy)refresh();},2000);
+async function loadVisualPreferences() {
+  const controls=['experimentalAcceleration','experimentalWorker','elementScale'];
+  controls.forEach(id=>$(id).disabled=true);
+  $('retryPreferences').hidden=true;
+  try {
+    const saved=await api('preferences',{},null);
+    restoreVisualPreferences(saved);
+    state.preferencesReady=true;
+    controls.forEach(id=>$(id).disabled=false);
+    $('preferencesStatus').textContent='Settings are saved locally.';
+    // Persist effective state when a browser cannot restore an enabled feature.
+    if(saved.gpu!==state.acceleration || saved.worker!==state.workerLayoutEnabled)await saveVisualPreferences();
+    showExperimentalWelcome();
+  } catch(error) {
+    $('preferencesStatus').textContent='Settings could not be loaded: '+error.message;
+    $('retryPreferences').hidden=false;
+  }
+}
+function showExperimentalWelcome() {
+  if(state.experimentalOfferDue && state.preferencesReady && !state.experimentalPromptSeen && !$('experimentalWelcome').open)
+    $('experimentalWelcome').showModal();
+}
+function scheduleExperimentalWelcome() {
+  const schedule=()=>setTimeout(()=>{
+    state.experimentalOfferDue=true;
+    showExperimentalWelcome();
+  },3000);
+  if(document.readyState==='complete')schedule();
+  else window.addEventListener('load',schedule,{once:true});
+}
+async function chooseExperimentalFeatures(enabled) {
+  state.experimentalPromptSeen=true;
+  $('experimentalWelcome').close();
+  setAcceleration(enabled,false);setWorkerLayout(enabled,false);
+  await saveVisualPreferences();
+  // Choosing while the first graph is loading cancels that draw. Recover it
+  // explicitly even if Live is paused, rather than leaving a partial graph.
+  if(!state.replay && !state.previous)state.refreshQueued=state.resetQueued=true;
+  else if(state.workerLayoutEnabled)await requestedLayout({seed:false});
+}
+$('tryExperimental').onclick=graphControl(()=>chooseExperimentalFeatures(true));
+$('skipExperimental').onclick=graphControl(()=>chooseExperimentalFeatures(false));
+$('experimentalWelcome').addEventListener('cancel',event=>{
+  event.preventDefault();$('skipExperimental').onclick();
+});
+$('retryPreferences').onclick=guarded(()=>state.preferencesReady?saveVisualPreferences():loadVisualPreferences());
+window.addEventListener('beforeunload',event=>{
+  if(state.preferencesUnsaved){event.preventDefault();event.returnValue='';}
+});
+async function initializeViewer() {
+  scheduleExperimentalWelcome();
+  await loadVisualPreferences();
+  refresh(true);setInterval(()=>{if($('live').checked && !state.busy)refresh();},2000);
+}
+initializeViewer();

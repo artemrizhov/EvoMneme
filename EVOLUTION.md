@@ -550,3 +550,28 @@ hit sandbox socket restrictions; the same commands passed outside the sandbox.
 Only synthetic fixtures were used, not a private host database. Large compound
 graphs still use quadratic CoSE, and no universal timing or visual-quality bound
 is claimed.
+
+## 2026-11-03 — Offer experiments once and persist viewer settings in a file
+
+Browser-origin storage lost visual preferences when the viewer started on a
+different allocated port. The first-use dialog now offers GPU rendering and
+background layout, explains where to disable each, and remembers either choice.
+It appears three seconds after the page-load event without waiting for graph rendering.
+The server reads and atomically writes a database-adjacent settings JSON through
+the existing authenticated, same-origin API. Graph data stays separate. Keeping
+browser storage as the authority was rejected because it cannot follow port or
+browser changes. Serialized browser writes preserve toggle order; unsupported
+features save their effective off state. File errors remain visible with retry
+instead of silently losing settings or replacing invalid content.
+
+Focused backend and shipped-JavaScript tests cover restart/new-port persistence,
+both on/off states, prompt acceptance/decline/Escape, startup ordering, rapid
+toggles, unavailable features, failed saves/retry, corrupt files, authorization,
+atomic replacement failure and concurrent server writers. No rendering speedup
+is claimed by these persistence tests. In a real browser with a deliberately
+delayed synthetic graph response, the dialog opened 3.002 seconds after the
+page-load event while the graph was still loading. Browser toggles wrote both
+off states to the file; reload restored them without repeating the offer.
+Choosing either offer action during startup explicitly retries an interrupted
+graph load even with Live paused; a regression uses the real cancellation and
+refresh queue to cover that interaction.

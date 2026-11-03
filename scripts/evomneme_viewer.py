@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 from evomneme import cell, json_bytes
 from evomneme_graph import V3_COLUMNS, projection_sql, validate_schema
 from evomneme_journal import LOG, install as install_journal, read as read_changes, read_calls, status as journal_status
+from evomneme_viewer_preferences import ViewerPreferences
 
 ASSETS = Path(__file__).parent / 'viewer'
 MAX_ROWS = 2000
@@ -519,6 +520,7 @@ class Explorer:
 def make_server(explorer, port=0):
     token = secrets.token_urlsafe(32)
     project_label = escape(project_name(explorer))
+    preferences = ViewerPreferences(explorer.path)
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
@@ -595,7 +597,8 @@ def make_server(explorer, port=0):
                     raise ValueError('Expected object')
                 routes = {'/api/snapshot': explorer.snapshot, '/api/query': explorer.query,
                           '/api/detail': explorer.detail, '/api/events': explorer.events,
-                          '/api/changes': explorer.changes, '/api/replay': explorer.replay}
+                          '/api/changes': explorer.changes, '/api/replay': explorer.replay,
+                          '/api/preferences': preferences.request}
                 if self.path not in routes:
                     return self.respond(404, {'error': 'Not found'})
                 self.respond(200, routes[self.path](values))

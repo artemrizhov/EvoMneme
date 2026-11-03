@@ -14,6 +14,7 @@
 <label><input id="experimentalAcceleration" type="checkbox" aria-describedby="accelerationStatus"> Experimental GPU rendering</label>
 <p id="accelerationStatus" class="hint" role="status">Off. Enable GPU rendering; relationship styles may differ.</p>
 <label><input id="experimentalWorker" type="checkbox" aria-describedby="workerStatus"> Experimental background layout</label>
+<p id="preferencesStatus" class="hint" role="status">Loading saved settings…</p><button id="retryPreferences" type="button" hidden>Retry settings</button>
 <label><input id="labels" type="checkbox" checked> Show labels</label><div id="legend"></div>
 <label><input id="edgeLabels" type="checkbox"> Relationship labels</label><label title="Rearrange and fit when the graph grows. Turn off to preserve a manual view."><input id="followGraph" type="checkbox" checked> Follow graph growth</label>
 <p class="hint">Labels appear as you zoom in; hover or select a relationship for its label. Follow graph growth rearranges and fits topology changes. Panning, zooming or dragging turns following off. Components, degree and paths describe the loaded slice.</p>
@@ -39,4 +40,11 @@
 <aside id="inspector" class="inspector" tabindex="-1" aria-labelledby="selectionTitle"><button id="closeInspector" type="button" aria-label="Close selection" title="Close selection (Escape)">×</button><section class="overview-panel"><h2>Database overview</h2><div id="overview" aria-label="Database overview"></div></section><h2 id="selectionTitle">Selection</h2><p id="selectionHint" class="hint">Select a node or relationship to inspect its stored attributes, provenance and evidence. Double-click a node to explore its neighborhood.</p><button id="openGroup" class="hidden">Explore group members</button><div id="selectionActions" class="hidden"><label>Neighborhood depth<select id="depth"><option>1</option><option>2</option><option>3</option><option>4</option></select></label><button id="neighbors">Explore neighborhood</button><button id="pinPath">Set path start</button><button id="findPath">Find shortest path</button></div><p id="pathInfo" class="hint"></p><div id="detail"></div></aside>
 </main>
 <div id="error" role="alert" class="hidden"></div>
+<dialog id="experimentalWelcome" aria-labelledby="experimentalWelcomeTitle" aria-describedby="experimentalWelcomeDescription">
+<span class="badge">EXPERIMENTAL FEATURES</span><h2 id="experimentalWelcomeTitle">Try a faster graph?</h2>
+<div id="experimentalWelcomeDescription"><p>Try GPU rendering and background layout. They can make large graphs more responsive, but relationship styles may differ and some browsers may not support them.</p>
+<p>You can turn either feature on or off at any time in the left sidebar, under <strong>Visual perspective</strong>: <strong>Experimental GPU rendering</strong> and <strong>Experimental background layout</strong>.</p>
+<p>Your choices are saved locally for this project and restored the next time you open the viewer.</p></div>
+<div class="dialog-actions"><button id="skipExperimental" type="button" autofocus>Keep disabled</button><button id="tryExperimental" type="button" class="primary">Try experimental features</button></div>
+</dialog>
 </body></html>

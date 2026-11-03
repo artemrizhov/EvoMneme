@@ -9,11 +9,9 @@ const frames=[];
 const timers=new Map();let timerId=0;
 const state={elementScale:1,acceleration:false,workerLayoutEnabled:false};
 const scaleControl={value:'100'};
-let preferences=null;
 const context=vm.createContext({
   state,
   $:id=>id==='elementScale'?scaleControl:null,
-  localStorage:{getItem:()=>preferences,setItem:(_key,value)=>{preferences=value;}},
   requestAnimationFrame:callback=>{frames.push(callback);return frames.length;},
   setTimeout:callback=>{timers.set(++timerId,callback);return timerId;},
   clearTimeout:id=>timers.delete(id),
@@ -175,7 +173,8 @@ node.position({x:100,y:0});
 near(node.renderedPosition().x-before,200);
 cy.zoom(3);cy.zoom(4);cy.zoom(5);assert.equal(frames.length,1);frames.shift()();
 near(node.renderedWidth(),18);
-// Drive the shipped selector handler, including persistence and every offered size.
+// Drive the shipped selector handler and every offered size. Persistence has
+// its own asynchronous regression suite.
 vm.runInContext(source.slice(source.indexOf('function saveVisualPreferences('),source.indexOf('function setAcceleration(')),context);
 const html=fs.readFileSync(require.resolve('../scripts/viewer/index.html'),'utf8');
 const select=html.match(/<select id="elementScale">([\s\S]*?)<\/select>/)[1];
@@ -189,7 +188,6 @@ for(const percent of choices) {
   const factor=percent/100,viewport=JSON.stringify({zoom:cy.zoom(),pan:cy.pan()});
   scaleControl.value=String(percent);scaleControl.onchange();
   near(state.elementScale,factor);
-  assert.equal(JSON.parse(preferences).elementScale,percent);
   assert.equal(JSON.stringify({zoom:cy.zoom(),pan:cy.pan()}),viewport);
   assert.equal(JSON.stringify(cy.nodes().map(n=>n.position())),positions);
   zoom(1);near(node.renderedWidth(),Math.max(1.5,4.55*factor));
@@ -224,13 +222,12 @@ for(const percent of choices) {
   }
 }
 assert.equal(vm.runInContext('setElementScale(99)',context),false);
-preferences=JSON.stringify({elementScale:150});vm.runInContext('restoreVisualPreferences()',context);
+vm.runInContext('restoreVisualPreferences({elementScale:150})',context);
 near(state.elementScale,1.5);assert.equal(scaleControl.value,'150');
-preferences='{"elementScale":999}';vm.runInContext('restoreVisualPreferences()',context);
+vm.runInContext('restoreVisualPreferences({elementScale:999})',context);
 near(state.elementScale,1.5);
-context.localStorage={getItem(){throw new Error('blocked');},setItem(){throw new Error('blocked');}};
 assert.equal(vm.runInContext('setElementScale(100)',context),true);
-vm.runInContext('restoreVisualPreferences()',context);near(state.elementScale,1);
+near(state.elementScale,1);
 // A large graph must not rebuild style/geometry caches on each wheel frame.
 cy.add(Array.from({length:2001},(_,i)=>({data:{id:'zoom-perf-'+i,size:20,color:'#79b8e8',displayLabel:''}})));
 while(frames.length)frames.shift()();
