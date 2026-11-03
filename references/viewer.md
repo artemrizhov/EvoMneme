@@ -15,9 +15,17 @@ Open the complete printed URL, including `#token=...`. Stop with Ctrl+C. The ser
 ## Visual investigation
 
 The page header shows the project name prominently in the center; the browser
-title places it before **Memory Explorer**. Databases inside `.evomneme` use the
-project directory name; databases elsewhere use their filename without the
-extension. Restart the viewer and reload to apply updates.
+title places it before **Memory Explorer**. At server startup, the viewer reads
+the current root node's `title` using `scope` and `root_id` from the project's
+existing `.evomneme/connection.json`, after checking its project/database paths
+and stored project identity. The receipt is sought beside a `.evomneme` database,
+or in `.evomneme` beside a standalone database; it is never taken from the tool's
+working directory. The title is escaped into the initial HTML and cached for
+the server lifetime, with no browser lookup or source/Git scan. Missing, invalid
+or mismatched bindings, unavailable/empty roots and custom SQL mappings retain
+the path-based fallback: the project directory for a `.evomneme` database, or
+the database filename without its extension otherwise. Restart the viewer and
+reload to apply a renamed root. No new project-name setting or graph entity is needed.
 
 ### Controlled schema v3
 

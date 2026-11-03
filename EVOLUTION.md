@@ -2,6 +2,15 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-03 — Use the stored project title in the viewer
+
+Folder-derived headings could differ from a project's real name. Reuse the
+existing bound root node's title, resolved once at server startup and escaped
+into the initial HTML. No new name setting, graph entity or browser round trip
+is introduced. Binding/path/identity checks and the existing filename fallback
+keep unbound or incompatible stores usable. Synthetic tests verify scope/root
+selection, fallback, escaping, unchanged database rows and no lookup on page loads.
+
 ## 2026-11-03 — Stabilize graph toolbar and messages
 
 User feedback rejected scrolling controls and viewport-centered headings.

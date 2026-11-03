@@ -518,10 +518,7 @@ class Explorer:
 
 def make_server(explorer, port=0):
     token = secrets.token_urlsafe(32)
-    database = explorer.path
-    project_name = (database.parent.parent.name if database.parent.name == '.evomneme'
-                    else database.stem)
-    project_label = escape(project_name)
+    project_label = escape(project_name(explorer))
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
@@ -608,6 +605,38 @@ def make_server(explorer, port=0):
     server = HTTPServer(('127.0.0.1', port), Handler)
     server.timeout = 1
     return server, token
+
+
+def project_name(explorer):
+    """Resolve the display title once, without source scans or another database."""
+    database = explorer.path
+    project = database.parent.parent if database.parent.name == '.evomneme' else database.parent
+    fallback = project.name if database.parent.name == '.evomneme' else database.stem
+    if explorer.mapping:
+        return fallback
+    try:
+        receipt = json.loads((project / '.evomneme/connection.json').read_text(encoding='utf-8'))
+        if not isinstance(receipt, dict) or type(receipt.get('version', 1)) is not int or receipt.get('version', 1) != 1:
+            return fallback
+        for key in ('database', 'project_root', 'scope', 'root_id'):
+            if not isinstance(receipt.get(key), str) or not receipt[key].strip():
+                return fallback
+        bound_database, bound_project = Path(receipt['database']), Path(receipt['project_root'])
+        if (not bound_database.is_absolute() or not bound_project.is_absolute()
+                or bound_database.resolve() != database or bound_project.resolve() != project):
+            return fallback
+        with explorer.connect(seconds=1) as db:
+            identity = db.execute("SELECT value FROM metadata WHERE key='project_identity'").fetchone()
+            if (identity[0] if identity else None) != receipt.get('project_identity'):
+                return fallback
+            row = db.execute("SELECT title FROM nodes WHERE scope_id=? AND id=? AND validity='current'",
+                             (receipt['scope'], receipt['root_id'])).fetchone()
+        if row and isinstance(row[0], str) and row[0].strip():
+            return row[0]
+    except (OSError, ValueError, sqlite3.Error):
+        # A display label must not prevent standalone/unbound stores opening.
+        pass
+    return fallback
 
 
 def main():
