@@ -551,6 +551,32 @@ Only synthetic fixtures were used, not a private host database. Large compound
 graphs still use quadratic CoSE, and no universal timing or visual-quality bound
 is claimed.
 
+## 2026-11-03 — Allocate graph space by node count
+
+Small graphs previously inherited the canvas dimensions as their layout bounds,
+so enlarging a window spread the same few nodes farther apart. Full layouts now
+derive their model-space area from node count and label-aware cell dimensions.
+The canvas supplies a preferred aspect ratio, bounded between 1:4 and 4:1;
+topology and collision clearance can override that preference. Large spatial
+force regions retain their natural spring/repulsion scale. The existing local
+collision pass also clears labels after native layouts, whose center-only bounds
+and headless label measurements can otherwise leave overlaps.
+
+Small graphs remain compact and camera-centered, with fit capped at normal
+100% zoom. Follow graph growth retains automatic fitting, explicit Fit remains
+available, and manual camera views and unaffected incremental regions remain
+stable. Resizing while following refits existing geometry without relayout.
+
+Real-Cytoscape regressions cover single nodes, three-node and disconnected
+graphs, landscape/portrait shapes, unchanged geometry for identical inputs on
+double-size canvases, approximate occupied area per node, label clearance,
+manual camera preservation and explicit Fit. Actual worker tests cover layout
+parity, force density/orientation and completed 6,000-node calculations.
+The layout, worker and zoom Node regressions passed. These are geometry and
+runtime checks; browser/GPU visual verification remains incomplete because the
+configured browser connection timed out. No universal density or timing bound
+is claimed for every topology or label set.
+
 ## 2026-11-03 — Offer experiments once and persist viewer settings in a file
 
 Browser-origin storage lost visual preferences when the viewer started on a

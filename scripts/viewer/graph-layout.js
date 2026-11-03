@@ -455,30 +455,42 @@
       if(options.fit!==false)fitViewport(cy,elements);
       return;
     }
+    // The viewport supplies a preferred shape, never the amount of space per
+    // node. Measure labels in model units so a larger window cannot dilute a
+    // small graph, and a growing graph gets a correspondingly larger footprint.
+    // Compound parents enclose their children: their current bounds are an
+    // output of the previous layout, not the size of one node. Feeding those
+    // envelopes back into cell sizing would enlarge every subsequent relayout.
+    const dimensions=boxes(nodes.filter(n=>!n.isParent()));
+    const cellWidth=dimensions.reduce((size,b)=>Math.max(size,b.w+56),140);
+    const cellHeight=dimensions.reduce((size,b)=>Math.max(size,b.h+56),100);
+    const aspect=Math.max(.25,Math.min(4,width/height));
+    const cols=Math.max(1,Math.min(nodes.length,Math.ceil(Math.sqrt(nodes.length*aspect*cellHeight/cellWidth))));
+    const rows=Math.ceil(nodes.length/cols);
+    const gridBounds={x1:0,y1:0,w:cols*cellWidth,h:rows*cellHeight};
+    const area=nodes.length*cellWidth*cellHeight;
+    const bounds={x1:0,y1:0,w:Math.max(cellWidth,Math.sqrt(area*aspect)),
+      h:Math.max(cellHeight,Math.sqrt(area/aspect))};
     // Place the complete visible graph, including disconnected components.
     // Automatic updates must not rotate or repack its result afterwards.
     if (options.overview || nodes.length>10000) {
       // Full stores can contain tens of thousands of symbols. Keep this overview
       // linear rather than running an O(n²) force simulation or collision pass.
-      const cols=Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height*110/180)));
       if(options.runLayout!==false)cy.layout({name:'grid',eles:elements,animate:false,fit:false,cols,
-        avoidOverlap:false,boundingBox:{x1:0,y1:0,w:Math.max(width,cols*180),
-          h:Math.max(height,Math.ceil(nodes.length/cols)*110)}}).run();
+        avoidOverlap:false,boundingBox:gridBounds}).run();
       cy.scratch('memory-layout',options.overview?'grid-overview':'grid-large');
       if (options.fit!==false) fitViewport(cy,elements);
       return;
     }
     cy.scratch('memory-layout',options.name || 'cose');
     if (options.runLayout!==false) {
-      const largeForce=(options.name || 'cose')==='cose' && nodes.length>800;
+      const largeForce=(options.name || 'cose')==='cose' && nodes.length>800 && !cy.hasCompoundNodes();
       const common={eles:elements,animate:false,fit:false,padding:36,
-        boundingBox:largeForce?undefined:{x1:0,y1:0,w:width,h:height},
+        boundingBox:largeForce?undefined:bounds,
         nodeDimensionsIncludeLabels:true,avoidOverlap:true};
       if (options.seed) {
-        const cols=Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height)));
         cy.layout({...common,name:'grid',cols,
-          boundingBox:largeForce?{x1:0,y1:0,w:Math.max(width,cols*180),
-            h:Math.max(height,Math.ceil(nodes.length/cols)*110)}:common.boundingBox,
+          boundingBox:gridBounds,
           avoidOverlapPadding:28,condense:true}).run();
       }
       const settings={...common,name:options.name || 'cose',randomize:false,width,height,
@@ -488,9 +500,14 @@
         // Cytoscape's spacing transform expects a layout position for every
         // node; locked nodes have none in grid layouts and can produce NaNs.
         spacingFactor:largeForce || nodes.some(n=>n.locked())?1:1.25,
-        cols:Math.max(1,Math.ceil(Math.sqrt(nodes.length*width/height)))};
-      if(settings.name==='cose')runForce(cy,settings);
+        cols,...((options.name || 'cose')==='grid'?{boundingBox:gridBounds}:{})};
+      let separated=false;
+      if(settings.name==='cose')separated=runForce(cy,settings);
       else cy.layout(settings).run();
+      // Native spacing uses renderer label measurements, which can be absent
+      // in a headless worker, and force bounding boxes scale node centers only.
+      // Resolve local label collisions without stretching or repacking groups.
+      if(!separated)separate(nodes.filter(n=>!n.isParent()));
     }
     if (options.fit!==false) fitViewport(cy,elements);
   }

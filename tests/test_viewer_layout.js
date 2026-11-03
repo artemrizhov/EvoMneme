@@ -31,6 +31,76 @@ function addBatch(cy,start,end) {
   }
 }
 
+// A canvas resize changes the preferred shape, not the model-space density.
+// Use actual solvers and label bounds rather than inspecting their options.
+const densityMeasurements=[];
+function deterministicLayout(cy,options) {
+  // CoSE uses randomness to resolve exact coincidences even with randomize:false.
+  const random=Math.random;let seed=17;
+  Math.random=()=>((seed=Math.imul(seed,1664525)+1013904223>>>0)/4294967296);
+  try {graphLayout.arrange(cy,options);} finally {Math.random=random;}
+}
+for(const name of ['grid','circle','concentric','breadthfirst','cose','overview']) {
+  for(const count of [1,3,12,120]) {
+    for(const [width,height] of [[1200,400],[400,1200]]) {
+      const cy=graph();
+      cy.width=()=>width;cy.height=()=>height;
+      try {
+        cy.add(Array.from({length:count},(_,i)=>({data:{id:'density'+i,label:'Readable label '+i}})));
+        // Keep an island alongside a connected component in the force case.
+        for(let i=1;i<count-1;i++)cy.add({data:{id:'density-edge'+i,source:'density'+Math.floor((i-1)/3),target:'density'+i}});
+        const options={name:name==='overview'?'cose':name,overview:name==='overview',width,height,seed:true,fit:false};
+        deterministicLayout(cy,options);
+        assertSeparated(cy);
+        let positions=cy.nodes().map(n=>({...n.position()}));
+        const items=graphLayout.boxes(cy.nodes());
+        const w=Math.max(...items.map(b=>b.x+b.dx+b.w/2))-Math.min(...items.map(b=>b.x+b.dx-b.w/2));
+        const h=Math.max(...items.map(b=>b.y+b.dy+b.h/2))-Math.min(...items.map(b=>b.y+b.dy-b.h/2));
+        if(count<=3)assert.ok(w<700 && h<700,'A tiny graph must remain compact in either orientation: '+name);
+        // Compare identical inputs: force solvers amplify rounding differences
+        // in their seed, so a second relayout of settled coordinates is not a
+        // valid canvas-size comparison.
+        cy.nodes().positions(()=>({x:0,y:0}));
+        deterministicLayout(cy,{...options,width:width*2,height:height*2});
+        cy.nodes().forEach((n,i)=>assert.ok(Math.hypot(n.position('x')-positions[i].x,n.position('y')-positions[i].y)<1e-5,
+          'Same-aspect resize must retain density: '+name+' '+count+' '+width+' '+height+' delta='+Math.hypot(n.position('x')-positions[i].x,n.position('y')-positions[i].y)));
+        positions=cy.nodes().map(n=>({...n.position()}));
+        cy.viewport({zoom:.7,pan:{x:17,y:29}});
+        graphLayout.arrange(cy,{...options,incremental:true,affected:[],fit:false});
+        assert.equal(cy.zoom(),.7);assert.deepEqual(cy.pan(),{x:17,y:29});
+        assert.deepEqual(cy.nodes().map(n=>({...n.position()})),positions,'Unchanged updates must preserve geometry');
+        graphLayout.fit(cy,cy.elements());
+        assert.ok(cy.zoom()<=1,'Fit must retain a readable normal scale for tiny graphs');
+        const bb=cy.elements().boundingBox();
+        assert.ok(bb.w*cy.zoom()<=width-72+1e-6 && bb.h*cy.zoom()<=height-72+1e-6,'Explicit Fit must show the complete graph');
+        assert.ok(Math.abs((bb.x1+bb.x2)/2*cy.zoom()+cy.pan('x')-width/2)<1e-6);
+        assert.ok(Math.abs((bb.y1+bb.y2)/2*cy.zoom()+cy.pan('y')-height/2)<1e-6);
+        if(name==='grid' || name==='cose')densityMeasurements.push({name,count,canvas:width+'x'+height,
+          width:Math.round(w),height:Math.round(h),aspect:+(w/h).toFixed(2),area_per_node:Math.round(w*h/count),fit_zoom:+cy.zoom().toFixed(3)});
+      } finally {cy.destroy();}
+    }
+  }
+}
+console.log('Density measurements: '+JSON.stringify(densityMeasurements));
+for(const name of ['grid','cose']) {
+  const measured=densityMeasurements.filter(m=>m.name===name && m.count>=12);
+  assert.ok(Math.max(...measured.map(m=>m.area_per_node))/Math.min(...measured.map(m=>m.area_per_node))<2,
+    'Occupied area must grow approximately with node count: '+name);
+  for(const m of measured)assert.ok(m.canvas==='1200x400'?m.aspect>1.5 && m.aspect<5:m.aspect<.8 && m.aspect>.2,
+    'Collision clearance must retain the soft canvas orientation: '+name);
+}
+for(const [width,height] of [[1200,400],[400,1200]]) {
+  const disconnected=graph();
+  try {
+    disconnected.add(Array.from({length:3},(_,i)=>({data:{id:'free'+i,label:'Disconnected'}})));
+    graphLayout.arrange(disconnected,{name:'cose',width,height,seed:true,fit:false});
+    assertSeparated(disconnected);
+    const items=graphLayout.boxes(disconnected.nodes());
+    assert.ok(Math.max(...items.map(b=>b.x))-Math.min(...items.map(b=>b.x))<650);
+    assert.ok(Math.max(...items.map(b=>b.y))-Math.min(...items.map(b=>b.y))<650);
+  } finally {disconnected.destroy();}
+}
+
 const cy=graph();
 try {
   for (const [start,end] of [[0,1],[1,12],[12,35],[35,65]]) {
@@ -97,11 +167,40 @@ try {
   compound.add([{data:{id:'parent',label:'Parent'}},...Array.from({length:801},(_,i)=>({data:{id:'child'+i,parent:'parent',label:'Child'}}))]);
   let native=false;
   const original=compound.layout;
-  compound.layout=options=>{native=true;assert.equal(options.numIter,350);return {options,run(){}};};
+  compound.layout=options=>{
+    native=true;assert.equal(options.numIter,350);
+    assert.ok(options.boundingBox.w>100 && options.boundingBox.h>100,
+      'Large native compound layouts must also receive count-based model bounds');
+    return {options,run(){}};
+  };
   try {graphLayout.arrange(compound,{name:'cose',fit:false});}
   finally {compound.layout=original;}
   assert.equal(native,true,'Compound graphs must retain native CoSE semantics');
 } finally {compound.destroy();}
+
+const repeatedCompound=graph();
+try {
+  repeatedCompound.add([{data:{id:'group',label:'Parent'}},
+    ...Array.from({length:30},(_,i)=>({data:{id:'member'+i,parent:'group',label:'Child '+i}})),
+    ...Array.from({length:29},(_,i)=>({data:{id:'chain'+i,source:'member'+i,target:'member'+(i+1)}}))]);
+  const footprints=[];
+  for(let pass=0;pass<4;pass++) {
+    graphLayout.arrange(repeatedCompound,{name:'cose',width:1200,height:600,fit:false,seed:true});
+    const bounds=repeatedCompound.nodes().boundingBox({includeLabels:false});
+    footprints.push({width:Math.round(bounds.w),height:Math.round(bounds.h)});
+    const leaves=repeatedCompound.nodes().filter(n=>!n.isParent());
+    const boxes=graphLayout.boxes(leaves);
+    for(let i=0;i<boxes.length;i++)for(let j=0;j<i;j++) {
+      const a=boxes[i],b=boxes[j];
+      assert.ok(Math.abs(a.x+a.dx-b.x-b.dx)>=(a.w+b.w)/2 || Math.abs(a.y+a.dy-b.y-b.dy)>=(a.h+b.h)/2,
+        'Repeated compound layout must keep leaf labels separated');
+    }
+    assert.equal(repeatedCompound.$id('group').children().length,30);
+    assert.ok(bounds.w<footprints[0].width*1.5 && bounds.h<footprints[0].height*1.5,
+      'Compound parent envelopes must not inflate subsequent layout cells');
+  }
+  console.log('Repeated 30-child compound footprints: '+JSON.stringify(footprints));
+} finally {repeatedCompound.destroy();}
 
 // Exercise the actual bundled Cytoscape animation engine, including its own
 // timing loop. The viewer must never schedule an additional animation loop.
@@ -217,8 +316,9 @@ try {
     calls=0;
     graphLayout.arrange(islands,{name:name==='overview'?'cose':name,overview:name==='overview',width:1200,height:600,fit:false,seed:true});
     assert.equal(calls,name==='overview'?1:2,'Only native seed and selected layout should run');
-    assert.deepEqual(islands.nodes().map(n=>({...n.position()})),nativePositions,
-      'Native coordinates must not be rotated, separated or repacked afterwards');
+    if(name==='grid' || name==='overview')assert.deepEqual(islands.nodes().map(n=>({...n.position()})),nativePositions,
+      'Collision-free native coordinates must not be transformed afterwards');
+    assertSeparated(islands);
     for(const n of islands.nodes())assert.ok(Number.isFinite(n.position('x')) && Number.isFinite(n.position('y')));
     assert.equal(islands.edges().length,4);
     assert.equal(islands.elements().components().length,3);

@@ -8,7 +8,7 @@
 
 ![Example of an EvoMneme knowledge graph](assets/images/evomneme-graph.png)
 
-EvoMneme directs AI development agents to build and maintain a full local SQLite graph of the project's code, alongside findings and decisions, without flooding their working context. The graph covers declarations and relationships across project-owned sources; the agent retrieves compact context and follows source locations when details matter. Technical, product, visual, and UI/UX reasons can survive beyond the conversation that discovered them.
+EvoMneme directs AI development agents to build and maintain a full local SQLite graph of the project's code, alongside findings and decisions, without flooding their working context. The graph covers declarations and relationships across project-owned sources; the agent retrieves compact context and follows source locations when details matter. Technical, product, visual, and UI/UX reasons can survive beyond the conversation that discovered them. The optional [local graph explorer](references/viewer.md) keeps small graphs compact and lets their occupied area grow with node count; the canvas supplies a preferred shape rather than spacing nodes across the whole window.
 
 ## Why keep project memory?
 

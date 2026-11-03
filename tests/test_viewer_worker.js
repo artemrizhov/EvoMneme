@@ -29,6 +29,52 @@ function realWorker() {
   return worker;
 }
 async function main() {
+  // Actual-worker discrete geometry must match the synchronous solver and
+  // remain invariant when only the canvas's pixel size doubles.
+  const parity=layout.createWorkerLayout(realWorker);
+  try {
+    for(const name of ['grid','circle','concentric','breadthfirst','overview'])for(const count of [1,3,12]) {
+      for(const [width,height] of [[1200,400],[400,1200]]) {
+        const make=()=>cytoscape({headless:true,styleEnabled:true,layout:{name:'preset'},
+          elements:Array.from({length:count},(_,i)=>({data:{id:'parity'+i,label:'Readable worker label'}})),
+          style:[{selector:'node',style:{label:'data(label)',width:24,height:24,'font-size':10,'text-valign':'bottom'}}]});
+        const sync=make(),background=make();
+        try {
+          const options={name:name==='overview'?'cose':name,overview:name==='overview',width,height,seed:true,fit:false};
+          layout.arrange(sync,options);
+          assert.equal(await parity.arrange(background,{...options,width:width*2,height:height*2}),true);
+          for(const node of sync.nodes()) {
+            const actual=background.$id(node.id()).position(),expected=node.position();
+            assert.ok(Math.hypot(actual.x-expected.x,actual.y-expected.y)<1e-5,
+              'Worker parity and canvas-size invariance: '+name+' '+count+' '+width+'x'+height);
+          }
+        } finally {sync.destroy();background.destroy();}
+      }
+    }
+    for(const [width,height] of [[1200,400],[400,1200]]) {
+      const make=()=>cytoscape({headless:true,styleEnabled:true,layout:{name:'preset'},
+        elements:[...Array.from({length:120},(_,i)=>({data:{id:'force-parity'+i,label:'Readable worker label'}})),
+          ...Array.from({length:118},(_,i)=>({data:{id:'fp-edge'+i,source:'force-parity'+Math.floor(i/3),target:'force-parity'+(i+1)}}))],
+        style:[{selector:'node',style:{label:'data(label)',width:24,height:24,'font-size':10,'text-valign':'bottom'}}]});
+      const sync=make(),background=make();
+      const footprint=cy=>{
+        const boxes=layout.boxes(cy.nodes());
+        const w=Math.max(...boxes.map(b=>b.x+b.dx+b.w/2))-Math.min(...boxes.map(b=>b.x+b.dx-b.w/2));
+        const h=Math.max(...boxes.map(b=>b.y+b.dy+b.h/2))-Math.min(...boxes.map(b=>b.y+b.dy-b.h/2));
+        return {area:w*h,aspect:w/h};
+      };
+      try {
+        const options={name:'cose',width,height,seed:true,fit:false};
+        layout.arrange(sync,options);
+        assert.equal(await parity.arrange(background,{...options,width:width*2,height:height*2}),true);
+        const a=footprint(sync),b=footprint(background);
+        // Native force jitter may choose different local minima across threads;
+        // compare the density/orientation contract rather than exact positions.
+        assert.ok(b.area/a.area>.5 && b.area/a.area<2,'Worker force density must match the synchronous contract');
+        assert.ok(width>height?b.aspect>1.5 && b.aspect<5:b.aspect<.8 && b.aspect>.2);
+      } finally {sync.destroy();background.destroy();}
+    }
+  } finally {parity.cancel();}
   const cy=cytoscape({headless:true,styleEnabled:true,elements:[
     {data:{id:'a',label:'Long architecture label'},position:{x:0,y:0}},
     {data:{id:'b',label:'Second label'},position:{x:0,y:0}},
