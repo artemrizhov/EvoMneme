@@ -2,6 +2,20 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-04 — Verify Git boundaries before rejecting non-Git hosts
+
+Connection setup treated any ancestor `.git` path as a repository boundary,
+rejecting a non-Git host below unrelated service metadata. Ask Git for the actual
+working-tree root instead of maintaining a partial repository-format detector.
+Ignore Git directory/worktree overrides and inherited discovery ceilings; retain exact-root restrictions for real
+repositories and linked worktrees, cross-root identity checks, and conservative
+receipt discovery. Missing Git or a timeout during boundary verification is an
+explicit error. Synthetic directory and file markers reproduce the old rejection
+and verify connection/discovery without changing store bytes. An outer synthetic
+malformed gitfile stops fixture discovery before it reaches this checkout's Git
+root. Review caught a ceiling-based exact-root bypass in the first implementation;
+the regression now checks that a ceiling cannot hide a real ancestor repository.
+
 ## 2026-11-03 — Inspect selections in the expanded graph
 
 Expanded mode hid the selection inspector even though graph taps still loaded

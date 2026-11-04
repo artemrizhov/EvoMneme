@@ -55,11 +55,19 @@ def _read(path):
 
 
 def _project_boundary(project):
-    for directory in (project, *project.parents):
-        if (directory / '.git').exists():
-            if directory != project:
-                raise ConnectionError('--project must name the Git project root, not a nested directory')
-            break
+    # A service directory named .git is not necessarily repository metadata.
+    # Let Git handle discovery, including gitfiles and invalid ancestor markers.
+    if not any((directory / '.git').exists() for directory in (project, *project.parents)):
+        return
+    environment = {key: value for key, value in os.environ.items()
+                   if key.upper() not in {'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_CEILING_DIRECTORIES'}}
+    try:
+        result = subprocess.run(['git', '-C', str(project), 'rev-parse', '--show-toplevel'],
+                                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5, env=environment)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ConnectionError('Cannot verify Git project boundary: ' + str(exc)) from exc
+    if result.returncode == 0 and _path(result.stdout.strip(), 'Git project root') != project:
+        raise ConnectionError('--project must name the Git project root, not a nested directory')
 
 
 def _validate_root_identity(project, canonical):

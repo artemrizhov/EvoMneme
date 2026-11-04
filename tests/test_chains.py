@@ -250,7 +250,8 @@ class ChainTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == 'nt', 'native PowerShell launcher requires Windows')
     def test_native_returned_commands_then_unicode_write_and_atomic_refusals(self):
-        (self.project / '.git').mkdir()
+        initialized = subprocess.run(['git', 'init', str(self.project)], capture_output=True, text=True, timeout=5)
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
         with redirect_stdout(io.StringIO()):
             connect(argparse.Namespace(database=self.path, project=self.project, canonical_root=None,
                                        scope='main', root_id='root-id', shell='powershell'))

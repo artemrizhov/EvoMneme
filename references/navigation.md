@@ -86,6 +86,14 @@ The navigator discovers the receipt from nested working directories. It must not
 
 A binding across different project/canonical roots must establish actual linked Git worktrees with the same resolved common Git directory. An independent clone or an unverifiable cross-root identity is rejected; this is separate from an ordinary freshness warning. A single-root non-Git project remains supported with its verification limitations stated.
 
+Setup checks the Git-discovered working-tree root rather than assuming every
+ancestor directory or file named `.git` is valid repository metadata. Unrelated
+markers therefore do not reject a non-Git host; real repositories and gitfile
+worktrees still require their exact root. Git directory/worktree environment
+overrides and discovery ceilings cannot redirect this check. When a marker exists but Git cannot be
+executed or times out, setup reports a verification error. Receipt discovery
+still stops at a `.git` marker rather than borrowing a parent connection.
+
 An invalid database/schema, nonexistent scope, wrong project/worktree binding or mismatched recorded identity is an error. Local edits or a different source checkpoint can make knowledge stale during normal development: these produce a visible warning/status and keep reading available. Reconcile before trusting/passing affected claims, following [maintenance checkpoints](code-graph.md#file-wide-locator-reconciliation). Do not choose the newest scope automatically or label all current claims freshly verified. Where persistent store identity or source checks are unavailable, that verification limitation must remain visible.
 
 ## Bootstrap and integration
