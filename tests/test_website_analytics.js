@@ -3,9 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const code = fs.readFileSync(require.resolve('../website/analytics.js'), 'utf8');
-const key = 'evomneme.analytics-consent.v1';
+const key = 'evomneme.analytics-consent.v2';
 
-function browser({choice, embedded = false, hostname = 'artemrizhov.github.io', blocked = false, writeBlocked = false} = {}) {
+function browser({choice, legacyChoice, embedded = false, hostname = 'artemrizhov.github.io', blocked = false, writeBlocked = false} = {}) {
   const scripts = [], body = [], cookies = [], events = {};
   const element = () => ({dataset: {}, listeners: {}, hidden: false,
     setAttribute(k, v) { this[k] = v; }, focus() {},
@@ -17,6 +17,7 @@ function browser({choice, embedded = false, hostname = 'artemrizhov.github.io', 
   let cookie = document.cookie;
   Object.defineProperty(document, 'cookie', {get() { return cookie; }, set(v) { cookies.push(v); }});
   const storage = new Map(choice ? [[key, choice]] : []);
+  if (legacyChoice) storage.set('evomneme.analytics-consent.v1', legacyChoice);
   const window = {addEventListener(k, fn) { events[k] = fn; }};
   window.self = window;
   window.top = embedded ? {} : window;
@@ -33,6 +34,12 @@ const fresh = browser();
 assert.equal(fresh.scripts.length, 0, 'no Google load before consent');
 assert.equal(fresh.window.dataLayer, undefined);
 assert.equal(fresh.body[0].hidden, false);
+assert.match(fresh.body[0].innerHTML, /href="\/EvoMneme\/privacy\/"/);
+assert.match(fresh.body[0].innerHTML, /Artem Ryzhov/);
+const renewed = browser({legacyChoice: 'granted'});
+assert.equal(renewed.scripts.length, 0, 'legacy grant cannot bypass renewed notice');
+assert.equal(renewed.body[0].hidden, false);
+assert.equal(renewed.storage.has('evomneme.analytics-consent.v1'), false);
 fresh.choose('denied');
 assert.equal(fresh.scripts.length, 0);
 assert.equal(fresh.storage.get(key), 'denied');

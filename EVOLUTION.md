@@ -2,6 +2,17 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-07 — Explain website privacy and renew consent
+
+Add a static Privacy & Cookies notice and links from the public landing/demo
+footers and consent panel. Document user-supplied owner contact, actual cookie
+names, browser preferences, withdrawal and data-processing boundaries. Keep the
+owner-confirmed GA4 retention of 2 months with user-identifier reset on new
+activity distinct from individual event records, cookies and aggregated reports.
+Renew consent with a new preference version and discard the old grant; the same
+opt-in gate serves European and other visitors without a geolocation dependency.
+The notice is accessible before consent, has a canonical and joins the sitemap.
+
 ## 2026-11-07 — Add optional public website analytics
 
 The maintainer requested GA4 with stream `G-KVJPQNLKF3`. Load its Google tag

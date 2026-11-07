@@ -128,7 +128,7 @@ The primary content and GitHub/documentation links do not require JavaScript.
 The interactive demo does require JavaScript; its canonical is `/EvoMneme/demo/`,
 including for `index.html` and query variants such as `?embed=1`. It is a separate
 tool, not a duplicate of the landing page. The sitemap lists only the static
-landing page, not the JS-dependent demo or its viewer state URLs. No page uses
+landing and Privacy & Cookies page, not the JS-dependent demo or its viewer state URLs. No page uses
 `noindex` or `nofollow`.
 
 `/EvoMneme/index.html` can serve the same landing content; its canonical and the
@@ -160,6 +160,18 @@ and [sitemaps](https://developers.google.com/search/docs/crawling-indexing/sitem
 and the [SoftwareSourceCode vocabulary](https://schema.org/SoftwareSourceCode).
 
 ## Optional analytics
+
+`privacy/index.html` is the static public Privacy & Cookies notice, linked from
+the landing/demo footers and the consent panel. It identifies the owner using
+user-supplied public contact details, describes Google/GitHub processing, optional
+analytics and first-party cookies, local consent storage and withdrawal/rights.
+The owner confirmed GA4 user/event retention of 2 months with reset on new user
+activity enabled. The reset renews user-identifier retention, not individual
+event records; cookie lifetimes and aggregated-report retention are separate.
+Consent v2 asks everyone, including EEA visitors, again for this owner-specific
+notice and removes the old v1 choice without carrying a grant forward. No GeoIP
+service is needed: the same consent gate applies to every visitor. The page is
+built with its own canonical and included in the sitemap.
 
 The public landing page and standalone demo use GA4 stream `G-KVJPQNLKF3`
 through `analytics.js`. The previously supplied GTM container is not installed.
