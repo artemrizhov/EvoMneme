@@ -24,11 +24,47 @@ The fields needed for ordinary retrieval are:
 1. Express the unfamiliar task as **entities, actions and invariants**, without assuming their stored names. For example, changing a parcel reference only on confirmation while preserving unfinished input and reliable retries concerns a local commit boundary, draft lifetime and delivery guarantees. Searching every declaration for `reference` would not establish those mechanisms.
 2. Read [architecture.sql](../queries/architecture.sql) with the host's established architectural kind (normally `architecture`). It selects **one knowledge type**, without a word or source-path predicate. Begin with 12 cards and 120 summary characters per card, `max_rows:12`, `max_output_bytes:8192`. Cards carry title, responsibility preview, confidence and an explicit truncation flag. Use your own understanding to select responsibilities that explain the actions/invariants, even when their titles share no words with the task. Degree is not relevance. The first page is not a ranked top list: ID order is only for stable paging.
 3. Fetch [node.sql](../queries/node.sql) for one or two plausible responsibilities before deciding. A clipped preview is not the full contract. Inspect at most two catalog pages initially; if they do not locate the mechanism, deliberately continue bounded pages or revisit the host's kind vocabulary. Do not substitute a global nodes substring scan. Record incomplete catalog coverage; absence from a partial catalog proves nothing. If the catalog is empty or its reviewed responsibilities do not cover the task, report that architectural knowledge gap and use focused source discovery. Do not invent a responsibility or require rebuilding the graph.
-4. Use [incident.sql](../queries/incident.sql) on the chosen responsibility to read direct **incoming and outgoing** relationships. Select implementation links, decisions/constraints and direct component interactions by their explanations. A code node may implement an architecture node via an incoming edge, and a pathless decision may constrain it. Read selected decision details and evidence. Follow only the next implementation/boundary needed to answer an open question, such as a call from a local sender to a server command handler. Use observed host vocabulary rather than assuming every relationship is called `calls`.
+4. Use [incident.sql](../queries/incident.sql) on the chosen responsibility to read direct **incoming and outgoing** relationships. Select implementation links, decisions/constraints and direct component interactions by their explanations. A code node may implement an architecture node via an incoming edge, and a pathless decision may constrain it. Read selected decision details and evidence. Follow branches both to answer open questions and to discover influences that could change the solution, using the review below. Use observed host vocabulary rather than assuming every relationship is called `calls`.
 5. Only after choosing the mechanism, use physical source locators or [declarations.sql](../queries/declarations.sql) to inspect relevant code in a file. A physical path filter excludes pathless knowledge by design; it must not define the architectural catalog. Cross-module responsibilities are connected to their implementation through edges, not by pretending that every pathless node belongs to every directory. For a known local edit, [anchors.sql](../queries/anchors.sql) can skip the catalog: exact IDs/titles find selected symbols, while exact source paths return file/module entrypoints; listing all declarations requires the explicit file recipe.
-6. Fetch evidence for consequential claims and read the actual implementation, tests and material boundaries. Compare locators/hashes with sources. Current graph validity is not a fresh source check; missing edges do not establish independence. Stop when you have a source-backed mechanism map, important constraints and explicit open questions. A small graph can still be incomplete. Preserve uncertainty rather than expanding unrelated containment trees until output looks complete.
+6. Fetch evidence for consequential claims and read the actual implementation, tests and material boundaries. Compare locators/hashes with sources. Current graph validity is not a fresh source check; missing edges do not establish independence. Before stopping, complete the related-branch review below and retain a source-backed mechanism map, important constraints and explicit unresolved influences. A small graph can still be incomplete. Preserve uncertainty rather than expanding unrelated containment trees until output looks complete.
 
 This is semantic selection **by the agent from bounded architectural context**, not automatic semantic search. It supplies the missing opportunity to recognize a differently named responsibility. Success depends on the quality and coverage of that context and on the agent's reasoning; test those separately from SQL correctness.
+
+### Review branches that could change the solution
+
+Retrieval must also discover relevant information the agent has not yet thought
+to ask about. Before settling on an approach, inspect incoming and outgoing
+relationships around the selected responsibility and affected implementation.
+Look for established constraints and rejected alternatives, callers/consumers,
+shared state/resources, and error, event or lifecycle paths that could require a
+different design, wider compatibility handling or additional validation. These
+are prompts for judgment, not mandatory categories to enumerate for every task.
+
+For each plausible branch, identify how it might affect the task from its
+relationship explanation, neighbor context or source evidence. Read the selected
+node and relationship details; follow further links while a concrete potential
+influence remains. Prioritize consequential effects and plausible challenges to
+the current approach, including indirect dependencies and differently named
+responsibilities. Do not require an already formulated question or a confirmed
+impact before inspecting a candidate, and do not discard it merely because it
+does not help implement the first proposed solution. Neither proximity nor a
+high link count alone establishes relevance.
+
+Check consequential findings against sources and use them to revise assumptions,
+implementation scope within authorization, or validation. If they call for work
+outside the authorized task, surface that decision instead of silently expanding
+the task. For example, changing when a value is saved also calls for checking a
+related retry/queued-delivery branch: it may retain an older value and require
+the proposed save boundary to be reconsidered even when the save method is known.
+
+Stop when the plausible material influences have been checked and the remaining
+branches have no concrete reason to affect the task. If source gaps, uncertainty
+or a practical retrieval budget leave material candidates unreviewed, retain
+their identities, possible effect and pending verification in task context and
+handoffs; surface them when they limit confidence in the result. Revisit this
+review when new evidence changes the approach. Do not promise exhaustive impact
+coverage, expand all neighbors recursively, or rebuild the graph for this check.
+A small known change can perform the same review directly in source.
 
 ### Executable recipes
 
