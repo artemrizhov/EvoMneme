@@ -1,5 +1,7 @@
 The user authorizes agents working on this project to create commits, push
-changes, create and review pull requests, and make pull request decisions
-(including approving, requesting changes, merging, or closing) without
-additional user confirmation. This authorization applies to work within the
-assigned task's scope; explicit user restrictions still take precedence.
+changes, create and review pull requests, request changes, and close pull
+requests within the assigned task's scope without additional user confirmation.
+Approving or merging a pull request requires explicit user agreement for that
+specific pull request and its reviewed changes. General maintenance authorization
+and passing checks do not replace that agreement. Explicit user restrictions
+still take precedence.
