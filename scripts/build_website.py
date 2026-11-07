@@ -20,7 +20,7 @@ def build():
     if OUTPUT.exists():
         shutil.rmtree(OUTPUT)
     OUTPUT.mkdir()
-    for name in ('index.html', 'site.css', 'site.js', 'robots.txt', 'sitemap.xml'):
+    for name in ('index.html', 'site.css', 'site.js', 'analytics.js', 'analytics.css', 'robots.txt', 'sitemap.xml'):
         shutil.copy2(source / name, OUTPUT / name)
     if (source / 'assets').exists():
         shutil.copytree(source / 'assets', OUTPUT / 'assets')
@@ -56,6 +56,8 @@ def build():
                         '<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">'
                         '<link rel="canonical" href="https://artemrizhov.github.io/EvoMneme/demo/">'
                         '<meta name="description" content="Explore EvoMneme’s read-only project knowledge graph and saved history. This interactive demo requires JavaScript.">'
+                        '<link rel="stylesheet" href="../analytics.css">'
+                        '<script defer src="../analytics.js"></script>'
                         '</head>')
     (demo / 'index.html').write_text(html, encoding='utf-8')
     (OUTPUT / '.nojekyll').touch()
