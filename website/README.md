@@ -118,12 +118,54 @@ hero video. Regenerate and review the three JSON files before committing a demo
 update; deployment does not read the local database or refresh the snapshot.
 Verify the public website after the deployment job completes.
 
+## Search indexing
+
+The canonical landing URL is `https://artemrizhov.github.io/EvoMneme/`.
+The static HTML contains the project name in its title, H1, description and body,
+Open Graph/Twitter cards using the existing graph screenshot, and Schema.org
+`SoftwareSourceCode` JSON-LD linking the project, repository and MIT license.
+The primary content and GitHub/documentation links do not require JavaScript.
+The interactive demo does require JavaScript; its canonical is `/EvoMneme/demo/`,
+including for `index.html` and query variants such as `?embed=1`. It is a separate
+tool, not a duplicate of the landing page. The sitemap lists only the static
+landing page, not the JS-dependent demo or its viewer state URLs. No page uses
+`noindex` or `nofollow`.
+
+`/EvoMneme/index.html` can serve the same landing content; its canonical and the
+sitemap consistently select `/EvoMneme/`. GitHub Pages enforces HTTPS and adds
+the directory slash. Do not add script redirects or block duplicate URLs in
+robots.txt: crawlers need to read their canonical. Canonical is a preference,
+not a guarantee of the search engine's selection.
+
+The build copies `robots.txt` and `sitemap.xml` to the deployment directory.
+**Project Pages cannot publish the effective host-root robots.txt from this
+repository.** Crawlers request `https://artemrizhov.github.io/robots.txt`, not
+`/EvoMneme/robots.txt`. A missing root file (404) does not prohibit crawling.
+If a user-site repository `artemrizhov.github.io` is maintained, add the absolute
+Sitemap directive there, preserving any rules for other projects. Do not claim
+the project-level file controls crawlers. The landing HTML also links the sitemap.
+
+After deployment, the site owner can verify the URL-prefix property
+`https://artemrizhov.github.io/EvoMneme/` in Google Search Console using its HTML
+file or meta-tag method (DNS verification is unavailable for `github.io`).
+Publish the exact verification file/tag supplied by Google, submit `sitemap.xml`,
+then inspect the canonical landing URL and choose **Request indexing**. Account
+verification and that request cannot be performed by this repository's build.
+Optionally submit the same sitemap to Bing Webmaster Tools. These steps help
+discovery but do not guarantee indexing, ranking or a particular crawl time.
+
+See Google's guidance on [robots.txt location](https://developers.google.com/crawling/docs/robots-txt/create-robots-txt),
+[canonical URLs](https://developers.google.com/search/docs/crawling-indexing/consolidate-duplicate-urls)
+and [sitemaps](https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap),
+and the [SoftwareSourceCode vocabulary](https://schema.org/SoftwareSourceCode).
+
 ## Verification
 
 ```sh
 python -m unittest discover -s tests -p test_website_export.py
 node tests/test_website_static.js
 python scripts/build_website.py
+python -m unittest discover -s tests -p test_website_seo.py
 ```
 
 Also inspect the rendered landing page and demo at desktop and mobile sizes,

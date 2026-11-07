@@ -2,6 +2,19 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-07 — Make the public project identity discoverable
+
+The landing page had static explanatory content but lacked canonical URLs,
+social metadata, structured project data and a sitemap; its H1 omitted the
+project name. Add consistent EvoMneme identity metadata, SoftwareSourceCode
+JSON-LD, the existing public graph screenshot for social cards, and a landing-only
+sitemap. Give the distinct JS-dependent demo its own canonical, consolidating
+embedded and viewer-state variants. Retain ordinary crawl/follow defaults.
+Document the project Pages boundary: its nested robots.txt cannot govern the
+host root, so sitemap submission and owner verification remain separate steps.
+Build-output checks cover metadata, canonical/sitemap agreement, static content,
+and local link/asset targets. No ranking or indexing-time gain is claimed.
+
 ## 2026-11-04 — Verify Git boundaries before rejecting non-Git hosts
 
 Connection setup treated any ancestor `.git` path as a repository boundary,

@@ -1,0 +1,6 @@
+# GitHub project Pages serves this under /EvoMneme/robots.txt.
+# Crawlers use /robots.txt at the host root; see website/README.md.
+User-agent: *
+Allow: /EvoMneme/
+
+Sitemap: https://artemrizhov.github.io/EvoMneme/sitemap.xml

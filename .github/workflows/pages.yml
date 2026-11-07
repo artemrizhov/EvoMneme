@@ -6,6 +6,7 @@ on:
     paths:
       - 'website/**'
       - 'assets/videos/evomneme-graph.mp4'
+      - 'assets/images/evomneme-graph.png'
       - 'scripts/viewer/**'
       - 'scripts/build_website.py'
       - 'scripts/export_website_demo.py'
@@ -40,6 +41,7 @@ jobs:
       - run: node tests/test_website_static.js
       - run: node tests/test_viewer_history.js
       - run: python scripts/build_website.py
+      - run: python -m unittest discover -s tests -p test_website_seo.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

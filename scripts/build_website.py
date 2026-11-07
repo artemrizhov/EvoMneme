@@ -20,10 +20,13 @@ def build():
     if OUTPUT.exists():
         shutil.rmtree(OUTPUT)
     OUTPUT.mkdir()
-    for name in ('index.html', 'site.css', 'site.js'):
+    for name in ('index.html', 'site.css', 'site.js', 'robots.txt', 'sitemap.xml'):
         shutil.copy2(source / name, OUTPUT / name)
     if (source / 'assets').exists():
         shutil.copytree(source / 'assets', OUTPUT / 'assets')
+    (OUTPUT / 'assets' / 'images').mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / 'assets' / 'images' / 'evomneme-graph.png',
+                 OUTPUT / 'assets' / 'images' / 'evomneme-graph.png')
     (OUTPUT / 'assets' / 'videos').mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / 'assets' / 'videos' / 'evomneme-graph.mp4',
                  OUTPUT / 'assets' / 'videos' / 'evomneme-graph.mp4')
@@ -49,7 +52,11 @@ def build():
                         '<script defer src="./static-api.js"></script>'
                         '<script defer src="./demo.js"></script>'
                         '<script defer src="./app.js"></script>')
-    html = html.replace('</head>', '<link rel="icon" href="../assets/mark.svg" type="image/svg+xml"></head>')
+    html = html.replace('</head>',
+                        '<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">'
+                        '<link rel="canonical" href="https://artemrizhov.github.io/EvoMneme/demo/">'
+                        '<meta name="description" content="Explore EvoMneme’s read-only project knowledge graph and saved history. This interactive demo requires JavaScript.">'
+                        '</head>')
     (demo / 'index.html').write_text(html, encoding='utf-8')
     (OUTPUT / '.nojekyll').touch()
     print(f'Built website: {OUTPUT}')
