@@ -45,11 +45,15 @@
     });
     window.gtag('consent', 'update', { analytics_storage: 'granted' });
     window.gtag('js', new Date());
-    window.gtag('config', measurementId, {
+    const configuration = {
       cookie_domain: 'none', cookie_path: '/EvoMneme/', cookie_prefix: 'evomneme',
       cookie_flags: 'SameSite=Lax;Secure',
       allow_google_signals: false, allow_ad_personalization_signals: false
-    });
+    };
+    // Set shared defaults before the destination initializes. The loaded tag
+    // can initialize its cookies before processing destination-only settings.
+    window.gtag('set', configuration);
+    window.gtag('config', measurementId, configuration);
     const script = document.createElement('script');
     script.async = true;
     script.src = 'https://www.googletagmanager.com/gtag/js?id=' + measurementId;
