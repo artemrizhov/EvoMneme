@@ -39,6 +39,7 @@ jobs:
           node-version: '22'
       - run: python -m unittest discover -s tests -p test_website_export.py
       - run: node tests/test_website_static.js
+      - run: node tests/test_website_analytics.js
       - run: node tests/test_viewer_history.js
       - run: python scripts/build_website.py
       - run: python -m unittest discover -s tests -p test_website_seo.py

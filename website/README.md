@@ -159,11 +159,40 @@ See Google's guidance on [robots.txt location](https://developers.google.com/cra
 and [sitemaps](https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap),
 and the [SoftwareSourceCode vocabulary](https://schema.org/SoftwareSourceCode).
 
+## Optional analytics
+
+The public landing page and standalone demo use GA4 stream `G-KVJPQNLKF3`
+through `analytics.js`. The previously supplied GTM container is not installed.
+The local graph explorer, local previews and embedded demo do not load Analytics.
+This is optional website instrumentation requested by the maintainer; project
+knowledge storage, CLI and viewer operation have no Google dependency.
+
+Visitors choose **Allow analytics** or **Decline**. No Google tag is loaded and
+no analytics requests are sent before consent or after a saved denial (basic
+consent mode). The choice is stored in project-namespaced localStorage. If storage
+is blocked it applies only to the current page and the settings control notes
+that the choice was not saved. Withdrawal still disables collection, but does
+not reload into an older saved grant when storage cannot be changed.
+**Analytics settings** reopens
+the choice; withdrawal disables collection, deletes this project's Analytics
+cookies and reloads to unload the tag. Changes in another tab are applied too.
+Advertising consent remains denied; Google signals and ad personalization are
+disabled. Cookies use a project prefix, host-only domain and `/EvoMneme/` path.
+
+After deployment, allow analytics and check **Reports → Realtime** in the GA4
+property. Browser network inspection can verify a `g/collect` request with
+`tid=G-KVJPQNLKF3`; it cannot establish that the owner's reports have processed
+the data. Ad blockers and declined consent can legitimately prevent collection.
+Automatic/enhanced measurement beyond the initial page view is controlled by the
+property's settings; review history-based page views if demo navigation should
+not count as additional page views.
+
 ## Verification
 
 ```sh
 python -m unittest discover -s tests -p test_website_export.py
 node tests/test_website_static.js
+node tests/test_website_analytics.js
 python scripts/build_website.py
 python -m unittest discover -s tests -p test_website_seo.py
 ```

@@ -2,6 +2,17 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-07 — Add optional public website analytics
+
+The maintainer requested GA4 with stream `G-KVJPQNLKF3`. Load its Google tag
+only after explicit visitor consent, keep advertising consent denied, and offer
+a persistent settings control for withdrawal. Exclude iframes and local tools
+from collection so the embedded graph does not duplicate the landing view.
+Use project-scoped preferences and cookies rather than affecting sibling Pages
+projects. Browser-side checks cover consent, reload/withdrawal and embed/local
+exclusion. Analytics is optional presentation instrumentation, not a dependency
+of the instruction set, knowledge store or local viewer.
+
 ## 2026-11-07 — Make the public project identity discoverable
 
 The landing page had static explanatory content but lacked canonical URLs,
