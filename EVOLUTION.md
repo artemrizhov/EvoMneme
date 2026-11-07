@@ -639,3 +639,22 @@ off states to the file; reload restored them without repeating the offer.
 Choosing either offer action during startup explicitly retries an interrupted
 graph load even with Live paused; a regression uses the real cancellation and
 refresh queue to cover that interaction.
+
+## 2026-11-07 — Review related influences before settling on a solution
+
+Question-driven retrieval could stop after locating the requested mechanism,
+leaving related constraints or consumers unexplored. Require a proportional
+review of incoming and outgoing relationships around the selected responsibility
+and affected implementation, including branches that may challenge the initial
+approach before the agent has formulated a question about them. Follow indirect
+influences while a concrete task-relevant effect remains plausible, verify
+consequential findings against sources, and revise the approach or validation.
+Retain material unreviewed candidates and uncertainty; scope-expanding decisions
+remain with the user. Exhaustive neighborhood traversal and fixed hop quotas
+were rejected because graph proximity alone does not establish task relevance.
+
+The live skill and both CLI/SQL retrieval guides now share this rule. Four
+isolated retrieval controls passed before and after the instruction change,
+with unchanged lookup counts and returned bytes; these controls exercise
+existing transport/fixtures, not agent adoption of the new reasoning rule.
+Fresh-agent behavior and practical impact on solution quality remain unmeasured.

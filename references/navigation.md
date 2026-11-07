@@ -19,6 +19,15 @@ Copy the names/commands returned by the program; the example names above are pla
 
 For an unfamiliar task spanning subsystems, read this overview, select responsibilities that explain the task's actions/invariants, inspect their relations, then read selected descriptions, constraints and source evidence. A title need not contain the task's keyword. A known local edit can go straight to its source or named node. Do not turn traversal into a ritual for every change.
 
+Before choosing the solution, also review related branches for information that
+could alter the approach, affected scope or validation even after the direct
+answer is found. Inspect incoming and outgoing links around the selected
+responsibility and affected implementation; pursue plausible constraints,
+consumers and shared mechanisms by their relationship explanations. Read the
+selected neighbor cards and pair evidence, and continue across indirect links
+when a concrete task-relevant effect remains plausible. Apply the proportional
+selection and stopping rules in [related-branch review](retrieval.md#review-branches-that-could-change-the-solution).
+
 ## Cards and relationships
 
 `nodes NAME [NAME ...]` returns cards containing `kind`, `title`, `summary`, confidence/current validity, available source locators and evidence, a ready-to-use argument, and **the exact number of relationships that `links NAME` would return in the same snapshot** (`link_count`). It does not list neighbors. Parallel relationships count separately; a self-loop counts once. This is a relationship count, not the number of distinct neighbors.
