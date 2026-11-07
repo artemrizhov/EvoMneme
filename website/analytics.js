@@ -6,19 +6,22 @@
       || !location.pathname.startsWith('/EvoMneme/')) return;
 
   const measurementId = 'G-EXAMPLE000';
-  const storageKey = 'evomneme.analytics-consent.v1';
+  const storageKey = 'evomneme.analytics-consent.v2';
   const disableKey = 'ga-disable-' + measurementId;
   let loaded = false;
   let choice;
   try { choice = localStorage.getItem(storageKey); } catch { /* Per-visit choice still works. */ }
+  // Ask again for the owner-specific privacy notice; never migrate a prior grant.
+  try { localStorage.removeItem('evomneme.analytics-consent.v1'); } catch { /* Optional cleanup. */ }
 
   const panel = document.createElement('section');
   panel.className = 'analytics-consent';
   panel.setAttribute('aria-label', 'Analytics preferences');
   panel.innerHTML = '<h2>Optional analytics</h2>'
-    + '<p>Allow Google Analytics cookies to help us understand visits to EvoMneme? '
+    + '<p>Allow Website operator to use Google Analytics cookies to understand visits to EvoMneme? '
     + 'Google receives usage information such as pages viewed, device information and approximate location. '
     + 'Advertising features are disabled. You can decline or change your choice at any time. '
+    + '<a href="/EvoMneme/privacy/">Privacy &amp; Cookies</a> · '
     + '<a href="https://policies.google.com/technologies/partner-sites">How Google uses this information</a>.</p>'
     + '<div><button type="button" data-choice="granted">Allow analytics</button>'
     + '<button type="button" data-choice="denied">Decline</button></div>';

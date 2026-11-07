@@ -105,7 +105,7 @@ class WebsiteSEO(unittest.TestCase):
         self.assertEqual(project['codeRepository'], 'https://github.com/artemrizhov/EvoMneme')
         self.assertIn('EvoMneme', project['description'])
         urls = ET.parse(OUTPUT / 'sitemap.xml').findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}loc')
-        self.assertEqual([u.text for u in urls], [SITE])
+        self.assertEqual([u.text for u in urls], [SITE, SITE + 'privacy/'])
         self.assertIn(('link', {'rel': 'sitemap', 'type': 'application/xml', 'href': 'sitemap.xml'}), self.landing.tags)
         robots = (OUTPUT / 'robots.txt').read_text(encoding='utf-8')
         self.assertIn('Sitemap: ' + SITE + 'sitemap.xml', robots)
@@ -122,6 +122,31 @@ class WebsiteSEO(unittest.TestCase):
                     self.assertNotIn('nofollow', attrs.get('content', '').lower())
                 if tag == 'a':
                     self.assertNotIn('nofollow', attrs.get('rel', '').split())
+
+    def test_privacy_page_is_static_and_reachable(self):
+        p = Page(OUTPUT / 'privacy/index.html')
+        self.assertEqual(p.canonical(), [SITE + 'privacy/'])
+        text = ''.join(p.content)
+        for expected in ('Website operator', 'privacy@example.invalid', 'evomneme_ga',
+                         'evomneme.analytics-consent.v2', '2 months', 'reset on new user activity enabled',
+                         'withdraw', 'Google Analytics'):
+            self.assertIn(expected, text)
+        for page in (self.landing, self.demo):
+            self.assertTrue(any(t == 'a' and a.get('href') in ('privacy/', '../privacy/')
+                                for t, a in page.tags))
+        for tag, attrs in p.tags:
+            for field in ('href', 'src'):
+                if field not in attrs:
+                    continue
+                url = urlsplit(attrs[field])
+                if url.scheme or url.netloc:
+                    continue
+                path = OUTPUT / 'privacy' / unquote(url.path)
+                if path.is_dir():
+                    path /= 'index.html'
+                self.assertTrue(path.is_file(), attrs[field])
+                if url.fragment:
+                    self.assertIn(url.fragment, Page(path).ids)
 
     def test_landing_local_links_assets_and_repository_targets(self):
         for tag, attrs in self.landing.tags:
