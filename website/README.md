@@ -179,15 +179,24 @@ The local graph explorer, local previews and embedded demo do not load Analytics
 This is optional website instrumentation requested by the maintainer; project
 knowledge storage, CLI and viewer operation have no Google dependency.
 
-Visitors choose **Allow analytics** or **Decline**. No Google tag is loaded and
+The full-width **Cookies on this site** bar describes optional cookies for visit
+statistics and website improvement. It links only to this website's Privacy &
+Cookies notice, where Google Analytics and external provider links are disclosed.
+It occupies at most half the viewport, remains visible while scrolling and has
+equally styled accept/reject actions, without a backdrop or page scroll lock.
+Visitors choose **Accept optional
+cookies** or **Reject optional cookies**. No Google tag is loaded and
 no analytics requests are sent before consent or after a saved denial (basic
 consent mode). The choice is stored in project-namespaced localStorage. If storage
 is blocked it applies only to the current page and the settings control notes
 that the choice was not saved. Withdrawal still disables collection, but does
 not reload into an older saved grant when storage cannot be changed.
-**Analytics settings** reopens
+The unobtrusive **Cookie settings** footer link beside the privacy link reopens
 the choice; withdrawal disables collection, deletes this project's Analytics
 cookies and reloads to unload the tag. Changes in another tab are applied too.
+There is no floating settings button. The footer link falls back to the static
+policy's choices section when JavaScript is unavailable; restoring keyboard focus
+after a choice does not scroll the page to the footer.
 Advertising consent remains denied; Google signals and ad personalization are
 disabled. Cookies use a project prefix, host-only domain and `/EvoMneme/` path.
 

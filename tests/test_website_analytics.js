@@ -8,10 +8,12 @@ const key = 'evomneme.analytics-consent.v2';
 function browser({choice, legacyChoice, embedded = false, hostname = 'artemrizhov.github.io', blocked = false, writeBlocked = false} = {}) {
   const scripts = [], body = [], cookies = [], events = {};
   const element = () => ({dataset: {}, listeners: {}, hidden: false,
-    setAttribute(k, v) { this[k] = v; }, focus() {},
+    setAttribute(k, v) { this[k] = v; }, focus(options) { this.focused = true; this.focusOptions = options; },
     addEventListener(k, fn) { this.listeners[k] = fn; },
     querySelector() { return this; }});
+  const settingsLinks = [element(), element()];
   const document = {cookie: 'evomneme_ga=123; evomneme_ga_EXAMPLE000=456; other=value',
+    querySelectorAll() { return settingsLinks; },
     createElement: element,
     head: {append(x) { scripts.push(x); }}, body: {append(...xs) { body.push(...xs); }}};
   let cookie = document.cookie;
@@ -27,7 +29,12 @@ function browser({choice, legacyChoice, embedded = false, hostname = 'artemrizho
     removeItem(k) { if (blocked || writeBlocked) throw Error('blocked'); storage.delete(k); }};
   vm.runInNewContext(code, {window, document, location, localStorage});
   const choose = (value) => body[0].listeners.click({target: {dataset: {choice: value}}});
-  return {window, scripts, body, storage, cookies, events, location, choose};
+  const openSettings = () => {
+    let prevented = false;
+    settingsLinks[0].listeners.click({preventDefault() { prevented = true; }});
+    return prevented;
+  };
+  return {window, scripts, body, storage, cookies, events, location, choose, settingsLinks, openSettings};
 }
 
 const fresh = browser();
@@ -35,7 +42,9 @@ assert.equal(fresh.scripts.length, 0, 'no Google load before consent');
 assert.equal(fresh.window.dataLayer, undefined);
 assert.equal(fresh.body[0].hidden, false);
 assert.match(fresh.body[0].innerHTML, /href="\/EvoMneme\/privacy\/"/);
-assert.match(fresh.body[0].innerHTML, /Website operator/);
+assert.deepEqual([...fresh.body[0].innerHTML.matchAll(/href="([^"]+)"/g)].map(x => x[1]), ['/EvoMneme/privacy/']);
+assert.match(fresh.body[0].innerHTML, /measure visits/);
+assert.equal(fresh.body.length, 1, 'no separate floating settings button');
 const renewed = browser({legacyChoice: 'granted'});
 assert.equal(renewed.scripts.length, 0, 'legacy grant cannot bypass renewed notice');
 assert.equal(renewed.body[0].hidden, false);
@@ -43,9 +52,12 @@ assert.equal(renewed.storage.has('evomneme.analytics-consent.v1'), false);
 fresh.choose('denied');
 assert.equal(fresh.scripts.length, 0);
 assert.equal(fresh.storage.get(key), 'denied');
-fresh.body[1].listeners.click();
+assert.equal(fresh.settingsLinks[0].focused, undefined, 'initial choice does not scroll to footer');
+assert.equal(fresh.openSettings(), true, 'footer link opens choices without navigating');
 assert.equal(fresh.body[0].hidden, false, 'settings reopens choice');
+assert.ok(fresh.settingsLinks.every(x => x['aria-expanded'] === 'true'));
 fresh.choose('granted');
+assert.equal(fresh.settingsLinks[0].focusOptions.preventScroll, true, 'return focus does not jump the page');
 assert.equal(fresh.scripts.length, 1);
 assert.equal(fresh.scripts[0].src, 'https://www.googletagmanager.com/gtag/js?id=G-EXAMPLE000');
 const commands = fresh.window.dataLayer.map(x => Array.from(x));
@@ -89,7 +101,7 @@ readOnly.choose('denied');
 assert.equal(readOnly.window['ga-disable-G-EXAMPLE000'], true);
 assert.equal(readOnly.location.reloads, 0, 'cannot reload into a stale saved grant');
 assert.equal(readOnly.scripts.length, 1, 'no additional Google load');
-assert.match(readOnly.body[1].textContent, /choice not saved/);
+assert.match(readOnly.settingsLinks[0].textContent, /choice not saved/);
 readOnly.choose('granted');
 assert.equal(readOnly.window['ga-disable-G-EXAMPLE000'], false, 'can re-enable without double-loading');
 assert.equal(readOnly.scripts.length, 1);

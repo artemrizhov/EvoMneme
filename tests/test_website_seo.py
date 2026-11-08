@@ -134,6 +134,9 @@ class WebsiteSEO(unittest.TestCase):
         for page in (self.landing, self.demo):
             self.assertTrue(any(t == 'a' and a.get('href') in ('privacy/', '../privacy/')
                                 for t, a in page.tags))
+        for page in (self.landing, self.demo, p):
+            self.assertTrue(any(t == 'a' and 'data-cookie-settings' in a and '#choices' in a.get('href', '')
+                                for t, a in page.tags), 'footer preferences have a static policy fallback')
         for tag, attrs in p.tags:
             for field in ('href', 'src'):
                 if field not in attrs:

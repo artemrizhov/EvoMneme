@@ -2,6 +2,17 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-08 — Use a full-width cookie notice with footer preferences
+
+Replace the floating analytics-focused box and settings button with a persistent
+full-width cookie bar, bounded to half the viewport. Keep accept and reject
+equally prominent and the page usable. Link to the project's detailed privacy
+notice; disclose Google Analytics and its provider links there rather than in
+the short banner. Footer preference links reopen consent without navigation,
+retain a static policy fallback and restore keyboard focus without scrolling.
+The website build copies the reviewed privacy HTML explicitly so adjacent local
+backups cannot enter the generated artifact. Consent gating remains unchanged.
+
 ## 2026-11-07 — Explain website privacy and renew consent
 
 Add a static Privacy & Cookies notice and links from the public landing/demo

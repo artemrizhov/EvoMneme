@@ -15,26 +15,24 @@
   try { localStorage.removeItem('evomneme.analytics-consent.v1'); } catch { /* Optional cleanup. */ }
 
   const panel = document.createElement('section');
+  panel.id = 'cookie-consent';
   panel.className = 'analytics-consent';
-  panel.setAttribute('aria-label', 'Analytics preferences');
-  panel.innerHTML = '<h2>Optional analytics</h2>'
-    + '<p>Allow Website operator to use Google Analytics cookies to understand visits to EvoMneme? '
-    + 'Google receives usage information such as pages viewed, device information and approximate location. '
-    + 'Advertising features are disabled. You can decline or change your choice at any time. '
-    + '<a href="/EvoMneme/privacy/">Privacy &amp; Cookies</a> · '
-    + '<a href="https://policies.google.com/technologies/partner-sites">How Google uses this information</a>.</p>'
-    + '<div><button type="button" data-choice="granted">Allow analytics</button>'
-    + '<button type="button" data-choice="denied">Decline</button></div>';
-  const settings = document.createElement('button');
-  settings.type = 'button';
-  settings.className = 'analytics-settings';
-  settings.textContent = 'Analytics settings';
-  settings.setAttribute('aria-expanded', 'false');
-  document.body.append(panel, settings);
+  panel.setAttribute('aria-label', 'Cookie preferences');
+  panel.innerHTML = '<div class="cookie-banner-content"><div class="cookie-banner-copy">'
+    + '<h2>Cookies on this site</h2>'
+    + '<p>We use optional cookies to measure visits and improve this website. '
+    + 'You can accept or reject them and change your choice at any time. '
+    + 'Read our <a href="/EvoMneme/privacy/">Privacy &amp; Cookies</a> for details.</p></div>'
+    + '<div class="cookie-banner-actions"><button type="button" data-choice="granted">Accept optional cookies</button>'
+    + '<button type="button" data-choice="denied">Reject optional cookies</button></div></div>';
+  const settingsLinks = [...document.querySelectorAll('[data-cookie-settings]')];
+  let settingsOpener;
+  for (const link of settingsLinks) link.setAttribute('aria-controls', panel.id);
+  document.body.append(panel);
 
   const showPanel = (visible) => {
     panel.hidden = !visible;
-    settings.setAttribute('aria-expanded', String(visible));
+    for (const link of settingsLinks) link.setAttribute('aria-expanded', String(visible));
   };
   const load = () => {
     window[disableKey] = false;
@@ -64,8 +62,10 @@
   };
   const apply = (value, persisted = true) => {
     choice = value;
-    settings.textContent = persisted ? 'Analytics settings' : 'Analytics settings (choice not saved)';
-    settings.title = persisted ? '' : 'Your browser could not save this choice. It applies only to this page.';
+    for (const link of settingsLinks) {
+      link.textContent = persisted ? 'Cookie settings' : 'Cookie settings (choice not saved)';
+      link.title = persisted ? '' : 'Your browser could not save this choice. It applies only to this page.';
+    }
     showPanel(value !== 'granted' && value !== 'denied');
     if (value === 'granted') {
       load();
@@ -94,12 +94,16 @@
       try { localStorage.removeItem(storageKey); } catch { /* Storage is inaccessible. */ }
     }
     apply(value, persisted);
-    settings.focus();
+    settingsOpener?.focus({ preventScroll: true });
   });
-  settings.addEventListener('click', () => {
-    showPanel(panel.hidden);
-    if (!panel.hidden) panel.querySelector('button').focus();
-  });
+  for (const link of settingsLinks) {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      settingsOpener = link;
+      showPanel(true);
+      panel.querySelector('button').focus({ preventScroll: true });
+    });
+  }
   window.addEventListener('storage', (event) => {
     if (event.key === storageKey || event.key === null) apply(event.newValue);
   });

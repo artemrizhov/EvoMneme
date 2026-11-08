@@ -22,7 +22,8 @@ def build():
     OUTPUT.mkdir()
     for name in ('index.html', 'site.css', 'site.js', 'analytics.js', 'analytics.css', 'privacy.css', 'robots.txt', 'sitemap.xml'):
         shutil.copy2(source / name, OUTPUT / name)
-    shutil.copytree(source / 'privacy', OUTPUT / 'privacy')
+    (OUTPUT / 'privacy').mkdir()
+    shutil.copy2(source / 'privacy' / 'index.html', OUTPUT / 'privacy' / 'index.html')
     if (source / 'assets').exists():
         shutil.copytree(source / 'assets', OUTPUT / 'assets')
     (OUTPUT / 'assets' / 'images').mkdir(parents=True, exist_ok=True)
@@ -60,7 +61,8 @@ def build():
                         '<link rel="stylesheet" href="../analytics.css">'
                         '<script defer src="../analytics.js"></script>'
                         '</head>')
-    html = html.replace('</footer>', '<a href="../privacy/">Privacy &amp; Cookies</a></footer>')
+    html = html.replace('</footer>', '<a href="../privacy/">Privacy &amp; Cookies</a>'
+                        '<a href="../privacy/#choices" data-cookie-settings>Cookie settings</a></footer>')
     (demo / 'index.html').write_text(html, encoding='utf-8')
     (OUTPUT / '.nojekyll').touch()
     print(f'Built website: {OUTPUT}')
