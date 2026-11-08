@@ -183,7 +183,7 @@ The full-width **Cookies on this site** bar describes optional cookies for visit
 statistics and website improvement. It links only to this website's Privacy &
 Cookies notice, where Google Analytics and external provider links are disclosed.
 It occupies at most half the viewport, remains visible while scrolling and has
-equally styled accept/reject actions, without a backdrop or page scroll lock.
+a mint-green accept action and a clear reject action, without a backdrop or page scroll lock.
 Visitors choose **Accept optional
 cookies** or **Reject optional cookies**. No Google tag is loaded and
 no analytics requests are sent before consent or after a saved denial (basic

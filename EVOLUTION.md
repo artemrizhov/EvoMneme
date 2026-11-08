@@ -6,7 +6,8 @@ This history records reusable design decisions and evidence. Host-specific knowl
 
 Replace the floating analytics-focused box and settings button with a persistent
 full-width cookie bar, bounded to half the viewport. Keep accept and reject
-equally prominent and the page usable. Link to the project's detailed privacy
+easy to choose and the page usable; at the owner's request, highlight acceptance
+in project green. Link to the project's detailed privacy
 notice; disclose Google Analytics and its provider links there rather than in
 the short banner. Footer preference links reopen consent without navigation,
 retain a static policy fallback and restore keyboard focus without scrolling.
