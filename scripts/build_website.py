@@ -7,12 +7,36 @@ knowledge artifact copied into the output.
 from pathlib import Path
 from hashlib import sha256
 import shutil
+import json
+import os
+import re
+from html import escape
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / '.website-build'
 
 
+def deployment_config():
+    """Deployment-only information; never load an operator's config in a fork."""
+    raw = os.environ.get('WEBSITE_DEPLOYMENT_CONFIG', '')
+    config = json.loads(raw) if raw else {}
+    if not isinstance(config, dict):
+        raise ValueError('Website configuration must be a JSON object')
+    if config:
+        for field in ('measurement_id', 'operator_name', 'operator_email', 'site_url'):
+            if not isinstance(config.get(field), str) or not config[field].strip():
+                raise ValueError('Missing website configuration field: ' + field)
+        if not re.fullmatch(r'G-[A-Z0-9]+', config['measurement_id']):
+            raise ValueError('Invalid measurement ID')
+        if config['site_url'] != 'https://artemrizhov.github.io/EvoMneme/':
+            raise ValueError('Deployment configuration is not bound to this website')
+        if not re.fullmatch(r'[^\s<>"@]+@[^\s<>"@]+', config['operator_email']):
+            raise ValueError('Invalid operator email')
+    return config
+
+
 def build():
+    config = deployment_config()
     source = ROOT / 'website'
     viewer = ROOT / 'scripts' / 'viewer'
     # Deliberately fixed output: never recursively remove a caller-supplied path.
@@ -72,6 +96,42 @@ def build():
     html = html.replace('</footer>', '<a href="../privacy/">Privacy &amp; Cookies</a>'
                         '<a href="../privacy/#choices" data-cookie-settings>Cookie settings</a></footer>')
     (demo / 'index.html').write_text(html, encoding='utf-8')
+    for page in (OUTPUT / 'index.html', OUTPUT / 'privacy/index.html', demo / 'index.html'):
+        text = page.read_text(encoding='utf-8')
+        if page == OUTPUT / 'privacy/index.html':
+            if config:
+                for key in ('operator_name', 'operator_email'):
+                    text = text.replace('{{' + key + '}}', escape(config[key], quote=True))
+                text = text.replace('{{measurement_suffix}}', escape(config['measurement_id'][2:]))
+            else:
+                text = re.sub(r'<main\b.*?</main>', '''<main id="main" class="privacy-content">
+    <h1>Privacy &amp; Cookies</h1>
+    <p>This build has no optional analytics enabled and does not set analytics cookies.
+    No analytics consent preference is stored.</p>
+    <h2>Hosting and external links</h2>
+    <p>The hosting provider receives connection information needed to deliver pages.
+    On GitHub Pages, see the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub Privacy Statement</a>.
+    External services have their own privacy terms.</p>
+    <h2 id="choices">Your choices</h2>
+    <p>There are no optional analytics cookies to accept in this build.</p>
+    <p>Operators of other deployments are responsible for their own processing and privacy notice.</p>
+  </main>''', text, flags=re.S)
+                text = re.sub(r'<a href="mailto:.*?</a>', '', text)
+                text = text.replace('{{operator_email}}', '')
+        if not config:
+            text = re.sub(r'<a\b[^>]*data-cookie-settings[^>]*>.*?</a>', '', text)
+        if page == OUTPUT / 'index.html' and config.get('search_verification'):
+            text = text.replace('</head>', '<meta name="google-site-verification" content="'
+                                + escape(config['search_verification'], quote=True) + '"></head>')
+        if config:
+            # JSON in an external JS file: escape HTML-sensitive characters as well.
+            relative = '../' if page.parent != OUTPUT else ''
+            text = text.replace('<script', '<script defer src="' + relative + 'deployment-config.js"></script>\n<script', 1)
+        page.write_text(text, encoding='utf-8')
+    if config:
+        public = {'measurementId': config['measurement_id']}
+        payload = json.dumps(public).replace('<', '\\u003c').replace('>', '\\u003e').replace('&', '\\u0026')
+        (OUTPUT / 'deployment-config.js').write_text('window.evomnemeDeployment = ' + payload + ';\n', encoding='utf-8')
     (OUTPUT / '.nojekyll').touch()
     print(f'Built website: {OUTPUT}')
 

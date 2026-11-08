@@ -40,9 +40,17 @@ jobs:
       - run: python -m unittest discover -s tests -p test_website_export.py
       - run: node tests/test_website_static.js
       - run: node tests/test_website_analytics.js
+      - run: python -m unittest discover -s tests -p test_website_deployment.py
       - run: node tests/test_viewer_history.js
       - run: python scripts/build_website.py
       - run: python -m unittest discover -s tests -p test_website_seo.py
+      - name: Build configured official deployment
+        if: github.repository == 'artemrizhov/EvoMneme'
+        env:
+          WEBSITE_DEPLOYMENT_CONFIG: ${{ secrets.WEBSITE_DEPLOYMENT_CONFIG }}
+        run: |
+          test -n "$WEBSITE_DEPLOYMENT_CONFIG"
+          python scripts/build_website.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

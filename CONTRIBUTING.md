@@ -16,6 +16,18 @@ The GitHub CLI (`gh`) may be used for authorized GitHub operations alongside the
 
 The charter's narrow exception permits installing a necessary optional GitHub collaboration client such as `gh` only after explicit user consent for the explained need and installation scope. It never authorizes automatic installation or makes the client a required dependency of storage, analysis, or SQL execution. If an applicable environment restriction prohibits installation, identify it in the approval request and obtain explicit authorization resolving it; this guide does not waive it. Do not amend the founding charter without separate explicit approval for that file change. Installation approval grants no additional GitHub account or repository permissions.
 
+## Personal data and deployment settings
+
+Do not publish personal data in tracked source, website code, documentation,
+fixtures, generated snapshots or commit messages. Use synthetic examples.
+Operator names, personal contact details, analytics identifiers and site
+verification values belong in excluded local deployment configuration and
+deployment secrets, never in this repository or its history. Review generated
+public artifacts separately: a deployed privacy notice can intentionally disclose
+its actual operator, but forks must not inherit another operator's identity or
+analytics configuration. Existing Git author/committer metadata is outside this
+source-content restriction; do not rewrite it without explicit authorization.
+
 ## Reviewing contributions
 
 The separate [read-only navigator](references/navigation.md) supplies ordinary name-based exploration without changing the generic SQL executor. Navigator changes must preserve active scope/endpoint joins, count/list parity, name ambiguity handling, real-root semantics, snapshot consistency and explicit output completeness. Graph reads automatically record activity through the tool; verify unchanged graph rows, accurate returned references and no false returned IDs after a rejected buffered result. Connection/launcher changes need nested-directory and worktree isolation, visible freshness limitations, preservation of receipt fields, read-only graph checks and actual supported-shell verification. Connection setup itself must still leave the database unchanged. Never install launchers into a user's environment merely to test them; use isolated fixtures. Do not claim native testing of an unexercised platform.

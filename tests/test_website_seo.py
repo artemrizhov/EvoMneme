@@ -133,16 +133,15 @@ class WebsiteSEO(unittest.TestCase):
         p = Page(OUTPUT / 'privacy/index.html')
         self.assertEqual(p.canonical(), [SITE + 'privacy/'])
         text = ''.join(p.content)
-        for expected in ('Website operator', 'privacy@example.invalid', 'evomneme_ga',
-                         'evomneme.analytics-consent.v2', '2 months', 'reset on new user activity enabled',
-                         'withdraw', 'Google Analytics'):
+        for expected in ('no optional analytics enabled', 'Hosting and external links',
+                         'other deployments'):
             self.assertIn(expected, text)
         for page in (self.landing, self.demo):
             self.assertTrue(any(t == 'a' and a.get('href') in ('privacy/', '../privacy/')
                                 for t, a in page.tags))
         for page in (self.landing, self.demo, p):
-            self.assertTrue(any(t == 'a' and 'data-cookie-settings' in a and '#choices' in a.get('href', '')
-                                for t, a in page.tags), 'footer preferences have a static policy fallback')
+            self.assertFalse(any(t == 'a' and 'data-cookie-settings' in a
+                                 for t, a in page.tags), 'unconfigured builds have no consent UI')
         for tag, attrs in p.tags:
             for field in ('href', 'src'):
                 if field not in attrs:

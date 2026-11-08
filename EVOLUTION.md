@@ -1,5 +1,16 @@
 # Operational evolution
 
+## 2026-11-09 — Separate operator settings from reusable website sources
+
+Move deployment-specific operator/contact and Google settings out of tracked
+files into an excluded local configuration and an Actions secret. Default and
+fork builds do not enable analytics or inherit another operator's identity.
+Configured builds render the actual notice and verification metadata and retain
+the existing consent gate. Public artifacts still disclose those values by
+design. Rewrite affected recent source history while preserving Git identity
+metadata and unrelated work; old copies and external caches remain outside Git
+branch control. Contribution guidance prohibits personal data in source content.
+
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
 ## 2026-11-08 — Version host obligations independently from runtime edits
@@ -52,7 +63,7 @@ The notice is accessible before consent, has a canonical and joins the sitemap.
 
 ## 2026-11-07 — Add optional public website analytics
 
-The maintainer requested GA4 with stream `G-EXAMPLE000`. Load its Google tag
+The maintainer requested optional GA4. Load its Google tag
 only after explicit visitor consent, keep advertising consent denied, and offer
 a persistent settings control for withdrawal. Exclude iframes and local tools
 from collection so the embedded graph does not duplicate the landing view.

@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const code = fs.readFileSync(require.resolve('../website/analytics.js'), 'utf8');
 const key = 'evomneme.analytics-consent.v2';
 
-function browser({choice, legacyChoice, embedded = false, hostname = 'artemrizhov.github.io', blocked = false, writeBlocked = false} = {}) {
+function browser({choice, legacyChoice, embedded = false, hostname = 'artemrizhov.github.io', blocked = false, writeBlocked = false, configured = true} = {}) {
   const scripts = [], body = [], cookies = [], events = {};
   const element = () => ({dataset: {}, listeners: {}, hidden: false,
     setAttribute(k, v) { this[k] = v; }, focus(options) { this.focused = true; this.focusOptions = options; },
@@ -20,7 +20,7 @@ function browser({choice, legacyChoice, embedded = false, hostname = 'artemrizho
   Object.defineProperty(document, 'cookie', {get() { return cookie; }, set(v) { cookies.push(v); }});
   const storage = new Map(choice ? [[key, choice]] : []);
   if (legacyChoice) storage.set('evomneme.analytics-consent.v1', legacyChoice);
-  const window = {addEventListener(k, fn) { events[k] = fn; }};
+  const window = {evomnemeDeployment: configured ? {measurementId: 'G-EXAMPLE000'} : undefined, addEventListener(k, fn) { events[k] = fn; }};
   window.self = window;
   window.top = embedded ? {} : window;
   const location = {hostname, pathname: '/EvoMneme/demo/', reloads: 0, reload() { this.reloads++; }};
@@ -37,6 +37,8 @@ function browser({choice, legacyChoice, embedded = false, hostname = 'artemrizho
   return {window, scripts, body, storage, cookies, events, location, choose, settingsLinks, openSettings};
 }
 
+assert.equal(browser({configured: false, choice: 'granted'}).scripts.length, 0);
+assert.equal(browser({configured: false}).body.length, 0);
 const fresh = browser();
 assert.equal(fresh.scripts.length, 0, 'no Google load before consent');
 assert.equal(fresh.window.dataLayer, undefined);

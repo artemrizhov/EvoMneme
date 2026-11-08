@@ -2,10 +2,10 @@
 // as a separate visit, and local previews/viewers never contact Google.
 (function () {
   'use strict';
-  if (window.self !== window.top || location.hostname !== 'artemrizhov.github.io'
+  const measurementId = window.evomnemeDeployment?.measurementId;
+  if (!/^G-[A-Z0-9]+$/.test(measurementId || '') || window.self !== window.top || location.hostname !== 'artemrizhov.github.io'
       || !location.pathname.startsWith('/EvoMneme/')) return;
 
-  const measurementId = 'G-EXAMPLE000';
   const storageKey = 'evomneme.analytics-consent.v2';
   const disableKey = 'ga-disable-' + measurementId;
   let loaded = false;

@@ -171,6 +171,18 @@ and the [SoftwareSourceCode vocabulary](https://schema.org/SoftwareSourceCode).
 
 ## Optional analytics
 
+Operator identities, personal contact information, real Google identifiers and
+verification tokens must never be committed. The default build has analytics
+disabled and a generic hosting notice, without operator details or consent UI.
+The official deployment supplies a JSON object through the GitHub Actions secret
+`WEBSITE_DEPLOYMENT_CONFIG`: `site_url`, `measurement_id`, `operator_name`,
+`operator_email`, and optional `search_verification`. The site URL must match this
+deployment; forks do not receive this secret. For local configured builds, load
+the environment variable from an excluded file inside `.evomneme/`.
+Do not copy generated configured artifacts into Git: the published website
+necessarily exposes its operator notice, measurement ID and verification tag.
+The configuration is deployment separation, not secrecy of public HTML.
+
 `privacy/index.html` is the static public Privacy & Cookies notice, linked from
 the landing/demo footers and the consent panel. It identifies the owner using
 user-supplied public contact details, describes Google/GitHub processing, optional
@@ -183,7 +195,7 @@ notice and removes the old v1 choice without carrying a grant forward. No GeoIP
 service is needed: the same consent gate applies to every visitor. The page is
 built with its own canonical and included in the sitemap.
 
-The public landing page and standalone demo use GA4 stream `G-EXAMPLE000`
+The configured public landing page and standalone demo use a deployment-specific GA4 stream
 through `analytics.js`. The previously supplied GTM container is not installed.
 The local graph explorer, local previews and embedded demo do not load Analytics.
 This is optional website instrumentation requested by the maintainer; project
@@ -212,7 +224,7 @@ disabled. Cookies use a project prefix, host-only domain and `/EvoMneme/` path.
 
 After deployment, allow analytics and check **Reports → Realtime** in the GA4
 property. Browser network inspection can verify a `g/collect` request with
-`tid=G-EXAMPLE000`; it cannot establish that the owner's reports have processed
+the configured `tid`; it cannot establish that the owner's reports have processed
 the data. Ad blockers and declined consent can legitimately prevent collection.
 Automatic/enhanced measurement beyond the initial page view is controlled by the
 property's settings; review history-based page views if demo navigation should
