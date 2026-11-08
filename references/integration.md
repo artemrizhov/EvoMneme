@@ -16,6 +16,16 @@ Install the live loader using existing authorized file tools, preserving the hos
 
 ## Verify actual behavior
 
+Connection setup deliberately leaves the integration contract unaccepted for new
+and unversioned hosts. Follow [the upgrade procedure](../upgrades/README.md) and
+the initial transition after the checks below; preserve unrelated receipt fields.
+`integration_contract_version` records the last agent-verified host contract and
+`verified_schema_version` the real schema verified at that acceptance. Neither
+field is the receipt-format `version` nor a source/skill revision. Reconnecting
+preserves an existing acceptance but never creates or advances one. An accepted
+contract does not certify fresh-session activation when evidence lists that as
+unverified; retain and disclose such limitations explicitly.
+
 Verify the bound graph commands and the selected advanced SQL route where applicable.
 
 - Verify `evomneme nodes root`, its exact link count and `evomneme links root` in the real host shell. Check copyable meaningful names, ambiguity errors, source evidence and the absence of hidden output truncation. Verify nested-directory discovery and each linked worktree's explicit canonical-store binding; an independent clone must not acquire another project's receipt. Wrong identity/scope bindings fail, while local source changes produce visible freshness warnings without preventing inspection. Confirm graph rows remain unchanged while the tool automatically records the read in activity history; do not compare whole-file hashes as a read-only graph check. Do not test by modifying a real host's graph solely to manufacture a result unless authorized.

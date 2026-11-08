@@ -15,6 +15,7 @@ import uuid
 
 from evomneme_activity import DatabaseActivity, managed_table
 from evomneme_trace import build_event
+from evomneme_contract import check as check_contract, cli_check
 
 MAX_INPUT_BYTES = 1048576
 MAX_VALUE_BYTES = 8388608
@@ -146,6 +147,7 @@ class Executor:
     """Bind one persistent local database file for this executor's lifetime."""
 
     def __init__(self, database, create=False, history=True):
+        check_contract(database=database)
         self.requested_path = Path(database)
         if not self.requested_path.is_absolute() or str(database).startswith(('\\\\', '//')):
             raise RequestError('database must be an absolute local filesystem path')
@@ -199,6 +201,7 @@ class Executor:
                     max_output_bytes=LIMITS['max_output_bytes'][0],
                     timeout_ms=LIMITS['timeout_ms'][0], activity_context=None, **unknown):
         """Record recognized-store activity while preserving native SQL results."""
+        check_contract(database=self.path)
         started = time.monotonic()
         accesses = []
         self._activity_event = None
@@ -402,6 +405,7 @@ def read_input(filename):
     return raw.decode('utf-8-sig')
 
 
+@cli_check()
 def main(argv=None):
     """Decode transport inputs and delegate to the one public execute_sql entry point."""
     parser = argparse.ArgumentParser(description=__doc__)

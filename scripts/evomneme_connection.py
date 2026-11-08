@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 
 from evomneme_graph import validate_schema
+from evomneme_contract import check, read_receipt, REQUIRED_CONTRACT, REQUIRED_SCHEMA, MAX_RECEIPT_BYTES
 
 RECEIPT = Path('.evomneme/connection.json')
 
@@ -125,6 +126,7 @@ def _freshness(connection):
 
 
 def discover(start: Path | None = None) -> Connection:
+    check(start=start, bound=True)
     current = (start or Path.cwd()).resolve()
     if not current.is_dir():
         raise ConnectionError('Navigation must start in an existing project directory')
@@ -198,9 +200,82 @@ def configure_parser(subparsers):
     parser.add_argument('--canonical-root', type=Path)
     parser.add_argument('--shell', choices=('powershell', 'posix'))
     parser.set_defaults(setup_handler=run_setup)
+    accept = subparsers.add_parser('accept-integration', help='Record an agent-verified sequential integration transition')
+    accept.add_argument('--project', type=Path, default=Path.cwd())
+    accept.add_argument('--from-version', required=True, help='Previous accepted integer, or unversioned after inspection')
+    accept.add_argument('--to-version', required=True, type=int)
+    accept.add_argument('--verification', required=True, help='Concrete completed checks, changes, evidence and remaining limitations; agent attestation, not automatic proof')
+    accept.set_defaults(setup_handler=run_acceptance)
+
+
+def _replace_receipt(receipt, data, original):
+    """Prepare fully before replace; a crash leaves old or complete new receipt."""
+    serialized = json.dumps(data, indent=2, ensure_ascii=False) + '\n'
+    encoded = serialized.encode('utf-8')
+    if len(encoded) > MAX_RECEIPT_BYTES:
+        raise ConnectionError('Updated connection receipt exceeds 256 KiB; shorten verification notes without losing required evidence')
+    with tempfile.NamedTemporaryFile(mode='wb', dir=receipt.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        stream.write(encoded)
+        stream.flush()
+        os.fsync(stream.fileno())
+    try:
+        if receipt.read_bytes() != original:
+            raise ConnectionError('Connection receipt changed during verification; refusing to overwrite it')
+        os.replace(temporary, receipt)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def run_acceptance(args):
+    """Validate mechanical invariants; semantic upgrade completion is agent-attested."""
+    from datetime import datetime, timezone
+    check(start=args.project, bound=True)
+    project = args.project.resolve()
+    receipt = project / RECEIPT
+    original = receipt.read_bytes()
+    data = read_receipt(receipt)
+    previous = data.get('integration_contract_version')
+    expected = args.from_version
+    if expected == 'unversioned':
+        if 'integration_contract_version' in data:
+            raise ConnectionError('Expected an unversioned receipt; inspect its existing version')
+        previous_number = 0
+    else:
+        try:
+            previous_number = int(expected)
+        except ValueError as exc:
+            raise ConnectionError('--from-version must be an integer or unversioned') from exc
+        if type(previous) is not int or previous_number != previous or previous_number < 1:
+            raise ConnectionError('Previous contract version does not match receipt')
+    if not 1 <= args.to_version <= REQUIRED_CONTRACT or args.to_version != previous_number + 1:
+        raise ConnectionError('Accept exactly one published transition; never skip, repeat or downgrade versions')
+    if not args.verification.strip():
+        raise ConnectionError('Concrete agent verification is required; runtime success alone is insufficient')
+    connection = discover(project)
+    with closing(sqlite3.connect(connection.database.as_uri() + '?mode=ro', uri=True)) as db:
+        db.execute('PRAGMA query_only=ON')
+        db.execute('BEGIN')
+        validate_binding(db, connection)
+        if not db.execute("SELECT 1 FROM nodes WHERE scope_id=? AND id=? AND validity='current'",
+                          (connection.scope, connection.root_id)).fetchone():
+            raise ConnectionError('Selected current knowledge root does not exist')
+        data['integration_contract_version'] = args.to_version
+        data['verified_schema_version'] = REQUIRED_SCHEMA
+        history = data.setdefault('integration_verifications', [])
+        if not isinstance(history, list):
+            raise ConnectionError('integration_verifications must be a list; preserve and inspect existing data')
+        history.append({'from_version': expected, 'to_version': args.to_version,
+                        'verified_schema_version': REQUIRED_SCHEMA,
+                        'verified_at': datetime.now(timezone.utc).isoformat(),
+                        'agent_verification': args.verification})
+        _replace_receipt(receipt, data, original)
+    print('Accepted verified integration contract ' + str(args.to_version) + ' in ' + str(receipt))
+    return 0
 
 
 def run_setup(args) -> int:
+    check(start=args.project, bound=True)
     project = args.project.resolve()
     if not project.is_dir():
         raise ConnectionError('Project directory must already exist')

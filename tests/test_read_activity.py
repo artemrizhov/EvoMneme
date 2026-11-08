@@ -33,7 +33,11 @@ class ReadActivityTests(unittest.TestCase):
 
     def invoke(self, tokens, connection=None):
         stdout, stderr = io.StringIO(), io.StringIO()
-        with mock.patch('evomneme_connection.discover', return_value=connection or self.connection), \
+        # Discovery is replaced with a synthetic binding without a receipt;
+        # its activity assertions must not inspect this checkout's real host.
+        # Real receipt diagnostics are exercised in test_integration_contract.
+        with mock.patch('evomneme_contract.diagnostic', return_value=None), \
+                mock.patch('evomneme_connection.discover', return_value=connection or self.connection), \
                 redirect_stdout(stdout), redirect_stderr(stderr):
             result = main(tokens)
         return result, stdout.getvalue(), stderr.getvalue()

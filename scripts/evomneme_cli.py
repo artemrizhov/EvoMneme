@@ -1,6 +1,7 @@
 """Small agent-facing navigation/setup CLI, separate from the SQL executor."""
 import argparse
 import sys
+from evomneme_contract import cli_check
 
 from evomneme_navigate import NavigationError, navigate, text_lines
 
@@ -32,6 +33,7 @@ def build_parser(parser_class=argparse.ArgumentParser):
     return parser
 
 
+@cli_check(bound=True)
 def main(argv=None):
     from evomneme_connection import discover
     from evomneme_mutate import run as run_mutation

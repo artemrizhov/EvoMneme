@@ -2,6 +2,20 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-08 — Version host obligations independently from runtime edits
+
+Introduce integration contract 1 while keeping database schema 3. Existing and
+new hosts remain unaccepted until an agent inspects the published sequential
+transition, performs authorized data/configuration/loader work and attests its
+verification. Connection setup preserves receipt fields but cannot certify an
+upgrade. Explicit sequential acceptance validates binding/schema/root and uses
+an atomic receipt replacement; semantic verification stays the agent's duty.
+Bound tools warn first on stderr even on successful or failing requests; matching
+SQL/viewer/export routes preserve machine output and generic foreign databases.
+The checker adds only bounded local receipt/path reads. Immutable transition
+guidance defines interruption recovery, persistent warnings and the required
+pause-or-continue choice when blocked; runtime compatibility never waives work.
+
 ## 2026-11-08 — Include the standalone demo in search discovery
 
 Excluding the demo solely for JavaScript dependence was overly cautious. Include

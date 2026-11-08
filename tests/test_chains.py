@@ -56,7 +56,10 @@ class ChainTests(unittest.TestCase):
 
     def invoke(self, tokens, connection=None):
         stdout, stderr = io.StringIO(), io.StringIO()
-        with mock.patch('evomneme_connection.discover', return_value=connection or self.connection) as discover, redirect_stdout(stdout), redirect_stderr(stderr):
+        # This helper substitutes a synthetic binding without a project receipt.
+        # Do not inspect the checkout's real receipt; contract integration has its own tests.
+        with mock.patch('evomneme_contract.diagnostic', return_value=None), \
+                mock.patch('evomneme_connection.discover', return_value=connection or self.connection) as discover, redirect_stdout(stdout), redirect_stderr(stderr):
             result = main(tokens)
         return result, stdout.getvalue(), stderr.getvalue(), discover.call_count
 

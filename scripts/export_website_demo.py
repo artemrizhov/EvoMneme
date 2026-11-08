@@ -195,6 +195,8 @@ def initial_history(timeline):
 
 def export_publication(database, repository_root=ROOT, expected_identity=None, public_revision=PUBLIC_REVISION):
     """Return the whole graph, replay and timeline from one read-only snapshot."""
+    from evomneme_contract import check
+    check(database=database)
     path = Path(database).resolve(strict=True)
     source = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
     source.row_factory = sqlite3.Row
@@ -316,6 +318,10 @@ def encoded(value):
     return (json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode('utf-8')
 
 
+from evomneme_contract import cli_check
+
+
+@cli_check()
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', type=Path, required=True, help='Explicit authorized SQLite source; opened read-only and matched against the local project receipt')

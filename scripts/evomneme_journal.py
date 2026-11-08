@@ -352,6 +352,10 @@ def read_calls(db, values):
             'has_more': more if after is not None else False}
 
 
+from evomneme_contract import cli_check
+
+
+@cli_check()
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('install', 'suspend'))

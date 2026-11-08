@@ -19,6 +19,7 @@ from evomneme import cell, json_bytes
 from evomneme_graph import V3_COLUMNS, projection_sql, validate_schema
 from evomneme_journal import LOG, install as install_journal, read as read_changes, read_calls, status as journal_status
 from evomneme_viewer_preferences import ViewerPreferences
+from evomneme_contract import check as check_contract, cli_check
 
 ASSETS = Path(__file__).parent / 'viewer'
 MAX_ROWS = 2000
@@ -57,6 +58,7 @@ def bounded_cell(value):
 
 class Explorer:
     def __init__(self, database, mapping=None, trace_directory=None, record_changes=False, history=True):
+        check_contract(database=database)
         requested = Path(database)
         if not requested.is_absolute() or str(database).startswith(('\\\\', '//')):
             raise ValueError('database must be an absolute local file path')
@@ -586,6 +588,7 @@ def make_server(explorer, port=0):
             self.respond(200, data, mime)
 
         def do_POST(self):
+            check_contract(database=explorer.path, force=True)
             if not self.allowed() or not secrets.compare_digest(self.headers.get('X-Viewer-Token', '').encode('utf-8'), token.encode('utf-8')):
                 return self.respond(403, {'error': 'Viewer token required'})
             try:
@@ -642,6 +645,7 @@ def project_name(explorer):
     return fallback
 
 
+@cli_check()
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--database', required=True)
