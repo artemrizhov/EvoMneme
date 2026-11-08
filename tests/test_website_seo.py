@@ -105,7 +105,7 @@ class WebsiteSEO(unittest.TestCase):
         self.assertEqual(project['codeRepository'], 'https://github.com/artemrizhov/EvoMneme')
         self.assertIn('EvoMneme', project['description'])
         urls = ET.parse(OUTPUT / 'sitemap.xml').findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}loc')
-        self.assertEqual([u.text for u in urls], [SITE, SITE + 'privacy/'])
+        self.assertEqual([u.text for u in urls], [SITE, SITE + 'privacy/', SITE + 'demo/'])
         self.assertIn(('link', {'rel': 'sitemap', 'type': 'application/xml', 'href': 'sitemap.xml'}), self.landing.tags)
         robots = (OUTPUT / 'robots.txt').read_text(encoding='utf-8')
         self.assertIn('Sitemap: ' + SITE + 'sitemap.xml', robots)
@@ -115,6 +115,12 @@ class WebsiteSEO(unittest.TestCase):
     def test_demo_has_separate_canonical_and_no_crawl_block(self):
         self.assertEqual(self.demo.canonical(), [SITE + 'demo/'])
         self.assertIn('requires JavaScript', self.demo.meta('description')[0])
+        self.assertEqual(''.join(self.demo.title), 'EvoMneme · Interactive public graph')
+        self.assertIn('EvoMneme', [text for level, text in self.demo.headings if level == 1])
+        text = ''.join(self.demo.content)
+        self.assertIn("project's local SQLite memory", text)
+        self.assertIn('fixed public export', text)
+        self.assertTrue(any(t == 'a' and a.get('href') == '../' for t, a in self.demo.tags))
         for p in (self.landing, self.demo):
             for tag, attrs in p.tags:
                 if tag == 'meta' and attrs.get('name', '').lower() in ('robots', 'googlebot', 'bingbot'):

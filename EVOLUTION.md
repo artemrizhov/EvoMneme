@@ -2,6 +2,17 @@
 
 This history records reusable design decisions and evidence. Host-specific knowledge and detailed feedback stay in each host's excluded local store. The founding specification remains [PROJECT_CHARTER.md](PROJECT_CHARTER.md).
 
+## 2026-11-08 — Include the standalone demo in search discovery
+
+Excluding the demo solely for JavaScript dependence was overly cautious. Include
+its canonical `/demo/` URL in the sitemap, retaining omission of embedded and
+viewer-state variants. Build a short visible static summary, branded title and
+H1 into the generated demo HTML; JavaScript remains necessary for exploration.
+Hide the summary in the embedded mode to preserve its compact graph view. A
+content-versioned demo CSS URL avoids the stale styles observed in browser QA. Keep
+the shared local viewer and committed data unchanged. Static artifact checks
+verify the description and canonical sitemap URLs; indexing is not guaranteed.
+
 ## 2026-11-08 — Use a full-width cookie notice with footer preferences
 
 Replace the floating analytics-focused box and settings button with a persistent

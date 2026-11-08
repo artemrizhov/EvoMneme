@@ -5,6 +5,7 @@ No database is read during a build. The reviewed public snapshot is the only
 knowledge artifact copied into the output.
 """
 from pathlib import Path
+from hashlib import sha256
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,13 +45,20 @@ def build():
     for name in ('static-api.js', 'demo.js', 'demo.css'):
         shutil.copy2(source / 'demo' / name, demo / name)
     html = (viewer / 'index.html').read_text(encoding='utf-8')
+    html = html.replace('<title>EvoMneme · Memory explorer</title>',
+                        '<title>EvoMneme · Interactive public graph</title>')
+    html = html.replace('<h1 id="projectName" class="project-title"></h1>',
+                        '<h1 id="projectName" class="project-title">EvoMneme</h1>')
+    intro = (source / 'demo' / 'intro.html').read_text(encoding='utf-8')
+    html = html.replace('<body>', '<body>\n' + intro, 1)
+    demo_css_version = sha256((source / 'demo' / 'demo.css').read_bytes()).hexdigest()[:12]
     for asset in ('style.css', 'cytoscape.min.js', 'graph-layout.js', 'app.js'):
         html = html.replace('"/' + asset + '"', '"./' + asset + '"')
     marker = '<script defer src="./app.js"></script>'
     if marker not in html:
         raise ValueError('Viewer entrypoint changed; update the website adapter injection')
     html = html.replace(marker,
-                        '<link rel="stylesheet" href="./demo.css">'
+                        f'<link rel="stylesheet" href="./demo.css?v={demo_css_version}">'
                         '<script defer src="./static-api.js"></script>'
                         '<script defer src="./demo.js"></script>'
                         '<script defer src="./app.js"></script>')

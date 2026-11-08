@@ -127,9 +127,19 @@ Open Graph/Twitter cards using the existing graph screenshot, and Schema.org
 The primary content and GitHub/documentation links do not require JavaScript.
 The interactive demo does require JavaScript; its canonical is `/EvoMneme/demo/`,
 including for `index.html` and query variants such as `?embed=1`. It is a separate
-tool, not a duplicate of the landing page. The sitemap lists only the static
-landing and Privacy & Cookies page, not the JS-dependent demo or its viewer state URLs. No page uses
+tool, not a duplicate of the landing page. The build injects `demo/intro.html`
+as a visible static description of the SQLite snapshot and supplies a project
+title/H1 before JavaScript runs. The embedded presentation hides that extra copy.
+The demo stylesheet URL includes a content-derived version so cached older CSS
+cannot leave the new description unstyled or visible in the embedded graph.
+The sitemap lists the landing page, Privacy & Cookies and the standalone demo;
+embedded/query variants and viewer state URLs remain omitted. No page uses
 `noindex` or `nofollow`.
+
+JavaScript dependence alone is not a reason to exclude a useful canonical page
+from the sitemap. The demo summary explains what is shown even without rendering
+the graph; it does not turn canvas nodes into individually indexed pages or
+guarantee that search engines will index the demo.
 
 `/EvoMneme/index.html` can serve the same landing content; its canonical and the
 sitemap consistently select `/EvoMneme/`. GitHub Pages enforces HTTPS and adds
